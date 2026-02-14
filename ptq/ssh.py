@@ -11,11 +11,13 @@ from pathlib import Path
 class RemoteBackend:
     machine: str
     workspace: str = "~/ptq_workspace"
-    ssh_opts: list[str] = field(default_factory=lambda: ["-o", "StrictHostKeyChecking=no"])
+    ssh_opts: list[str] = field(
+        default_factory=lambda: ["-o", "StrictHostKeyChecking=no"]
+    )
 
     @staticmethod
     def _with_path(cmd: str) -> str:
-        return f'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && {cmd}'
+        return f'source ~/.profile 2>/dev/null; source ~/.bashrc 2>/dev/null; source ~/.zshrc 2>/dev/null; export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && {cmd}'
 
     def run(self, cmd: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -25,7 +27,9 @@ class RemoteBackend:
             check=check,
         )
 
-    def run_streaming(self, cmd: str, follow: bool = True) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
+    def run_streaming(
+        self, cmd: str, follow: bool = True
+    ) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
         if follow:
             return subprocess.Popen(
                 ["ssh", "-tt", *self.ssh_opts, self.machine, self._with_path(cmd)],
@@ -68,7 +72,9 @@ class LocalBackend:
             check=check,
         )
 
-    def run_streaming(self, cmd: str, follow: bool = True) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
+    def run_streaming(
+        self, cmd: str, follow: bool = True
+    ) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
         if follow:
             return subprocess.Popen(
                 ["zsh", "-c", cmd],
@@ -113,4 +119,6 @@ def backend_for_job(job_id: str) -> Backend:
         raise SystemExit(f"Unknown job: {job_id}")
     if entry.get("local"):
         return LocalBackend(workspace=entry.get("workspace", "~/.ptq_workspace"))
-    return RemoteBackend(machine=entry["machine"], workspace=entry.get("workspace", "~/ptq_workspace"))
+    return RemoteBackend(
+        machine=entry["machine"], workspace=entry.get("workspace", "~/ptq_workspace")
+    )

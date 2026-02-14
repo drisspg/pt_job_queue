@@ -5,7 +5,7 @@ import subprocess
 
 from rich.console import Console
 
-from ptq.ssh import Backend, LocalBackend, RemoteBackend
+from ptq.ssh import Backend, RemoteBackend
 
 console = Console()
 
@@ -22,22 +22,32 @@ DEFAULT_CUDA_TAG = "cu130"
 def detect_cuda_version(backend: Backend) -> str:
     result = backend.run("nvidia-smi", check=False)
     if result.returncode != 0:
-        raise SystemExit("nvidia-smi not found on target machine. Use --cuda to specify CUDA version.")
+        raise SystemExit(
+            "nvidia-smi not found on target machine. Use --cuda to specify CUDA version."
+        )
     match = re.search(r"CUDA Version:\s+(\d+\.\d+)", result.stdout)
     if not match:
-        raise SystemExit("Could not parse CUDA version from nvidia-smi. Use --cuda to specify.")
+        raise SystemExit(
+            "Could not parse CUDA version from nvidia-smi. Use --cuda to specify."
+        )
     driver_version = tuple(int(x) for x in match.group(1).split("."))
     best = None
     for version_str, tag in CUDA_INDEX_MAP.items():
         toolkit_version = tuple(int(x) for x in version_str.split("."))
-        if toolkit_version <= driver_version and (best is None or toolkit_version > best[0]):
+        if toolkit_version <= driver_version and (
+            best is None or toolkit_version > best[0]
+        ):
             best = (toolkit_version, tag)
     if best is None:
-        raise SystemExit(f"CUDA driver {match.group(1)} is too old. Minimum supported: {min(CUDA_INDEX_MAP)}.")
+        raise SystemExit(
+            f"CUDA driver {match.group(1)} is too old. Minimum supported: {min(CUDA_INDEX_MAP)}."
+        )
     return best[1]
 
 
-def setup_workspace(backend: Backend, cuda_tag: str | None = None, cpu: bool = False) -> None:
+def setup_workspace(
+    backend: Backend, cuda_tag: str | None = None, cpu: bool = False
+) -> None:
     workspace = backend.workspace
 
     if cpu:
@@ -69,7 +79,7 @@ def setup_workspace(backend: Backend, cuda_tag: str | None = None, cpu: bool = F
 
     console.print("Resolving nightly commit hash...")
     nightly_hash = backend.run(
-        f"{workspace}/.venv/bin/python -c \"import torch; print(torch.version.git_version)\"",
+        f'{workspace}/.venv/bin/python -c "import torch; print(torch.version.git_version)"',
     ).stdout.strip()
     console.print(f"Nightly git version: {nightly_hash}")
 
@@ -90,7 +100,7 @@ def setup_workspace(backend: Backend, cuda_tag: str | None = None, cpu: bool = F
 
     console.print("Running smoke test...")
     smoke = backend.run(
-        f"{workspace}/.venv/bin/python -c \"import torch; print(torch.__version__, torch.cuda.is_available())\"",
+        f'{workspace}/.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"',
     )
     console.print(f"[green]Smoke test: {smoke.stdout.strip()}[/green]")
     console.print("[bold green]Workspace setup complete.[/bold green]")
@@ -128,7 +138,13 @@ def _install_uv_remote(backend: RemoteBackend) -> None:
 
 def _resolve_main_hash(nightly_hash: str) -> str:
     result = subprocess.run(
-        ["gh", "api", f"repos/pytorch/pytorch/commits/{nightly_hash}", "--jq", ".commit.message"],
+        [
+            "gh",
+            "api",
+            f"repos/pytorch/pytorch/commits/{nightly_hash}",
+            "--jq",
+            ".commit.message",
+        ],
         capture_output=True,
         text=True,
         check=False,

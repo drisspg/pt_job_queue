@@ -8,9 +8,14 @@ import subprocess
 def fetch_issue(issue_number: int, repo: str = "pytorch/pytorch") -> dict:
     result = subprocess.run(
         [
-            "gh", "issue", "view", str(issue_number),
-            "--repo", repo,
-            "--json", "title,body,comments,labels",
+            "gh",
+            "issue",
+            "view",
+            str(issue_number),
+            "--repo",
+            repo,
+            "--json",
+            "title,body,comments,labels",
         ],
         capture_output=True,
         text=True,
@@ -34,7 +39,7 @@ def extract_repro_script(issue_data: dict) -> str | None:
 def format_issue_context(issue_data: dict, issue_number: int) -> str:
     title = issue_data.get("title", "")
     body = issue_data.get("body", "") or ""
-    labels = [l.get("name", "") for l in issue_data.get("labels", [])]
+    labels = [label.get("name", "") for label in issue_data.get("labels", [])]
 
     lines = [
         f"# Issue #{issue_number}: {title}",

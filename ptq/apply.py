@@ -48,7 +48,9 @@ def apply_diff(job_id: str, pytorch_path: Path) -> None:
     console.print("Applying diff...")
     subprocess.run(["git", "apply", str(diff_local)], cwd=pytorch_path, check=True)
 
-    console.print(f"[bold green]Diff applied to {pytorch_path} on branch {branch_name}[/bold green]")
+    console.print(
+        f"[bold green]Diff applied to {pytorch_path} on branch {branch_name}[/bold green]"
+    )
     console.print("\nNext steps:")
     console.print(f"  cd {pytorch_path}")
     console.print("  git add -p")

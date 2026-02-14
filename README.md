@@ -49,12 +49,16 @@ The agent will:
 4. Test the fix by copying edits to site-packages and re-running the repro
 5. Write `report.md` and `fix.diff`
 
-Each job gets its own git worktree, so multiple jobs can run concurrently on the same machine.
+Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees.
 
 ### 3. View results
 
 ```bash
-ptq results <job-id>
+# By issue number (uses most recent job)
+ptq results 174923
+
+# By full job ID
+ptq results 20260214-174923
 ```
 
 Fetches `report.md`, `fix.diff`, and `claude.log` from the remote and displays the report.
@@ -62,10 +66,25 @@ Fetches `report.md`, `fix.diff`, and `claude.log` from the remote and displays t
 ### 4. Apply the fix
 
 ```bash
-ptq apply <job-id> --pytorch-path ~/meta/pytorch
+ptq apply 174923 --pytorch-path ~/meta/pytorch
 ```
 
 Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps for creating a PR.
+
+### 5. Clean up
+
+```bash
+# Remove all jobs on a machine
+ptq clean my-gpu-box
+
+# Keep the 3 most recent
+ptq clean my-gpu-box --keep 3
+
+# Clean local workspace
+ptq clean --local
+```
+
+Removes job directories and prunes git worktrees.
 
 ## Options
 
@@ -74,11 +93,12 @@ Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps f
 | `--cuda` | setup | auto-detect | CUDA tag (`cu124`, `cu126`, `cu128`, `cu130`) |
 | `--cpu` | setup | | Use CPU-only PyTorch (macOS/testing) |
 | `--machine` | run | | Remote machine hostname |
-| `--local` | setup, run | | Use local workspace instead of SSH |
+| `--local` | setup, run, clean | | Use local workspace instead of SSH |
 | `--follow/--no-follow` | run | follow | Stream agent output to terminal |
 | `--model` | run | opus | Claude model |
 | `--max-turns` | run | 100 | Max agent turns |
 | `--workspace` | setup, run | `~/ptq_workspace` | Custom workspace path |
+| `--keep` | clean | 0 | Number of recent jobs to keep |
 
 ## Project layout
 
@@ -108,11 +128,12 @@ pt_job_queue/
 ├── pytorch/                        # Source clone at nightly commit
 ├── scripts/apply_to_site_pkgs.sh   # Copies edits to site-packages
 └── jobs/
-    └── 20260214-174923-a1b2/       # Per-job directory
+    └── 20260214-174923/            # Per-issue job directory
         ├── pytorch/                # git worktree (isolated)
         ├── system_prompt.md
         ├── repro.py
-        ├── claude.log
+        ├── claude-1.log            # Per-run logs
+        ├── claude-2.log
         ├── report.md
         └── fix.diff
 ```
