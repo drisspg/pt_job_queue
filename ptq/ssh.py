@@ -28,7 +28,7 @@ class RemoteBackend:
     def run_streaming(self, cmd: str, follow: bool = True) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
         if follow:
             return subprocess.Popen(
-                ["ssh", *self.ssh_opts, self.machine, self._with_path(cmd)],
+                ["ssh", "-tt", *self.ssh_opts, self.machine, self._with_path(cmd)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

@@ -26,6 +26,16 @@ def build_system_prompt(issue_data: dict, issue_number: int, job_id: str, worksp
     )
 
 
+MAX_OUTPUT_LINES = 30
+
+
+def _truncate(text: str, max_lines: int = MAX_OUTPUT_LINES) -> str:
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    return "\n".join(lines[:max_lines]) + f"\n... ({len(lines) - max_lines} more lines)"
+
+
 def _print_stream_event(line: str) -> None:
     line = line.strip()
     if not line:
@@ -55,6 +65,19 @@ def _print_stream_event(line: str) -> None:
                             console.print(f"\n[dim]glob {inp.get('pattern', '')}[/dim]")
                         case _:
                             console.print(f"\n[dim]{tool}[/dim]")
+        case "user":
+            for block in event.get("message", {}).get("content", []):
+                if block.get("type") != "tool_result":
+                    continue
+                content = block.get("content", "")
+                is_error = block.get("is_error", False)
+                if is_error:
+                    console.print(f"[red]{_truncate(content)}[/red]")
+                elif content:
+                    result = event.get("tool_use_result", {})
+                    stdout = result.get("stdout", "") if isinstance(result, dict) else ""
+                    if stdout:
+                        console.print(f"[dim]{_truncate(stdout)}[/dim]")
 
 
 def launch_agent(
@@ -113,7 +136,7 @@ def launch_agent(
         f"--append-system-prompt-file {job_dir}/system_prompt.md "
         f"--output-format stream-json "
         f"--verbose "
-        f"2>&1 | tee {job_dir}/claude.log"
+        f"2>&1 | stdbuf -oL tee {job_dir}/claude.log"
     )
 
     register_job(job_id, machine=machine, local=local, workspace=workspace)

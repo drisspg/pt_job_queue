@@ -99,5 +99,44 @@ def apply(
     apply_diff(job_id, pytorch_path.expanduser())
 
 
+@app.command()
+def clean(
+    machine: Annotated[str | None, typer.Argument(help="Remote machine to clean.")] = None,
+    local: Annotated[bool, typer.Option("--local", help="Clean local workspace.")] = False,
+    workspace: Annotated[str | None, typer.Option(help="Custom workspace path.")] = None,
+    keep: Annotated[int, typer.Option(help="Number of most recent jobs to keep.")] = 0,
+) -> None:
+    """Remove old job worktrees and artifacts."""
+    if not machine and not local:
+        raise typer.BadParameter("Provide a machine name or use --local.")
+
+    from ptq.ssh import LocalBackend, RemoteBackend
+
+    if local:
+        backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
+    else:
+        assert machine is not None
+        backend = RemoteBackend(machine=machine, workspace=workspace or "~/ptq_workspace")
+
+    ws = backend.workspace
+    result = backend.run(f"ls -1dt {ws}/jobs/*/", check=False)
+    job_dirs = [d.strip().rstrip("/") for d in result.stdout.splitlines() if d.strip()]
+
+    to_remove = job_dirs[keep:] if keep else job_dirs
+    if not to_remove:
+        console.print("Nothing to clean.")
+        return
+
+    console.print(f"Removing {len(to_remove)} job(s) (keeping {keep})...")
+    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
+    for job_dir in to_remove:
+        name = job_dir.split("/")[-1]
+        backend.run(f"cd {ws}/pytorch && git worktree remove {job_dir}/pytorch --force", check=False)
+        backend.run(f"rm -rf {job_dir}")
+        console.print(f"  removed {name}")
+    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
+    console.print("[bold green]Clean complete.[/bold green]")
+
+
 if __name__ == "__main__":
     app()
