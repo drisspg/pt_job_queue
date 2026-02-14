@@ -71,7 +71,26 @@ ptq apply 174923 --pytorch-path ~/meta/pytorch
 
 Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps for creating a PR.
 
-### 5. Clean up
+### 5. Manage running agents
+
+```bash
+# List all jobs with running/stopped status
+ptq list
+
+# Check status of a specific job
+ptq status 174923
+
+# Kill a specific agent
+ptq kill 174923
+
+# Kill all agents on a machine (tracked + zombie processes)
+ptq prune my-gpu-box
+
+# Kill all local agents
+ptq prune --local
+```
+
+### 6. Clean up
 
 ```bash
 # Remove all jobs on a machine
@@ -97,7 +116,7 @@ Removes job directories and prunes git worktrees.
 | `--follow/--no-follow` | run | follow | Stream agent output to terminal |
 | `--model` | run | opus | Claude model |
 | `--max-turns` | run | 100 | Max agent turns |
-| `--workspace` | setup, run | `~/ptq_workspace` | Custom workspace path |
+| `--workspace` | setup, run, prune | `~/ptq_workspace` | Custom workspace path |
 | `--keep` | clean | 0 | Number of recent jobs to keep |
 
 ## Project layout
