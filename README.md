@@ -51,7 +51,22 @@ The agent will:
 
 Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees.
 
-### 3. View results
+### 3. Monitor progress
+
+```bash
+# Peek at the agent's worklog
+ptq peek 174923
+
+# Peek with recent log activity
+ptq peek 174923 --log 30
+
+# List all jobs with running/stopped status
+ptq list
+```
+
+The agent maintains a `worklog.md` with entries after each significant step, so you can check progress without streaming the full output.
+
+### 4. View results
 
 ```bash
 # By issue number (uses most recent job)
@@ -61,9 +76,9 @@ ptq results 174923
 ptq results 20260214-174923
 ```
 
-Fetches `report.md`, `fix.diff`, and `claude.log` from the remote and displays the report.
+Fetches `report.md`, `fix.diff`, `worklog.md`, and the run log from the remote.
 
-### 4. Apply the fix
+### 5. Apply the fix
 
 ```bash
 ptq apply 174923 --pytorch-path ~/meta/pytorch
@@ -71,12 +86,9 @@ ptq apply 174923 --pytorch-path ~/meta/pytorch
 
 Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps for creating a PR.
 
-### 5. Manage running agents
+### 6. Manage agents
 
 ```bash
-# List all jobs with running/stopped status
-ptq list
-
 # Check status of a specific job
 ptq status 174923
 
@@ -90,7 +102,7 @@ ptq prune my-gpu-box
 ptq prune --local
 ```
 
-### 6. Clean up
+### 7. Clean up
 
 ```bash
 # Remove all jobs on a machine
@@ -112,12 +124,13 @@ Removes job directories and prunes git worktrees.
 | `--cuda` | setup | auto-detect | CUDA tag (`cu124`, `cu126`, `cu128`, `cu130`) |
 | `--cpu` | setup | | Use CPU-only PyTorch (macOS/testing) |
 | `--machine` | run | | Remote machine hostname |
-| `--local` | setup, run, clean | | Use local workspace instead of SSH |
+| `--local` | setup, run, clean, prune | | Use local workspace instead of SSH |
 | `--follow/--no-follow` | run | follow | Stream agent output to terminal |
 | `--model` | run | opus | Claude model |
 | `--max-turns` | run | 100 | Max agent turns |
 | `--workspace` | setup, run, prune | `~/ptq_workspace` | Custom workspace path |
 | `--keep` | clean | 0 | Number of recent jobs to keep |
+| `--log` | peek | 0 | Number of log lines to show |
 
 ## Project layout
 
@@ -153,6 +166,7 @@ pt_job_queue/
         ├── repro.py
         ├── claude-1.log            # Per-run logs
         ├── claude-2.log
+        ├── worklog.md              # Agent progress log
         ├── report.md
         └── fix.diff
 ```

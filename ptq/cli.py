@@ -50,7 +50,10 @@ def setup(
 
 @app.command()
 def run(
-    issue: Annotated[int, typer.Option(help="GitHub issue number.")],
+    job_id: Annotated[
+        str | None, typer.Argument(help="Job ID or issue number to re-run.")
+    ] = None,
+    issue: Annotated[int | None, typer.Option(help="GitHub issue number.")] = None,
     machine: Annotated[
         str | None, typer.Option(help="Remote machine to run on.")
     ] = None,
@@ -63,14 +66,39 @@ def run(
     workspace: Annotated[
         str | None, typer.Option(help="Custom workspace path.")
     ] = None,
+    message: Annotated[
+        str | None,
+        typer.Option("--message", "-m", help="Custom instruction for the agent."),
+    ] = None,
 ) -> None:
-    """Launch a Claude agent to investigate a PyTorch issue."""
-    if not machine and not local:
-        raise typer.BadParameter("Provide --machine or --local.")
+    """Launch a Claude agent to investigate a PyTorch issue.
 
+    Re-run an existing job by passing its JOB_ID (or issue number) as a positional arg.
+    Machine/local settings are pulled from the previous run automatically.
+
+    Examples:
+        ptq run --issue 174923 --machine aws-gpu-dev
+        ptq run 20260214-174923 -m "look at flex_attention.py instead"
+        ptq run 174923 -m "try a different approach"
+    """
     from ptq.agent import launch_agent
     from ptq.issue import fetch_issue
     from ptq.ssh import LocalBackend, RemoteBackend
+
+    if job_id is not None:
+        from ptq.job import get_job, resolve_job_id
+
+        resolved = resolve_job_id(job_id)
+        job = get_job(resolved)
+        issue = issue or job["issue"]
+        machine = machine or job.get("machine")
+        local = local or job.get("local", False)
+        workspace = workspace or job.get("workspace")
+
+    if issue is None:
+        raise typer.BadParameter("Provide --issue or a JOB_ID to re-run.")
+    if not machine and not local:
+        raise typer.BadParameter("Provide --machine or --local.")
 
     console.print(f"Fetching issue #{issue}...")
     issue_data = fetch_issue(issue)
@@ -93,6 +121,7 @@ def run(
         follow=follow,
         model=model,
         max_turns=max_turns,
+        message=message,
     )
 
 
@@ -129,24 +158,43 @@ def apply(
     apply_diff(job_id, pytorch_path.expanduser())
 
 
-@app.command()
-def clean(
-    machine: Annotated[
-        str | None, typer.Argument(help="Remote machine to clean.")
-    ] = None,
-    local: Annotated[
-        bool, typer.Option("--local", help="Clean local workspace.")
-    ] = False,
-    workspace: Annotated[
-        str | None, typer.Option(help="Custom workspace path.")
-    ] = None,
-    keep: Annotated[int, typer.Option(help="Number of most recent jobs to keep.")] = 0,
-) -> None:
-    """Remove old job worktrees and artifacts."""
-    if not machine and not local:
-        raise typer.BadParameter("Provide a machine name or use --local.")
+def _clean_single_job(job_id: str) -> None:
+    """Kill agent, remove remote files, drop from DB."""
+    from ptq.job import get_job
+    from ptq.ssh import backend_for_job, load_jobs_db, save_jobs_db
 
-    from ptq.ssh import LocalBackend, RemoteBackend
+    job = get_job(job_id)
+    backend = backend_for_job(job_id)
+    ws = backend.workspace
+    job_dir = f"{ws}/jobs/{job_id}"
+
+    pid = job.get("pid")
+    if pid and backend.is_pid_alive(pid):
+        backend.kill_pid(pid)
+        console.print(f"  killed agent (pid {pid})")
+
+    backend.run(
+        f"cd {ws}/pytorch && git worktree remove {job_dir}/pytorch --force",
+        check=False,
+    )
+    backend.run(f"rm -rf {job_dir}", check=False)
+    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
+
+    db = load_jobs_db()
+    db.pop(job_id, None)
+    save_jobs_db(db)
+    console.print(f"  removed {job_id} (issue #{job.get('issue', '?')})")
+
+
+def _clean_machine(
+    machine: str | None,
+    local: bool,
+    workspace: str | None,
+    keep: int,
+    include_running: bool,
+) -> None:
+    """Bulk clean jobs on a machine."""
+    from ptq.ssh import LocalBackend, RemoteBackend, load_jobs_db, save_jobs_db
 
     if local:
         backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
@@ -156,27 +204,107 @@ def clean(
             machine=machine, workspace=workspace or "~/ptq_workspace"
         )
 
-    ws = backend.workspace
-    result = backend.run(f"ls -1dt {ws}/jobs/*/", check=False)
-    job_dirs = [d.strip().rstrip("/") for d in result.stdout.splitlines() if d.strip()]
+    db = load_jobs_db()
+    matching = [
+        (jid, entry)
+        for jid, entry in sorted(db.items())
+        if (local and entry.get("local"))
+        or (machine and entry.get("machine") == machine)
+    ]
 
-    to_remove = job_dirs[keep:] if keep else job_dirs
+    if not include_running:
+        running = []
+        stopped = []
+        for jid, entry in matching:
+            pid = entry.get("pid")
+            if pid and backend.is_pid_alive(pid):
+                running.append((jid, entry))
+            else:
+                stopped.append((jid, entry))
+        if running:
+            console.print(
+                f"Skipping {len(running)} running job(s). Use --all to include them."
+            )
+        matching = stopped
+
+    to_remove = matching[:-keep] if keep and len(matching) > keep else matching
     if not to_remove:
         console.print("Nothing to clean.")
         return
 
+    ws = backend.workspace
     console.print(f"Removing {len(to_remove)} job(s) (keeping {keep})...")
     backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
-    for job_dir in to_remove:
-        name = job_dir.split("/")[-1]
+
+    for jid, entry in to_remove:
+        pid = entry.get("pid")
+        if pid and backend.is_pid_alive(pid):
+            backend.kill_pid(pid)
+
+        job_dir = f"{ws}/jobs/{jid}"
         backend.run(
             f"cd {ws}/pytorch && git worktree remove {job_dir}/pytorch --force",
             check=False,
         )
         backend.run(f"rm -rf {job_dir}")
-        console.print(f"  removed {name}")
+        db.pop(jid, None)
+        console.print(f"  removed {jid}")
+
+    save_jobs_db(db)
     backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
     console.print("[bold green]Clean complete.[/bold green]")
+
+
+@app.command()
+def clean(
+    target: Annotated[
+        str | None, typer.Argument(help="Job ID, issue number, or machine name.")
+    ] = None,
+    local: Annotated[
+        bool, typer.Option("--local", help="Clean local workspace.")
+    ] = False,
+    workspace: Annotated[
+        str | None, typer.Option(help="Custom workspace path.")
+    ] = None,
+    keep: Annotated[int, typer.Option(help="Number of most recent jobs to keep.")] = 0,
+    all_jobs: Annotated[
+        bool, typer.Option("--all", help="Include running jobs.")
+    ] = False,
+) -> None:
+    """Remove jobs: kill agent, delete remote files, drop from tracking DB.
+
+    Pass a JOB_ID to clean a single job, or a MACHINE name to bulk clean.
+
+    Examples:
+        ptq clean 20260214-174923          # clean one job
+        ptq clean 174923                   # clean by issue number
+        ptq clean aws-gpu-dev              # clean all stopped jobs on machine
+        ptq clean aws-gpu-dev --keep 2     # keep 2 most recent
+        ptq clean aws-gpu-dev --all        # include running jobs
+    """
+    from ptq.job import resolve_job_id
+    from ptq.ssh import load_jobs_db
+
+    if target is not None:
+        db = load_jobs_db()
+        is_job = target in db or (
+            target.isdigit() and any(v.get("issue") == int(target) for v in db.values())
+        )
+        if is_job:
+            resolved = resolve_job_id(target)
+            _clean_single_job(resolved)
+            return
+
+    if not target and not local:
+        raise typer.BadParameter("Provide a job ID, machine name, or --local.")
+
+    _clean_machine(
+        machine=target,
+        local=local,
+        workspace=workspace,
+        keep=keep,
+        include_running=all_jobs,
+    )
 
 
 @app.command(name="list")
@@ -214,6 +342,24 @@ def list_jobs() -> None:
         table.add_row(status, job_id, f"#{issue}", runs, target)
 
     console.print(table)
+    console.print()
+    console.print("[dim]Actions:[/dim]")
+    console.print("[dim]  ptq run --issue NUM --machine TARGET  # new run[/dim]")
+    console.print(
+        "[dim]  ptq run JOB_ID                        # re-run existing job[/dim]"
+    )
+    console.print(
+        "[dim]  ptq run JOB_ID -m 'look at X instead' # re-run with steering[/dim]"
+    )
+    console.print("[dim]  ptq peek JOB_ID                       # check progress[/dim]")
+    console.print("[dim]  ptq results JOB_ID                    # fetch results[/dim]")
+    console.print("[dim]  ptq kill JOB_ID                       # stop agent[/dim]")
+    console.print(
+        "[dim]  ptq clean JOB_ID                      # remove job entirely[/dim]"
+    )
+    console.print(
+        "[dim]  ptq clean MACHINE                     # bulk clean stopped jobs[/dim]"
+    )
 
 
 @app.command()
@@ -341,84 +487,6 @@ def kill(
     else:
         save_pid(job_id, None)
         console.print(f"[dim]Agent already stopped for {job_id}[/dim]")
-
-
-@app.command()
-def prune(
-    machine: Annotated[
-        str | None, typer.Argument(help="Remote machine to prune.")
-    ] = None,
-    local: Annotated[bool, typer.Option("--local", help="Prune local agents.")] = False,
-    workspace: Annotated[
-        str | None, typer.Option(help="Custom workspace path.")
-    ] = None,
-) -> None:
-    """Kill all running agents (tracked and zombie) on a machine."""
-    if not machine and not local:
-        raise typer.BadParameter("Provide a machine name or use --local.")
-
-    from ptq.job import save_pid
-    from ptq.ssh import LocalBackend, RemoteBackend, load_jobs_db
-
-    if local:
-        backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
-    else:
-        assert machine is not None
-        backend = RemoteBackend(
-            machine=machine, workspace=workspace or "~/ptq_workspace"
-        )
-
-    db = load_jobs_db()
-    tracked_pids: set[int] = set()
-    killed = 0
-    cleared = 0
-
-    for job_id, entry in sorted(db.items()):
-        if local and not entry.get("local"):
-            continue
-        if machine and entry.get("machine") != machine:
-            continue
-
-        pid = entry.get("pid")
-        if not pid:
-            continue
-        tracked_pids.add(pid)
-
-        if backend.is_pid_alive(pid):
-            backend.kill_pid(pid)
-            save_pid(job_id, None)
-            console.print(f"  [bold]killed[/bold]  {job_id}  (pid {pid})")
-            killed += 1
-        else:
-            save_pid(job_id, None)
-            cleared += 1
-
-    ws = backend.workspace
-    result = backend.run(f"ps aux | grep '[c]laude.*{ws}' || true", check=False)
-    zombie_killed = 0
-    for line in result.stdout.strip().splitlines():
-        if not line.strip():
-            continue
-        parts = line.split()
-        if len(parts) < 2 or not parts[1].isdigit():
-            continue
-        zpid = int(parts[1])
-        if zpid in tracked_pids:
-            continue
-        cmd_preview = " ".join(parts[10:])[:100]
-        backend.kill_pid(zpid)
-        console.print(f"  [bold red]zombie[/bold red]  pid {zpid}  {cmd_preview}")
-        zombie_killed += 1
-
-    target = "local" if local else machine
-    if killed or zombie_killed:
-        console.print(
-            f"\n{target}: killed {killed} tracked + {zombie_killed} zombie agent(s)."
-        )
-    if cleared:
-        console.print(f"{target}: cleared {cleared} stale PID(s).")
-    if not killed and not zombie_killed and not cleared:
-        console.print(f"{target}: no running agents found.")
 
 
 if __name__ == "__main__":

@@ -26,14 +26,23 @@ PROMPT_TEMPLATE = (
 ).read_text()
 
 
+RESERVED_HEADER_RE = re.compile(r"x-anthropic-\S+", re.IGNORECASE)
+
+
+def _sanitize_for_api(text: str) -> str:
+    return RESERVED_HEADER_RE.sub("[redacted-header]", text)
+
+
 def build_system_prompt(
     issue_data: dict, issue_number: int, job_id: str, workspace: str
 ) -> str:
-    return PROMPT_TEMPLATE.format(
-        job_id=job_id,
-        issue_number=issue_number,
-        issue_context=format_issue_context(issue_data, issue_number),
-        workspace=workspace,
+    return _sanitize_for_api(
+        PROMPT_TEMPLATE.format(
+            job_id=job_id,
+            issue_number=issue_number,
+            issue_context=format_issue_context(issue_data, issue_number),
+            workspace=workspace,
+        )
     )
 
 
@@ -118,6 +127,34 @@ def _print_stream_event(line: str) -> None:
                 console.print()
 
 
+DEFAULT_MESSAGE = (
+    "Investigate and fix the PyTorch issue described in your system prompt."
+)
+
+
+def _build_prior_context(backend: Backend, job_dir: str) -> str:
+    worklog = backend.run(f"cat {job_dir}/worklog.md", check=False)
+    report = backend.run(f"cat {job_dir}/report.md", check=False)
+
+    worklog_content = worklog.stdout.strip() if worklog.returncode == 0 else ""
+    report_content = report.stdout.strip() if report.returncode == 0 else ""
+
+    if not worklog_content and not report_content:
+        return ""
+
+    sections = [
+        "\n\n## Prior Run Context\n",
+        "The following is from a previous investigation attempt on this issue. "
+        "Use it to avoid repeating work and to build on what was already found.\n",
+    ]
+    if worklog_content:
+        sections.append(f"### Previous Worklog\n{worklog_content}\n")
+    if report_content:
+        sections.append(f"### Previous Report\n{report_content}\n")
+
+    return "\n".join(sections)
+
+
 def launch_agent(
     backend: Backend,
     issue_data: dict,
@@ -128,6 +165,7 @@ def launch_agent(
     follow: bool = True,
     model: str = "opus",
     max_turns: int = 100,
+    message: str | None = None,
 ) -> str:
     workspace = backend.workspace
     existing = find_existing_job(issue_number, machine=machine, local=local)
@@ -161,6 +199,13 @@ def launch_agent(
         console.print("Reusing existing worktree.")
 
     system_prompt = build_system_prompt(issue_data, issue_number, job_id, workspace)
+
+    if existing:
+        prior_context = _build_prior_context(backend, job_dir)
+        if prior_context:
+            system_prompt += prior_context
+            console.print("Loaded prior run context (worklog/report).")
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(system_prompt)
         prompt_tmp = Path(f.name)
@@ -181,11 +226,13 @@ def launch_agent(
             "[yellow]No repro script found in issue — agent will write one.[/yellow]"
         )
 
+    agent_message = message or DEFAULT_MESSAGE
     log_file = f"{job_dir}/claude-{run_number}.log"
+    escaped_message = agent_message.replace("'", "'\\''")
     claude_cmd = (
         f"cd {worktree_path} && "
         f"stdbuf -oL "
-        f"claude -p 'Investigate and fix the PyTorch issue described in your system prompt.' "
+        f"claude -p '{escaped_message}' "
         f"--model {model} "
         f"--max-turns {max_turns} "
         f"--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' "
