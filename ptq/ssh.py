@@ -13,9 +13,13 @@ class RemoteBackend:
     workspace: str = "~/ptq_workspace"
     ssh_opts: list[str] = field(default_factory=lambda: ["-o", "StrictHostKeyChecking=no"])
 
+    @staticmethod
+    def _with_path(cmd: str) -> str:
+        return f'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && {cmd}'
+
     def run(self, cmd: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["ssh", *self.ssh_opts, self.machine, cmd],
+            ["ssh", *self.ssh_opts, self.machine, self._with_path(cmd)],
             capture_output=True,
             text=True,
             check=check,
@@ -24,7 +28,7 @@ class RemoteBackend:
     def run_streaming(self, cmd: str, follow: bool = True) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
         if follow:
             return subprocess.Popen(
-                ["ssh", *self.ssh_opts, self.machine, cmd],
+                ["ssh", *self.ssh_opts, self.machine, self._with_path(cmd)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
