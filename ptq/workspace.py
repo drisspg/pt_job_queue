@@ -26,12 +26,15 @@ def detect_cuda_version(backend: Backend) -> str:
     match = re.search(r"CUDA Version:\s+(\d+\.\d+)", result.stdout)
     if not match:
         raise SystemExit("Could not parse CUDA version from nvidia-smi. Use --cuda to specify.")
-    version = match.group(1)
-    major_minor = f"{version.split('.')[0]}.{version.split('.')[1]}"
-    for prefix, tag in CUDA_INDEX_MAP.items():
-        if major_minor.startswith(prefix):
-            return tag
-    raise SystemExit(f"Unsupported CUDA version: {major_minor}. Use --cuda to specify (cu124, cu126, cu128, cu130).")
+    driver_version = tuple(int(x) for x in match.group(1).split("."))
+    best = None
+    for version_str, tag in CUDA_INDEX_MAP.items():
+        toolkit_version = tuple(int(x) for x in version_str.split("."))
+        if toolkit_version <= driver_version and (best is None or toolkit_version > best[0]):
+            best = (toolkit_version, tag)
+    if best is None:
+        raise SystemExit(f"CUDA driver {match.group(1)} is too old. Minimum supported: {min(CUDA_INDEX_MAP)}.")
+    return best[1]
 
 
 def setup_workspace(backend: Backend, cuda_tag: str | None = None, cpu: bool = False) -> None:
