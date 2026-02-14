@@ -179,5 +179,172 @@ def clean(
     console.print("[bold green]Clean complete.[/bold green]")
 
 
+@app.command(name="list")
+def list_jobs() -> None:
+    """List all tracked jobs."""
+    from ptq.ssh import backend_for_job, load_jobs_db
+
+    db = load_jobs_db()
+    if not db:
+        console.print("No jobs.")
+        return
+
+    for job_id, entry in sorted(db.items()):
+        issue = entry.get("issue", "?")
+        runs = entry.get("runs", 1)
+        target = entry.get("machine") or "local"
+        pid = entry.get("pid")
+        if pid:
+            backend = backend_for_job(job_id)
+            state = (
+                "[bold green]running[/bold green]"
+                if backend.is_pid_alive(pid)
+                else "[dim]stopped[/dim]"
+            )
+        else:
+            state = "[dim]stopped[/dim]"
+        console.print(f"  {state}  {job_id}  issue #{issue}  runs={runs}  {target}")
+
+
+@app.command()
+def status(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+) -> None:
+    """Check if an agent is still running for a job."""
+    from ptq.job import get_job, resolve_job_id
+    from ptq.ssh import backend_for_job
+
+    job_id = resolve_job_id(job_id)
+    job = get_job(job_id)
+    backend = backend_for_job(job_id)
+    ws = backend.workspace
+
+    pid = job.get("pid")
+    runs = job.get("runs", 1)
+    target = job.get("machine") or "local"
+
+    alive = pid is not None and backend.is_pid_alive(pid)
+
+    if alive:
+        console.print(
+            f"[bold green]running[/bold green]  {job_id}  (run {runs}, {target}, pid {pid})"
+        )
+        console.print(
+            f"  ptq run --issue {job['issue']} --machine {target}  # to reattach"
+        )
+    else:
+        console.print(f"[bold dim]stopped[/bold dim]  {job_id}  (run {runs}, {target})")
+        console.print(f"  ptq results {job_id}")
+
+    log_file = f"{ws}/jobs/{job_id}/claude-{runs}.log"
+    tail = backend.run(f"tail -1 {log_file}", check=False)
+    if tail.stdout.strip():
+        console.print(f"\n  last log: [dim]{tail.stdout.strip()[:120]}[/dim]")
+
+
+@app.command()
+def kill(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+) -> None:
+    """Kill a running agent for a job."""
+    from ptq.job import get_job, resolve_job_id, save_pid
+    from ptq.ssh import backend_for_job
+
+    job_id = resolve_job_id(job_id)
+    job = get_job(job_id)
+    backend = backend_for_job(job_id)
+
+    pid = job.get("pid")
+    if not pid:
+        console.print(f"[dim]No PID tracked for {job_id}[/dim]")
+        return
+
+    if backend.is_pid_alive(pid):
+        backend.kill_pid(pid)
+        save_pid(job_id, None)
+        console.print(f"[bold]Killed agent for {job_id} (pid {pid})[/bold]")
+    else:
+        save_pid(job_id, None)
+        console.print(f"[dim]Agent already stopped for {job_id}[/dim]")
+
+
+@app.command()
+def prune(
+    machine: Annotated[
+        str | None, typer.Argument(help="Remote machine to prune.")
+    ] = None,
+    local: Annotated[bool, typer.Option("--local", help="Prune local agents.")] = False,
+    workspace: Annotated[
+        str | None, typer.Option(help="Custom workspace path.")
+    ] = None,
+) -> None:
+    """Kill all running agents (tracked and zombie) on a machine."""
+    if not machine and not local:
+        raise typer.BadParameter("Provide a machine name or use --local.")
+
+    from ptq.job import save_pid
+    from ptq.ssh import LocalBackend, RemoteBackend, load_jobs_db
+
+    if local:
+        backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
+    else:
+        assert machine is not None
+        backend = RemoteBackend(
+            machine=machine, workspace=workspace or "~/ptq_workspace"
+        )
+
+    db = load_jobs_db()
+    tracked_pids: set[int] = set()
+    killed = 0
+    cleared = 0
+
+    for job_id, entry in sorted(db.items()):
+        if local and not entry.get("local"):
+            continue
+        if machine and entry.get("machine") != machine:
+            continue
+
+        pid = entry.get("pid")
+        if not pid:
+            continue
+        tracked_pids.add(pid)
+
+        if backend.is_pid_alive(pid):
+            backend.kill_pid(pid)
+            save_pid(job_id, None)
+            console.print(f"  [bold]killed[/bold]  {job_id}  (pid {pid})")
+            killed += 1
+        else:
+            save_pid(job_id, None)
+            cleared += 1
+
+    ws = backend.workspace
+    result = backend.run(f"ps aux | grep '[c]laude.*{ws}' || true", check=False)
+    zombie_killed = 0
+    for line in result.stdout.strip().splitlines():
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            continue
+        zpid = int(parts[1])
+        if zpid in tracked_pids:
+            continue
+        cmd_preview = " ".join(parts[10:])[:100]
+        backend.kill_pid(zpid)
+        console.print(f"  [bold red]zombie[/bold red]  pid {zpid}  {cmd_preview}")
+        zombie_killed += 1
+
+    target = "local" if local else machine
+    if killed or zombie_killed:
+        console.print(
+            f"\n{target}: killed {killed} tracked + {zombie_killed} zombie agent(s)."
+        )
+    if cleared:
+        console.print(f"{target}: cleared {cleared} stale PID(s).")
+    if not killed and not zombie_killed and not cleared:
+        console.print(f"{target}: no running agents found.")
+
+
 if __name__ == "__main__":
     app()

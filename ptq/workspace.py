@@ -69,7 +69,7 @@ def setup_workspace(
 
     console.print(f"Installing PyTorch nightly ({cuda_tag})...")
     result = backend.run(
-        f"cd {workspace} && uv pip install --python .venv/bin/python --pre torch --index-url {index_url}",
+        f"cd {workspace} && uv pip install --python .venv/bin/python --pre torch numpy --index-url {index_url}",
         check=False,
     )
     if result.returncode != 0:

@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import json
 import re
-import signal
 import tempfile
+import time
 from pathlib import Path
 
 from rich.console import Console
 
 from ptq.issue import extract_repro_script, format_issue_context
-from ptq.job import find_existing_job, increment_run, make_job_id, register_job
+from ptq.job import (
+    find_existing_job,
+    increment_run,
+    make_job_id,
+    register_job,
+    save_pid,
+)
 from ptq.ssh import Backend
 from ptq.workspace import deploy_scripts
 
@@ -185,8 +191,7 @@ def launch_agent(
         f"--dangerously-skip-permissions "
         f"--append-system-prompt-file {job_dir}/system_prompt.md "
         f"--output-format stream-json "
-        f"--verbose "
-        f"2>&1 | stdbuf -oL tee {log_file}"
+        f"--verbose"
     )
 
     if not existing:
@@ -197,36 +202,35 @@ def launch_agent(
             workspace=workspace,
             run_number=run_number,
         )
+
     console.print(f"Launching agent ({'local' if local else machine})...")
+    backend.run(f"touch {log_file}")
+    pid = backend.launch_background(claude_cmd, log_file)
+    save_pid(job_id, pid)
 
-    proc = backend.run_streaming(claude_cmd, follow=follow)
-
-    if follow and hasattr(proc, "stdout") and proc.stdout:
-        interrupted = False
-
-        def _sigint_handler(signum: int, frame: object) -> None:
-            nonlocal interrupted
-            interrupted = True
-            proc.kill()
-
-        old_handler = signal.signal(signal.SIGINT, _sigint_handler)
-        try:
-            for line in proc.stdout:
-                if interrupted:
-                    break
-                if line.strip().startswith("{"):
-                    _print_stream_event(line)
-            proc.wait()
-        finally:
-            signal.signal(signal.SIGINT, old_handler)
-
-        if interrupted:
-            console.print("\n[bold yellow]Interrupted.[/bold yellow]")
-        else:
-            console.print("\n[bold]Agent finished.[/bold]")
-        console.print(f"  ptq results {job_id}")
-    else:
+    if not follow:
         console.print("[bold]Agent launched in background.[/bold]")
         console.print(f"  ptq results {job_id}")
+        return job_id
+
+    time.sleep(2)
+    tail = backend.tail_log(log_file)
+
+    try:
+        for line in tail.stdout:
+            if line.strip().startswith("{"):
+                _print_stream_event(line)
+    except KeyboardInterrupt:
+        tail.terminate()
+        tail.wait()
+        console.print(
+            "\n[bold yellow]Detached. Agent still running on remote.[/bold yellow]"
+        )
+        console.print(f"  ptq results {job_id}")
+        return job_id
+
+    tail.wait()
+    console.print("\n[bold]Agent finished.[/bold]")
+    console.print(f"  ptq results {job_id}")
 
     return job_id

@@ -48,8 +48,20 @@ def increment_run(job_id: str) -> int:
     entry = db[job_id]
     run_number = entry.get("runs", 0) + 1
     entry["runs"] = run_number
+    entry.pop("pid", None)
     save_jobs_db(db)
     return run_number
+
+
+def save_pid(job_id: str, pid: int | None) -> None:
+    db = load_jobs_db()
+    if job_id not in db:
+        return
+    if pid is not None:
+        db[job_id]["pid"] = pid
+    else:
+        db[job_id].pop("pid", None)
+    save_jobs_db(db)
 
 
 def resolve_job_id(job_id_or_issue: str) -> str:

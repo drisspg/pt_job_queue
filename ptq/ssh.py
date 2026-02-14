@@ -27,18 +27,34 @@ class RemoteBackend:
             check=check,
         )
 
-    def run_streaming(
-        self, cmd: str, follow: bool = True
-    ) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
-        if follow:
-            return subprocess.Popen(
-                ["ssh", "-tt", *self.ssh_opts, self.machine, self._with_path(cmd)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        nohup_cmd = f"nohup {cmd} &"
-        return self.run(nohup_cmd, check=False)
+    def launch_background(self, cmd: str, log_file: str) -> int | None:
+        bg_cmd = f"nohup {cmd} > {log_file} 2>&1 & echo $!"
+        result = self.run(bg_cmd, check=False)
+        pid_str = (
+            result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+        )
+        return int(pid_str) if pid_str.isdigit() else None
+
+    def is_pid_alive(self, pid: int) -> bool:
+        result = self.run(f"kill -0 {pid} 2>/dev/null && echo alive", check=False)
+        return "alive" in result.stdout
+
+    def kill_pid(self, pid: int) -> bool:
+        result = self.run(f"kill {pid} 2>/dev/null", check=False)
+        return result.returncode == 0
+
+    def tail_log(self, log_file: str) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            [
+                "ssh",
+                *self.ssh_opts,
+                self.machine,
+                self._with_path(f"tail -f {log_file}"),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
 
     def copy_to(self, local_path: Path, remote_path: str) -> None:
         subprocess.run(
@@ -72,18 +88,29 @@ class LocalBackend:
             check=check,
         )
 
-    def run_streaming(
-        self, cmd: str, follow: bool = True
-    ) -> subprocess.Popen[str] | subprocess.CompletedProcess[str]:
-        if follow:
-            return subprocess.Popen(
-                ["zsh", "-c", cmd],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        nohup_cmd = f"nohup {cmd} &"
-        return self.run(nohup_cmd, check=False)
+    def launch_background(self, cmd: str, log_file: str) -> int | None:
+        bg_cmd = f"nohup {cmd} > {log_file} 2>&1 & echo $!"
+        result = self.run(bg_cmd, check=False)
+        pid_str = (
+            result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+        )
+        return int(pid_str) if pid_str.isdigit() else None
+
+    def is_pid_alive(self, pid: int) -> bool:
+        result = self.run(f"kill -0 {pid} 2>/dev/null && echo alive", check=False)
+        return "alive" in result.stdout
+
+    def kill_pid(self, pid: int) -> bool:
+        result = self.run(f"kill {pid} 2>/dev/null", check=False)
+        return result.returncode == 0
+
+    def tail_log(self, log_file: str) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            ["zsh", "-c", f"tail -f {log_file}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
 
     def copy_to(self, local_path: Path, remote_path: str) -> None:
         dest = Path(remote_path.replace("~", str(Path.home())))
