@@ -184,6 +184,7 @@ def launch_agent(
     log_file = f"{job_dir}/claude-{run_number}.log"
     claude_cmd = (
         f"cd {worktree_path} && "
+        f"stdbuf -oL "
         f"claude -p 'Investigate and fix the PyTorch issue described in your system prompt.' "
         f"--model {model} "
         f"--max-turns {max_turns} "

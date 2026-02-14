@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ class RemoteBackend:
         )
 
     def launch_background(self, cmd: str, log_file: str) -> int | None:
-        bg_cmd = f"nohup {cmd} > {log_file} 2>&1 & echo $!"
+        bg_cmd = f"nohup zsh -c {shlex.quote(cmd)} > {log_file} 2>&1 & echo $!"
         result = self.run(bg_cmd, check=False)
         pid_str = (
             result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
@@ -89,7 +90,7 @@ class LocalBackend:
         )
 
     def launch_background(self, cmd: str, log_file: str) -> int | None:
-        bg_cmd = f"nohup {cmd} > {log_file} 2>&1 & echo $!"
+        bg_cmd = f"nohup zsh -c {shlex.quote(cmd)} > {log_file} 2>&1 & echo $!"
         result = self.run(bg_cmd, check=False)
         pid_str = (
             result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""

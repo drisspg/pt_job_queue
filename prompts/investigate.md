@@ -16,6 +16,10 @@ You are investigating a PyTorch bug. Your goal is to reproduce, understand, and 
 
 {issue_context}
 
+## Worklog
+
+Maintain a running worklog at `{workspace}/jobs/{job_id}/worklog.md`. Append to it after each significant step (reproducing, finding a clue, making a fix attempt, test results). Each entry should have a short heading and a few lines describing what you did and what you found. This lets the user check progress while you're still running.
+
 ## Instructions
 
 ### 1. Reproduce
