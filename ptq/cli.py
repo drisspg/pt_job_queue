@@ -182,6 +182,8 @@ def clean(
 @app.command(name="list")
 def list_jobs() -> None:
     """List all tracked jobs."""
+    from rich.table import Table
+
     from ptq.ssh import backend_for_job, load_jobs_db
 
     db = load_jobs_db()
@@ -189,21 +191,94 @@ def list_jobs() -> None:
         console.print("No jobs.")
         return
 
+    table = Table(
+        show_header=True, header_style="bold", show_lines=False, pad_edge=False
+    )
+    table.add_column("Status", width=9)
+    table.add_column("Job ID")
+    table.add_column("Issue", style="cyan")
+    table.add_column("Runs", justify="right")
+    table.add_column("Target")
+
     for job_id, entry in sorted(db.items()):
-        issue = entry.get("issue", "?")
-        runs = entry.get("runs", 1)
+        issue = str(entry.get("issue", "?"))
+        runs = str(entry.get("runs", 1))
         target = entry.get("machine") or "local"
         pid = entry.get("pid")
         if pid:
             backend = backend_for_job(job_id)
-            state = (
-                "[bold green]running[/bold green]"
-                if backend.is_pid_alive(pid)
-                else "[dim]stopped[/dim]"
-            )
+            alive = backend.is_pid_alive(pid)
         else:
-            state = "[dim]stopped[/dim]"
-        console.print(f"  {state}  {job_id}  issue #{issue}  runs={runs}  {target}")
+            alive = False
+        status = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
+        table.add_row(status, job_id, f"#{issue}", runs, target)
+
+    console.print(table)
+
+
+@app.command()
+def peek(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+    log_lines: Annotated[
+        int, typer.Option("--log", help="Number of log lines to show.")
+    ] = 0,
+) -> None:
+    """Peek at an agent's progress (worklog + optional log tail)."""
+    import json
+
+    from rich.markdown import Markdown
+
+    from ptq.job import get_job, resolve_job_id
+    from ptq.ssh import backend_for_job
+
+    job_id = resolve_job_id(job_id)
+    job = get_job(job_id)
+    backend = backend_for_job(job_id)
+    ws = backend.workspace
+    runs = job.get("runs", 1)
+    pid = job.get("pid")
+    target = job.get("machine") or "local"
+
+    alive = pid is not None and backend.is_pid_alive(pid)
+    status_str = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
+    console.print(
+        f"{status_str}  {job_id}  issue #{job.get('issue', '?')}  (run {runs}, {target})"
+    )
+    console.print()
+
+    worklog_path = f"{ws}/jobs/{job_id}/worklog.md"
+    result = backend.run(f"cat {worklog_path}", check=False)
+    if result.returncode == 0 and result.stdout.strip():
+        console.print("[bold]Worklog[/bold]")
+        console.print(Markdown(result.stdout))
+    else:
+        console.print("[yellow]No worklog yet.[/yellow]")
+
+    if log_lines > 0:
+        log_file = f"{ws}/jobs/{job_id}/claude-{runs}.log"
+        tail_result = backend.run(f"tail -{log_lines} {log_file}", check=False)
+        if tail_result.stdout.strip():
+            console.print()
+            console.print(f"[bold]Last {log_lines} log lines[/bold]")
+            for line in tail_result.stdout.strip().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    match event.get("type"):
+                        case "assistant":
+                            for block in event.get("message", {}).get("content", []):
+                                if block.get("type") == "text" and block.get("text"):
+                                    console.print(f"  [dim]{block['text'][:200]}[/dim]")
+                                elif block.get("type") == "tool_use":
+                                    console.print(
+                                        f"  [cyan]{block.get('name', '')}[/cyan]"
+                                    )
+                        case _:
+                            pass
+                except (json.JSONDecodeError, ValueError):
+                    console.print(f"  [dim]{line[:200]}[/dim]")
 
 
 @app.command()
