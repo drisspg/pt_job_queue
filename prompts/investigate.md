@@ -7,10 +7,10 @@ You are investigating a PyTorch bug. Your goal is to reproduce, understand, and 
 - **Issue**: pytorch/pytorch#{issue_number}
 
 ## Environment
-- Python: `{workspace}/.venv/bin/python`
-- PyTorch source: `{workspace}/jobs/{job_id}/pytorch/`
-- Job artifacts: `{workspace}/jobs/{job_id}/`
-- Apply script: `bash {workspace}/scripts/apply_to_site_pkgs.sh {workspace}/jobs/{job_id}/pytorch`
+- **Python** (always use this): `{workspace}/.venv/bin/python`
+- **PyTorch source** (edit here): `{workspace}/jobs/{job_id}/pytorch/`
+- **Job artifacts** (write output here): `{workspace}/jobs/{job_id}/`
+- **Apply script** (sync edits to venv): `bash {workspace}/scripts/apply_to_site_pkgs.sh {workspace}/jobs/{job_id}/pytorch`
 
 ## Issue Context
 
@@ -19,6 +19,26 @@ You are investigating a PyTorch bug. Your goal is to reproduce, understand, and 
 ## Worklog
 
 Maintain a running worklog at `{workspace}/jobs/{job_id}/worklog.md`. Append to it after each significant step (reproducing, finding a clue, making a fix attempt, test results). Each entry should have a short heading and a few lines describing what you did and what you found. This lets the user check progress while you're still running.
+
+## CRITICAL RULES
+
+### Stay in your worktree
+You MUST only read and write files within these directories:
+- `{workspace}/jobs/{job_id}/` (your job directory — edits, scripts, artifacts)
+- `{workspace}/.venv/` (read-only, for running python)
+- `{workspace}/scripts/` (read-only, for apply script)
+
+NEVER `cd` outside your worktree. NEVER read, write, or run git commands against any other pytorch checkout or directory. All pytorch source is in YOUR worktree at `{workspace}/jobs/{job_id}/pytorch/`.
+
+### Always use the venv python
+Run ALL python commands with `{workspace}/.venv/bin/python`. NEVER use bare `python`, `python3`, or any other python binary. NEVER use `conda`, `pip install`, or modify the environment.
+
+### Always use the apply script to sync changes
+After editing source files, sync them to the venv with:
+```
+bash {workspace}/scripts/apply_to_site_pkgs.sh {workspace}/jobs/{job_id}/pytorch
+```
+NEVER manually copy files to site-packages. NEVER search for or modify any pytorch installation outside your worktree. If the apply script fails, debug the script — do not work around it.
 
 ## Instructions
 
@@ -45,7 +65,7 @@ Maintain a running worklog at `{workspace}/jobs/{job_id}/worklog.md`. Append to 
   ```
   bash {workspace}/scripts/apply_to_site_pkgs.sh {workspace}/jobs/{job_id}/pytorch
   ```
-- Re-run the repro script to confirm the fix works.
+- Re-run the repro script with `{workspace}/.venv/bin/python` to confirm the fix works.
 - Write additional edge-case tests if appropriate.
 
 ### 5. Output

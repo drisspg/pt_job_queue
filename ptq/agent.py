@@ -198,6 +198,23 @@ def launch_agent(
     else:
         console.print("Reusing existing worktree.")
 
+    backend.run(f"mkdir -p {worktree_path}/.claude", check=False)
+    sandbox_settings = json.dumps(
+        {
+            "sandbox": {
+                "enabled": True,
+                "allowedDirectories": [
+                    job_dir,
+                    f"{workspace}/.venv",
+                    f"{workspace}/scripts",
+                ],
+            }
+        }
+    )
+    backend.run(
+        f"cat > {worktree_path}/.claude/settings.json << 'SETTINGS_EOF'\n{sandbox_settings}\nSETTINGS_EOF"
+    )
+
     system_prompt = build_system_prompt(issue_data, issue_number, job_id, workspace)
 
     if existing:
