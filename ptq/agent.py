@@ -154,16 +154,25 @@ def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str
 
     sections.append(
         f"\n## Continuation Instructions\n"
-        f"This is **run {run_number}**. You MUST:\n"
-        f"1. Append a new section to the worklog headed `## Run {run_number}` before "
-        f"you finish. Log what you investigated, analyzed, or changed — even if the "
-        f"user's message was a question rather than a fix request.\n"
+        f"This is **run {run_number}**. A `## Run {run_number}` section (with the "
+        f"user's steering message) has already been appended to the worklog. You MUST:\n"
+        f"1. Append your findings, analysis, or changes under that section before "
+        f"you finish — even if the user's message was a question rather than a fix request.\n"
         f"2. If you made any code changes, regenerate `fix.diff` and update `report.md`.\n"
         f"3. If the user asked an analytical question, update `report.md` with your "
         f"findings as a new section.\n"
         f"\nEvery run must leave a trace in the worklog and artifacts.\n"
     )
     return "\n".join(sections)
+
+
+def _stamp_worklog_header(
+    backend: Backend, job_dir: str, run_number: int, message: str | None
+) -> None:
+    header = f"\\n\\n## Run {run_number}\\n"
+    if message:
+        header += f"\\n> **User:** {message}\\n"
+    backend.run(f"printf '{header}' >> {job_dir}/worklog.md")
 
 
 def launch_agent(
@@ -236,6 +245,8 @@ def launch_agent(
         if prior_context:
             system_prompt += prior_context
             console.print("Loaded prior run context (worklog/report).")
+
+    _stamp_worklog_header(backend, job_dir, run_number, message)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(system_prompt)
