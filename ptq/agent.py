@@ -132,7 +132,7 @@ DEFAULT_MESSAGE = (
 )
 
 
-def _build_prior_context(backend: Backend, job_dir: str) -> str:
+def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str:
     worklog = backend.run(f"cat {job_dir}/worklog.md", check=False)
     report = backend.run(f"cat {job_dir}/report.md", check=False)
 
@@ -152,6 +152,17 @@ def _build_prior_context(backend: Backend, job_dir: str) -> str:
     if report_content:
         sections.append(f"### Previous Report\n{report_content}\n")
 
+    sections.append(
+        f"\n## Continuation Instructions\n"
+        f"This is **run {run_number}**. You MUST:\n"
+        f"1. Append a new section to the worklog headed `## Run {run_number}` before "
+        f"you finish. Log what you investigated, analyzed, or changed — even if the "
+        f"user's message was a question rather than a fix request.\n"
+        f"2. If you made any code changes, regenerate `fix.diff` and update `report.md`.\n"
+        f"3. If the user asked an analytical question, update `report.md` with your "
+        f"findings as a new section.\n"
+        f"\nEvery run must leave a trace in the worklog and artifacts.\n"
+    )
     return "\n".join(sections)
 
 
@@ -221,7 +232,7 @@ def launch_agent(
     system_prompt = build_system_prompt(issue_data, issue_number, job_id, workspace)
 
     if existing:
-        prior_context = _build_prior_context(backend, job_dir)
+        prior_context = _build_prior_context(backend, job_dir, run_number)
         if prior_context:
             system_prompt += prior_context
             console.print("Loaded prior run context (worklog/report).")
