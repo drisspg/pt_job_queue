@@ -169,10 +169,14 @@ def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str
 def _stamp_worklog_header(
     backend: Backend, job_dir: str, run_number: int, message: str | None
 ) -> None:
-    header = f"\\n\\n## Run {run_number}\\n"
+    lines = ["", "", f"## Run {run_number}", ""]
     if message:
-        header += f"\\n> **User:** {message}\\n"
-    backend.run(f"printf '{header}' >> {job_dir}/worklog.md")
+        lines.append(f"> **User:** {message}")
+        lines.append("")
+    header = "\n".join(lines)
+    backend.run(
+        f"cat >> {job_dir}/worklog.md << 'WORKLOG_STAMP_EOF'\n{header}\nWORKLOG_STAMP_EOF"
+    )
 
 
 def launch_agent(
