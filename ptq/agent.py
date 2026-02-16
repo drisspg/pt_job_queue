@@ -166,6 +166,13 @@ def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str
     return "\n".join(sections)
 
 
+def _validate_workspace(backend: Backend, workspace: str) -> None:
+    for path in [f"{workspace}/pytorch/.git", f"{workspace}/.venv/bin/python"]:
+        result = backend.run(f"test -e {path}", check=False)
+        if result.returncode != 0:
+            raise SystemExit(f"Workspace broken: {path} missing. Re-run: ptq setup")
+
+
 def _stamp_worklog_header(
     backend: Backend, job_dir: str, run_number: int, message: str | None
 ) -> None:
@@ -207,6 +214,9 @@ def launch_agent(
 
     job_dir = f"{workspace}/jobs/{job_id}"
     worktree_path = f"{job_dir}/pytorch"
+
+    if existing:
+        _validate_workspace(backend, workspace)
 
     backend.run(f"mkdir -p {job_dir}")
     deploy_scripts(backend)
@@ -272,7 +282,12 @@ def launch_agent(
             "[yellow]No repro script found in issue — agent will write one.[/yellow]"
         )
 
-    agent_message = message or DEFAULT_MESSAGE
+    if existing:
+        agent_message = message or DEFAULT_MESSAGE
+    elif message:
+        agent_message = f"{DEFAULT_MESSAGE}\n\nAdditional context: {message}"
+    else:
+        agent_message = DEFAULT_MESSAGE
     log_file = f"{job_dir}/claude-{run_number}.log"
     escaped_message = agent_message.replace("'", "'\\''")
     claude_cmd = (

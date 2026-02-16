@@ -11,6 +11,25 @@ from ptq.ssh import backend_for_job
 console = Console()
 
 
+def _branch_exists(pytorch_path: Path, branch: str) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", branch],
+        cwd=pytorch_path,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def _current_branch(pytorch_path: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=pytorch_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
 def apply_diff(job_id: str, pytorch_path: Path) -> None:
     if not pytorch_path.exists():
         raise SystemExit(f"PyTorch path does not exist: {pytorch_path}")
@@ -30,6 +49,25 @@ def apply_diff(job_id: str, pytorch_path: Path) -> None:
     if not diff_local.exists() or not diff_local.read_text().strip():
         raise SystemExit("No diff available to apply.")
 
+    branch_name = f"ptq/{issue_number}"
+
+    if _branch_exists(pytorch_path, branch_name):
+        current = _current_branch(pytorch_path)
+        if current == branch_name:
+            console.print(f"Already on branch {branch_name}, resetting changes...")
+            subprocess.run(["git", "checkout", "."], cwd=pytorch_path, check=True)
+        else:
+            console.print(f"Branch {branch_name} exists, switching and resetting...")
+            subprocess.run(
+                ["git", "checkout", branch_name], cwd=pytorch_path, check=True
+            )
+            subprocess.run(["git", "checkout", "."], cwd=pytorch_path, check=True)
+    else:
+        console.print(f"Creating branch: {branch_name}")
+        subprocess.run(
+            ["git", "checkout", "-b", branch_name], cwd=pytorch_path, check=True
+        )
+
     console.print("Running dry-run check...")
     check = subprocess.run(
         ["git", "apply", "--check", str(diff_local)],
@@ -41,18 +79,16 @@ def apply_diff(job_id: str, pytorch_path: Path) -> None:
         console.print(f"[red]Diff does not apply cleanly:[/red]\n{check.stderr}")
         raise SystemExit("Diff check failed.")
 
-    branch_name = f"ptq/{issue_number}"
-    console.print(f"Creating branch: {branch_name}")
-    subprocess.run(["git", "checkout", "-b", branch_name], cwd=pytorch_path, check=True)
-
     console.print("Applying diff...")
     subprocess.run(["git", "apply", str(diff_local)], cwd=pytorch_path, check=True)
 
     console.print(
-        f"[bold green]Diff applied to {pytorch_path} on branch {branch_name}[/bold green]"
+        f"\n[bold green]Diff applied to {pytorch_path} on branch {branch_name}[/bold green]"
     )
-    console.print("\nNext steps:")
-    console.print(f"  cd {pytorch_path}")
-    console.print("  git add -p")
-    console.print(f"  git commit -m 'Fix #{issue_number}'")
-    console.print(f"  gh pr create --title 'Fix #{issue_number}'")
+    console.print("\n[bold]Copy & paste:[/bold]\n")
+    console.print(
+        f"cd {pytorch_path} && git add -p && "
+        f"git commit -m 'Fix #{issue_number}' && "
+        f"gh pr create --title 'Fix #{issue_number}' "
+        f"--body 'Fixes #{issue_number}'"
+    )
