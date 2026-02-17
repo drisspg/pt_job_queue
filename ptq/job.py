@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 
 from ptq.ssh import load_jobs_db, save_jobs_db
 
 
-def make_job_id(issue_number: int) -> str:
-    return f"{datetime.now().strftime('%Y%m%d')}-{issue_number}"
+def make_job_id(issue_number: int | None = None, message: str | None = None) -> str:
+    date = datetime.now().strftime("%Y%m%d")
+    if issue_number is not None:
+        return f"{date}-{issue_number}"
+    short = hashlib.md5((message or "adhoc").encode()).hexdigest()[:6]
+    return f"{date}-adhoc-{short}"
 
 
 def find_existing_job(
@@ -26,13 +31,14 @@ def find_existing_job(
 def register_job(
     job_id: str,
     *,
+    issue_number: int | None = None,
     machine: str | None = None,
     local: bool = False,
     workspace: str | None = None,
     run_number: int = 1,
 ) -> None:
     db = load_jobs_db()
-    entry: dict = {"issue": int(job_id.split("-")[1]), "runs": run_number}
+    entry: dict = {"issue": issue_number, "runs": run_number}
     if local:
         entry["local"] = True
         entry["workspace"] = workspace or "~/.ptq_workspace"

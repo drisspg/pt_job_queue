@@ -29,7 +29,7 @@ def fetch_results(job_id: str, output_dir: Path | None = None) -> Path:
         try:
             backend.copy_from(remote_path, local_path)
             console.print(f"  fetched {artifact}")
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, FileNotFoundError):
             console.print(f"  [yellow]{artifact} not found[/yellow]")
 
     return dest

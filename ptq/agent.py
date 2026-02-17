@@ -16,13 +16,17 @@ from ptq.job import (
     register_job,
     save_pid,
 )
-from ptq.ssh import Backend
+from ptq.ssh import Backend, RemoteBackend
 from ptq.workspace import deploy_scripts
 
 console = Console()
 
 PROMPT_TEMPLATE = (
     Path(__file__).parent.parent / "prompts" / "investigate.md"
+).read_text()
+
+ADHOC_PROMPT_TEMPLATE = (
+    Path(__file__).parent.parent / "prompts" / "adhoc.md"
 ).read_text()
 
 
@@ -41,6 +45,16 @@ def build_system_prompt(
             job_id=job_id,
             issue_number=issue_number,
             issue_context=format_issue_context(issue_data, issue_number),
+            workspace=workspace,
+        )
+    )
+
+
+def build_adhoc_prompt(message: str, job_id: str, workspace: str) -> str:
+    return _sanitize_for_api(
+        ADHOC_PROMPT_TEMPLATE.format(
+            job_id=job_id,
+            task_description=message,
             workspace=workspace,
         )
     )
@@ -188,9 +202,9 @@ def _stamp_worklog_header(
 
 def launch_agent(
     backend: Backend,
-    issue_data: dict,
-    issue_number: int,
     *,
+    issue_data: dict | None = None,
+    issue_number: int | None = None,
     machine: str | None = None,
     local: bool = False,
     follow: bool = True,
@@ -199,18 +213,25 @@ def launch_agent(
     message: str | None = None,
 ) -> str:
     workspace = backend.workspace
-    existing = find_existing_job(issue_number, machine=machine, local=local)
+    is_adhoc = issue_number is None
 
-    if existing:
-        job_id = existing
-        run_number = increment_run(job_id)
-        console.print(
-            f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run {run_number})"
-        )
-    else:
-        job_id = make_job_id(issue_number)
+    if is_adhoc:
+        existing = None
+        job_id = make_job_id(message=message)
         run_number = 1
-        console.print(f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run 1)")
+        console.print(f"[bold]Job {job_id}[/bold] — adhoc (run 1)")
+    else:
+        existing = find_existing_job(issue_number, machine=machine, local=local)
+        if existing:
+            job_id = existing
+            run_number = increment_run(job_id)
+            console.print(
+                f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run {run_number})"
+            )
+        else:
+            job_id = make_job_id(issue_number)
+            run_number = 1
+            console.print(f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run 1)")
 
     job_dir = f"{workspace}/jobs/{job_id}"
     worktree_path = f"{job_dir}/pytorch"
@@ -252,7 +273,10 @@ def launch_agent(
         f"cat > {worktree_path}/.claude/settings.json << 'SETTINGS_EOF'\n{worktree_settings}\nSETTINGS_EOF"
     )
 
-    system_prompt = build_system_prompt(issue_data, issue_number, job_id, workspace)
+    if is_adhoc:
+        system_prompt = build_adhoc_prompt(message, job_id, workspace)
+    else:
+        system_prompt = build_system_prompt(issue_data, issue_number, job_id, workspace)
 
     if existing:
         prior_context = _build_prior_context(backend, job_dir, run_number)
@@ -269,20 +293,23 @@ def launch_agent(
     backend.copy_to(prompt_tmp, f"{job_dir}/system_prompt.md")
     prompt_tmp.unlink()
 
-    repro = extract_repro_script(issue_data)
-    if repro:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(repro)
-            repro_tmp = Path(f.name)
-        backend.copy_to(repro_tmp, f"{job_dir}/repro.py")
-        repro_tmp.unlink()
-        console.print("Extracted and uploaded repro script.")
-    else:
-        console.print(
-            "[yellow]No repro script found in issue — agent will write one.[/yellow]"
-        )
+    if not is_adhoc:
+        repro = extract_repro_script(issue_data)
+        if repro:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+                f.write(repro)
+                repro_tmp = Path(f.name)
+            backend.copy_to(repro_tmp, f"{job_dir}/repro.py")
+            repro_tmp.unlink()
+            console.print("Extracted and uploaded repro script.")
+        else:
+            console.print(
+                "[yellow]No repro script found in issue — agent will write one.[/yellow]"
+            )
 
-    if existing:
+    if is_adhoc:
+        agent_message = message
+    elif existing:
         agent_message = message or DEFAULT_MESSAGE
     elif message:
         agent_message = f"{DEFAULT_MESSAGE}\n\nAdditional context: {message}"
@@ -290,9 +317,10 @@ def launch_agent(
         agent_message = DEFAULT_MESSAGE
     log_file = f"{job_dir}/claude-{run_number}.log"
     escaped_message = agent_message.replace("'", "'\\''")
+    unbuffer = "stdbuf -oL " if isinstance(backend, RemoteBackend) else ""
     claude_cmd = (
         f"cd {worktree_path} && "
-        f"stdbuf -oL "
+        f"{unbuffer}"
         f"claude -p '{escaped_message}' "
         f"--model {model} "
         f"--max-turns {max_turns} "
@@ -306,6 +334,7 @@ def launch_agent(
     if not existing:
         register_job(
             job_id,
+            issue_number=issue_number,
             machine=machine,
             local=local,
             workspace=workspace,

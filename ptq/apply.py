@@ -37,7 +37,7 @@ def apply_diff(job_id: str, pytorch_path: Path) -> None:
         raise SystemExit(f"Not a git repo: {pytorch_path}")
 
     job_entry = get_job(job_id)
-    issue_number = job_entry["issue"]
+    issue_number = job_entry.get("issue")
 
     diff_local = Path.home() / ".ptq" / "results" / job_id / "fix.diff"
     if not diff_local.exists():
@@ -49,7 +49,7 @@ def apply_diff(job_id: str, pytorch_path: Path) -> None:
     if not diff_local.exists() or not diff_local.read_text().strip():
         raise SystemExit("No diff available to apply.")
 
-    branch_name = f"ptq/{issue_number}"
+    branch_name = f"ptq/{issue_number}" if issue_number is not None else f"ptq/{job_id}"
 
     if _branch_exists(pytorch_path, branch_name):
         current = _current_branch(pytorch_path)
@@ -86,9 +86,16 @@ def apply_diff(job_id: str, pytorch_path: Path) -> None:
         f"\n[bold green]Diff applied to {pytorch_path} on branch {branch_name}[/bold green]"
     )
     console.print("\n[bold]Copy & paste:[/bold]\n")
-    console.print(
-        f"cd {pytorch_path} && git add -p && "
-        f"git commit -m 'Fix #{issue_number}' && "
-        f"gh pr create --title 'Fix #{issue_number}' "
-        f"--body 'Fixes #{issue_number}'"
-    )
+    if issue_number is not None:
+        console.print(
+            f"cd {pytorch_path} && git add -p && "
+            f"git commit -m 'Fix #{issue_number}' && "
+            f"gh pr create --title 'Fix #{issue_number}' "
+            f"--body 'Fixes #{issue_number}'"
+        )
+    else:
+        console.print(
+            f"cd {pytorch_path} && git add -p && "
+            f"git commit -m 'Fix from {job_id}' && "
+            f"gh pr create --title 'Fix from {job_id}'"
+        )

@@ -70,17 +70,30 @@ def run(
         str | None,
         typer.Option("--message", "-m", help="Custom instruction for the agent."),
     ] = None,
+    input_file: Annotated[
+        Path | None,
+        typer.Option("--input", "-i", help="Read task description from a file."),
+    ] = None,
 ) -> None:
-    """Launch a Claude agent to investigate a PyTorch issue.
+    """Launch a Claude agent to investigate a PyTorch issue or run an adhoc task.
 
+    Provide --issue for GitHub issue investigation, or --message for a freeform task.
     Re-run an existing job by passing its JOB_ID (or issue number) as a positional arg.
-    Machine/local settings are pulled from the previous run automatically.
 
     Examples:
         ptq run --issue 174923 --machine aws-gpu-dev
+        ptq run -m "investigate flex_attention OOM on H100" --machine gpu-dev
+        ptq run -i task.md --machine gpu-dev
         ptq run 20260214-174923 -m "look at flex_attention.py instead"
         ptq run 174923 -m "try a different approach"
     """
+    if input_file is not None and message is not None:
+        raise typer.BadParameter("--input and --message are mutually exclusive.")
+    if input_file is not None:
+        if not input_file.exists():
+            raise typer.BadParameter(f"File not found: {input_file}")
+        message = input_file.read_text()
+
     from ptq.agent import launch_agent
     from ptq.issue import fetch_issue
     from ptq.ssh import LocalBackend, RemoteBackend
@@ -95,14 +108,17 @@ def run(
         local = local or job.get("local", False)
         workspace = workspace or job.get("workspace")
 
-    if issue is None:
-        raise typer.BadParameter("Provide --issue or a JOB_ID to re-run.")
+    if issue is None and message is None and job_id is None:
+        raise typer.BadParameter("Provide --issue, --message, or a JOB_ID to re-run.")
     if not machine and not local:
         raise typer.BadParameter("Provide --machine or --local.")
 
-    console.print(f"Fetching issue #{issue}...")
-    issue_data = fetch_issue(issue)
-    console.print(f"[bold]{issue_data['title']}[/bold]")
+    if issue is not None:
+        console.print(f"Fetching issue #{issue}...")
+        issue_data = fetch_issue(issue)
+        console.print(f"[bold]{issue_data['title']}[/bold]")
+    else:
+        issue_data = None
 
     if local:
         backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
@@ -114,8 +130,8 @@ def run(
 
     launch_agent(
         backend,
-        issue_data,
-        issue,
+        issue_data=issue_data,
+        issue_number=issue,
         machine=machine,
         local=local,
         follow=follow,
@@ -183,7 +199,9 @@ def _clean_single_job(job_id: str) -> None:
     db = load_jobs_db()
     db.pop(job_id, None)
     save_jobs_db(db)
-    console.print(f"  removed {job_id} (issue #{job.get('issue', '?')})")
+    issue_val = job.get("issue")
+    label = f"issue #{issue_val}" if issue_val is not None else "adhoc"
+    console.print(f"  removed {job_id} ({label})")
 
 
 def _clean_machine(
@@ -329,7 +347,8 @@ def list_jobs() -> None:
     table.add_column("Target")
 
     for job_id, entry in sorted(db.items()):
-        issue = str(entry.get("issue", "?"))
+        issue_val = entry.get("issue")
+        issue_display = f"#{issue_val}" if issue_val is not None else "[dim]adhoc[/dim]"
         runs = str(entry.get("runs", 1))
         target = entry.get("machine") or "local"
         pid = entry.get("pid")
@@ -339,12 +358,15 @@ def list_jobs() -> None:
         else:
             alive = False
         status = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
-        table.add_row(status, job_id, f"#{issue}", runs, target)
+        table.add_row(status, job_id, issue_display, runs, target)
 
     console.print(table)
     console.print()
     console.print("[dim]Actions:[/dim]")
-    console.print("[dim]  ptq run --issue NUM --machine TARGET  # new run[/dim]")
+    console.print(
+        "[dim]  ptq run --issue NUM --machine TARGET  # new run from issue[/dim]"
+    )
+    console.print("[dim]  ptq run -m 'task' --machine TARGET    # new adhoc run[/dim]")
     console.print(
         "[dim]  ptq run JOB_ID                        # re-run existing job[/dim]"
     )
@@ -387,9 +409,9 @@ def peek(
 
     alive = pid is not None and backend.is_pid_alive(pid)
     status_str = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
-    console.print(
-        f"{status_str}  {job_id}  issue #{job.get('issue', '?')}  (run {runs}, {target})"
-    )
+    issue_val = job.get("issue")
+    issue_label = f"issue #{issue_val}" if issue_val is not None else "adhoc"
+    console.print(f"{status_str}  {job_id}  {issue_label}  (run {runs}, {target})")
     console.print()
 
     worklog_path = f"{ws}/jobs/{job_id}/worklog.md"
@@ -446,13 +468,18 @@ def status(
 
     alive = pid is not None and backend.is_pid_alive(pid)
 
+    issue_val = job.get("issue")
+
     if alive:
         console.print(
             f"[bold green]running[/bold green]  {job_id}  (run {runs}, {target}, pid {pid})"
         )
-        console.print(
-            f"  ptq run --issue {job['issue']} --machine {target}  # to reattach"
-        )
+        if issue_val is not None:
+            console.print(
+                f"  ptq run --issue {issue_val} --machine {target}  # to reattach"
+            )
+        else:
+            console.print(f"  ptq run {job_id}  # to reattach")
     else:
         console.print(f"[bold dim]stopped[/bold dim]  {job_id}  (run {runs}, {target})")
         console.print(f"  ptq results {job_id}")
