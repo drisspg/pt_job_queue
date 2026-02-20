@@ -269,7 +269,7 @@ def auto(
         console.print("Setting up workspace...")
         setup_workspace(backend, git_name=git_name, git_email=git_email)
 
-        # Configure GitHub auth on pod
+        # Configure GitHub auth + SSH on pod
         if gh_token:
             console.print("Configuring GitHub auth on pod...")
             hosts_yml = (
@@ -281,10 +281,18 @@ def auto(
             backend.run(
                 f"cat > ~/.config/gh/hosts.yml << 'GH_HOSTS_EOF'\n{hosts_yml}GH_HOSTS_EOF"
             )
+            # Configure git to use gh as credential helper (for git push over HTTPS)
+            backend.run("gh auth setup-git", check=False)
         else:
             console.print(
                 "[yellow]No GH_TOKEN found locally — PR creation will be skipped.[/yellow]"
             )
+
+        # Add GitHub SSH host keys so git push over SSH doesn't fail
+        backend.run(
+            "mkdir -p ~/.ssh && ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null",
+            check=False,
+        )
 
         # 6. Build agent message with PR instruction
         pr_instruction = ""

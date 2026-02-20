@@ -190,12 +190,28 @@ def _install_gh_remote(backend: Backend) -> None:
     if check.returncode == 0:
         console.print("gh CLI already installed.")
         return
-    console.print("Installing gh CLI via conda...")
-    result = backend.run("conda install -y -c conda-forge gh", check=False)
+    console.print("Installing gh CLI...")
+    # Try conda first (if available), then fall back to GitHub releases tarball
+    result = backend.run("which conda", check=False)
+    if result.returncode == 0:
+        result = backend.run("conda install -y -c conda-forge gh", check=False)
+        if result.returncode == 0:
+            console.print("gh CLI installed (conda).")
+            return
+    # Fallback: download from GitHub releases
+    install_cmd = (
+        "GH_VERSION=$(curl -sL https://api.github.com/repos/cli/cli/releases/latest "
+        "| grep -oP '\"tag_name\":\\s*\"v\\K[^\"]+') && "
+        "curl -sL https://github.com/cli/cli/releases/download/v${GH_VERSION}/"
+        "gh_${GH_VERSION}_linux_amd64.tar.gz | tar xz -C /tmp && "
+        "mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh ~/.local/bin/gh && "
+        "rm -rf /tmp/gh_${GH_VERSION}_linux_amd64"
+    )
+    result = backend.run(install_cmd, check=False)
     if result.returncode != 0:
         console.print("[yellow]Could not install gh CLI — PR creation may fail.[/yellow]")
         return
-    console.print("gh CLI installed.")
+    console.print("gh CLI installed (GitHub releases).")
 
 
 def _configure_git_remote(backend: Backend, name: str, email: str) -> None:
