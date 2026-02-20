@@ -309,17 +309,20 @@ def _auto_resume(
             save_jobs_db(db)
 
     try:
-        # Build agent message
-        pr_instruction = ""
+        # Build agent message — always instruct to push when resuming
+        push_instruction = ""
         if not no_pr and issue is not None:
-            pr_instruction = (
-                "\n\nAfter addressing the follow-up, use the verify-fix skill "
-                "to run tests, then use the make-pr skill to create a draft PR."
+            push_instruction = (
+                "\n\nAfter addressing the follow-up:"
+                "\n1. Run `lintrunner -a` (install with `pip install lintrunner lintrunner-adapters && lintrunner init` if needed)"
+                "\n2. Use the verify-fix skill to run tests"
+                f"\n3. Commit and push all changes to the existing branch `ptq/{issue}`"
+                "\n4. If no branch exists yet, use the make-pr skill to create a draft PR"
             )
 
         agent_message = prompt
-        if pr_instruction:
-            agent_message = f"{agent_message}{pr_instruction}"
+        if push_instruction:
+            agent_message = f"{agent_message}{push_instruction}"
 
         job_id = launch_agent(
             backend,
