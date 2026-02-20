@@ -242,10 +242,18 @@ def _auto_resume(
     # Try to reach the old pod
     pod_reachable = False
     if old_pod:
+        import subprocess as _sp
+
         console.print(f"Checking if pod {old_pod} is still reachable...")
-        backend = RemoteBackend(machine=old_pod)
-        result = backend.run("echo alive", check=False)
-        pod_reachable = result.returncode == 0 and "alive" in result.stdout
+        try:
+            result = _sp.run(
+                ["ssh", "-o", "StrictHostKeyChecking=no",
+                 "-o", "ConnectTimeout=5", old_pod, "echo alive"],
+                capture_output=True, text=True, timeout=10,
+            )
+            pod_reachable = result.returncode == 0 and "alive" in result.stdout
+        except _sp.TimeoutExpired:
+            pod_reachable = False
 
     gh_token, git_name, git_email = _get_local_credentials()
 
