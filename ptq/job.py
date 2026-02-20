@@ -83,6 +83,22 @@ def resolve_job_id(job_id_or_issue: str) -> str:
     raise SystemExit(f"Unknown job: {job_id_or_issue}")
 
 
+def save_reservation_id(job_id: str, reservation_id: str) -> None:
+    db = load_jobs_db()
+    if job_id not in db:
+        return
+    db[job_id]["reservation_id"] = reservation_id
+    save_jobs_db(db)
+
+
+def get_reservation_id(job_id: str) -> str | None:
+    db = load_jobs_db()
+    entry = db.get(job_id)
+    if not entry:
+        return None
+    return entry.get("reservation_id")
+
+
 def get_job(job_id: str) -> dict:
     db = load_jobs_db()
     entry = db.get(job_id)

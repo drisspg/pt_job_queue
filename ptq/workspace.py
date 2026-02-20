@@ -78,9 +78,10 @@ def setup_workspace(
     console.print(result.stdout or "done")
 
     console.print("Resolving nightly commit hash...")
-    nightly_hash = backend.run(
+    nightly_raw = backend.run(
         f'{workspace}/.venv/bin/python -c "import torch; print(torch.version.git_version)"',
     ).stdout.strip()
+    nightly_hash = _extract_hash(nightly_raw)
     console.print(f"Nightly git version: {nightly_hash}")
 
     main_hash = _resolve_main_hash(nightly_hash)
@@ -125,6 +126,17 @@ def deploy_scripts(backend: Backend) -> None:
             shutil.copy2(script, dest_dir / script.name)
 
     backend.run(f"chmod +x {workspace}/scripts/*.sh")
+
+
+def _extract_hash(output: str) -> str:
+    """Extract a git commit hash from potentially noisy shell output."""
+    for line in reversed(output.strip().splitlines()):
+        line = line.strip()
+        if re.fullmatch(r"[0-9a-f]{7,40}", line):
+            return line
+    # Fallback: return last non-empty line
+    lines = [ln.strip() for ln in output.strip().splitlines() if ln.strip()]
+    return lines[-1] if lines else output.strip()
 
 
 def _install_uv_remote(backend: RemoteBackend) -> None:

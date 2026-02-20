@@ -6,6 +6,7 @@ dependencies = ["typer>=0.15.0", "rich>=13.0.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
+gpu = ["gpu-dev-cli"]
 
 [project.scripts]
 ptq = "ptq.cli:app"
