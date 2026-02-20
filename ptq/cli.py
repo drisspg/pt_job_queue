@@ -371,7 +371,7 @@ def auto(
         Path | None,
         typer.Option("--input", "-i", help="Read task description from a file."),
     ] = None,
-    gpu_type: Annotated[str, typer.Option(help="GPU type.")] = "h100",
+    gpu_type: Annotated[str, typer.Option(help="GPU type.")] = "h200",
     gpus: Annotated[int, typer.Option(help="Number of GPUs.")] = 1,
     hours: Annotated[float, typer.Option(help="Max reservation hours.")] = 4.0,
     dockerfile: Annotated[
