@@ -209,6 +209,7 @@ def _auto_resume(
     gpus: int,
     hours: float,
     no_pr: bool,
+    keep: bool,
     model: str,
     max_turns: int,
     follow: bool,
@@ -347,7 +348,7 @@ def _auto_resume(
                 console.print(f"[yellow]Could not fetch results: {e}[/yellow]")
 
     finally:
-        if new_reservation and reservation_id and follow:
+        if new_reservation and reservation_id and follow and not keep:
             console.print(f"Cancelling reservation {reservation_id[:8]}...")
             if cancel_reservation(reservation_id):
                 console.print("[bold]Reservation cancelled.[/bold]")
@@ -356,10 +357,19 @@ def _auto_resume(
                     f"[yellow]Could not cancel reservation {reservation_id}. "
                     f"Cancel manually: gpu-dev cancel {reservation_id}[/yellow]"
                 )
-        elif new_reservation and reservation_id and not follow:
+        elif reservation_id and (keep or not follow):
             console.print(
                 f"Reservation {reservation_id[:8]}... still active "
                 f"(auto-expires in {hours}h)."
+            )
+            console.print(
+                f"  ssh {pod_name}  # to connect"
+            )
+            console.print(
+                f"  ptq auto --resume {issue or job_id} -p '...'  # to continue"
+            )
+            console.print(
+                f"  gpu-dev cancel {reservation_id}  # to cancel early"
             )
 
 
@@ -391,6 +401,10 @@ def auto(
         str | None,
         typer.Option("--resume", help="Resume a previous job (job ID or issue number)."),
     ] = None,
+    keep: Annotated[
+        bool,
+        typer.Option("--keep", help="Keep reservation alive after agent finishes."),
+    ] = False,
     model: Annotated[str, typer.Option(help="Claude model to use.")] = "opus",
     max_turns: Annotated[int, typer.Option(help="Max agent turns.")] = 100,
     follow: Annotated[
@@ -404,13 +418,16 @@ def auto(
     auto-cancels when the agent finishes (or on Ctrl+C / crash).
 
     Use --resume to continue a previous job on the same (or new) pod.
+    Use --keep to keep the reservation alive after the agent finishes.
 
     Examples:
         ptq auto --issue 149002
         ptq auto --issue 149002 --gpu-type a100 --hours 2
         ptq auto --issue 149002 --no-pr
         ptq auto --issue 149002 -p "focus on the nan_assert codepath"
+        ptq auto --issue 149002 --keep         # keep pod alive after
         ptq auto --resume 149002 -p "try a different approach"
+        ptq auto --resume 149002 --keep -p "fix lint"  # keep pod for more work
         ptq auto -m "investigate flex_attention OOM" --hours 6
     """
     if resume is not None:
@@ -421,6 +438,7 @@ def auto(
             gpus=gpus,
             hours=hours,
             no_pr=no_pr,
+            keep=keep,
             model=model,
             max_turns=max_turns,
             follow=follow,
@@ -537,9 +555,8 @@ def auto(
                 console.print(f"[yellow]Could not fetch results: {e}[/yellow]")
 
     finally:
-        # 9. Cancel reservation on exit — but not in no-follow mode
-        # (agent is still running on the remote)
-        if reservation_id and follow:
+        # 9. Cancel reservation on exit — unless --keep or --no-follow
+        if reservation_id and follow and not keep:
             console.print(f"Cancelling reservation {reservation_id[:8]}...")
             if cancel_reservation(reservation_id):
                 console.print("[bold]Reservation cancelled.[/bold]")
@@ -548,10 +565,16 @@ def auto(
                     f"[yellow]Could not cancel reservation {reservation_id}. "
                     f"Cancel manually: gpu-dev cancel {reservation_id}[/yellow]"
                 )
-        elif reservation_id and not follow:
+        elif reservation_id and (keep or not follow):
             console.print(
                 f"Reservation {reservation_id[:8]}... still active "
                 f"(auto-expires in {hours}h)."
+            )
+            console.print(
+                f"  ssh {pod_name}  # to connect"
+            )
+            console.print(
+                f"  ptq auto --resume {issue or job_id} -p '...'  # to continue"
             )
             console.print(
                 f"  gpu-dev cancel {reservation_id}  # to cancel early"
