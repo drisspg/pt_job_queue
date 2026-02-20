@@ -119,6 +119,10 @@ def _print_stream_event(line: str) -> None:
                             console.print(
                                 f"  [cyan]glob[/cyan] [dim]{inp.get('pattern', '')}[/dim]"
                             )
+                        case "Skill":
+                            console.print(
+                                f"  [magenta]skill[/magenta] [dim]{inp.get('skill', '')}[/dim]"
+                            )
                         case _:
                             console.print(f"  [dim]{tool}[/dim]")
         case "user":
@@ -324,7 +328,7 @@ def launch_agent(
         f"claude -p '{escaped_message}' "
         f"--model {model} "
         f"--max-turns {max_turns} "
-        f"--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' "
+        f"--allowedTools 'Read,Edit,Write,Bash,Grep,Glob,Skill' "
         f"--dangerously-skip-permissions "
         f"--append-system-prompt-file {job_dir}/system_prompt.md "
         f"--output-format stream-json "

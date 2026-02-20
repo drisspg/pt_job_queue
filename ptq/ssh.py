@@ -18,15 +18,24 @@ class RemoteBackend:
 
     @staticmethod
     def _with_path(cmd: str) -> str:
-        return f'source ~/.profile 2>/dev/null; source ~/.bashrc 2>/dev/null; source ~/.zshrc 2>/dev/null; export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && {cmd}'
+        return f'source ~/.profile >/dev/null 2>&1; source ~/.bashrc >/dev/null 2>&1; source ~/.zshrc >/dev/null 2>&1; export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && {cmd}'
 
     def run(self, cmd: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["ssh", *self.ssh_opts, self.machine, self._with_path(cmd)],
-            capture_output=True,
-            text=True,
-            check=check,
-        )
+        import time as _time
+
+        for attempt in range(3):
+            result = subprocess.run(
+                ["ssh", *self.ssh_opts, self.machine, self._with_path(cmd)],
+                capture_output=True,
+                text=True,
+            )
+            # Retry on SSH connection failures (exit 255), not command errors
+            if result.returncode != 255 or attempt == 2:
+                break
+            _time.sleep(2)
+        if check:
+            result.check_returncode()
+        return result
 
     def launch_background(self, cmd: str, log_file: str) -> int | None:
         bg_cmd = f"nohup zsh -c {shlex.quote(cmd)} > {log_file} 2>&1 & echo $!"
@@ -58,19 +67,25 @@ class RemoteBackend:
         )
 
     def copy_to(self, local_path: Path, remote_path: str) -> None:
-        subprocess.run(
-            ["scp", *self.ssh_opts, str(local_path), f"{self.machine}:{remote_path}"],
-            check=True,
-            capture_output=True,
+        content = local_path.read_bytes()
+        # Use SSH + base64 to transfer files (more reliable than scp over proxied tunnels)
+        import base64
+
+        encoded = base64.b64encode(content).decode()
+        self.run(
+            f"echo '{encoded}' | base64 -d > {remote_path}"
         )
 
     def copy_from(self, remote_path: str, local_path: Path) -> None:
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            ["scp", *self.ssh_opts, f"{self.machine}:{remote_path}", str(local_path)],
-            check=True,
-            capture_output=True,
-        )
+        import base64
+
+        result = self.run(f"base64 {remote_path}")
+        # Extract just the base64 content (skip banner lines)
+        lines = result.stdout.strip().splitlines()
+        b64_lines = [ln for ln in lines if not any(c in ln for c in "🚀🔗📁")]
+        content = base64.b64decode("".join(b64_lines))
+        local_path.write_bytes(content)
 
 
 @dataclass

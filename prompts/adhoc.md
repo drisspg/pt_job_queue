@@ -51,3 +51,7 @@ cd {workspace}/jobs/{job_id}/pytorch && git diff > {workspace}/jobs/{job_id}/fix
 ```
 
 IMPORTANT: Always generate report.md before finishing. Generate fix.diff if you made any code changes.
+
+### Verify & PR (if instructed)
+If you made code changes and were asked to create a PR, use the verify-fix
+skill to run tests and perf checks, then use the make-pr skill to create a draft PR.

@@ -83,3 +83,11 @@ cd {workspace}/jobs/{job_id}/pytorch && git diff > {workspace}/jobs/{job_id}/fix
 ```
 
 IMPORTANT: Always generate both report.md and fix.diff before finishing.
+
+### 6. Verify & PR (if instructed)
+If your fix is verified and you were asked to create a PR, use the verify-fix
+skill to run tests and perf checks, then use the make-pr skill to create a draft PR.
+
+### 7. Fix Review (if instructed)
+If asked to address review feedback on an existing PR, use the fix-review skill
+to fetch comments, make the requested changes, lint, test, and push.

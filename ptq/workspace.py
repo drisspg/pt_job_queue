@@ -46,7 +46,11 @@ def detect_cuda_version(backend: Backend) -> str:
 
 
 def setup_workspace(
-    backend: Backend, cuda_tag: str | None = None, cpu: bool = False
+    backend: Backend,
+    cuda_tag: str | None = None,
+    cpu: bool = False,
+    git_name: str | None = None,
+    git_email: str | None = None,
 ) -> None:
     workspace = backend.workspace
 
@@ -65,7 +69,12 @@ def setup_workspace(
     backend.run(f"mkdir -p {workspace}/jobs {workspace}/scripts")
 
     console.print("Creating venv...")
-    backend.run(f"cd {workspace} && uv venv --python 3.12", check=False)
+    # Try Python 3.12 first, fall back to whatever is available
+    venv_result = backend.run(
+        f"cd {workspace} && uv venv --python 3.12", check=False
+    )
+    if venv_result.returncode != 0:
+        backend.run(f"cd {workspace} && uv venv")
 
     console.print(f"Installing PyTorch nightly ({cuda_tag})...")
     result = backend.run(
@@ -78,9 +87,10 @@ def setup_workspace(
     console.print(result.stdout or "done")
 
     console.print("Resolving nightly commit hash...")
-    nightly_hash = backend.run(
+    nightly_raw = backend.run(
         f'{workspace}/.venv/bin/python -c "import torch; print(torch.version.git_version)"',
     ).stdout.strip()
+    nightly_hash = _extract_hash(nightly_raw)
     console.print(f"Nightly git version: {nightly_hash}")
 
     main_hash = _resolve_main_hash(nightly_hash)
@@ -103,6 +113,13 @@ def setup_workspace(
         f'{workspace}/.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"',
     )
     console.print(f"[green]Smoke test: {smoke.stdout.strip()}[/green]")
+
+    if isinstance(backend, RemoteBackend):
+        _deploy_skills(backend)
+        _install_gh_remote(backend)
+    if git_name and git_email:
+        _configure_git_remote(backend, git_name, git_email)
+
     console.print("[bold green]Workspace setup complete.[/bold green]")
 
 
@@ -127,6 +144,17 @@ def deploy_scripts(backend: Backend) -> None:
     backend.run(f"chmod +x {workspace}/scripts/*.sh")
 
 
+def _extract_hash(output: str) -> str:
+    """Extract a git commit hash from potentially noisy shell output."""
+    for line in reversed(output.strip().splitlines()):
+        line = line.strip()
+        if re.fullmatch(r"[0-9a-f]{7,40}", line):
+            return line
+    # Fallback: return last non-empty line
+    lines = [ln.strip() for ln in output.strip().splitlines() if ln.strip()]
+    return lines[-1] if lines else output.strip()
+
+
 def _install_uv_remote(backend: RemoteBackend) -> None:
     check = backend.run("which uv", check=False)
     if check.returncode == 0:
@@ -134,6 +162,73 @@ def _install_uv_remote(backend: RemoteBackend) -> None:
         return
     console.print("Installing uv on remote...")
     backend.run("curl -LsSf https://astral.sh/uv/install.sh | sh")
+
+
+def _deploy_skills(backend: Backend) -> None:
+    from pathlib import Path
+
+    skills_dir = Path(__file__).parent.parent / "skills"
+    if not skills_dir.is_dir():
+        return
+    deployed = []
+    for skill_dir in sorted(skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_file.exists():
+            continue
+        remote_dir = f"~/.claude/skills/{skill_dir.name}"
+        backend.run(f"mkdir -p {remote_dir}")
+        backend.copy_to(skill_file, f"{remote_dir}/SKILL.md")
+        deployed.append(skill_dir.name)
+    if deployed:
+        console.print(f"Skills deployed: {', '.join(deployed)}")
+
+
+def _install_gh_remote(backend: Backend) -> None:
+    check = backend.run("which gh", check=False)
+    if check.returncode == 0:
+        console.print("gh CLI already installed.")
+        return
+    console.print("Installing gh CLI...")
+    # Try conda first (if available), then fall back to GitHub releases tarball
+    result = backend.run("which conda", check=False)
+    if result.returncode == 0:
+        result = backend.run("conda install -y -c conda-forge gh", check=False)
+        if result.returncode == 0:
+            console.print("gh CLI installed (conda).")
+            return
+    # Fallback: download from GitHub releases
+    # Resolve latest version via API, extract with Python (avoids shell escaping issues)
+    ver_result = backend.run(
+        "curl -sL https://api.github.com/repos/cli/cli/releases/latest"
+        " | python3 -c \"import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))\"",
+        check=False,
+    )
+    gh_version = ver_result.stdout.strip() if ver_result.returncode == 0 else ""
+    if not gh_version:
+        console.print("[yellow]Could not determine gh CLI version — PR creation may fail.[/yellow]")
+        return
+    backend.run("mkdir -p ~/.local/bin", check=False)
+    result = backend.run(
+        f"curl -sL https://github.com/cli/cli/releases/download/v{gh_version}/"
+        f"gh_{gh_version}_linux_amd64.tar.gz | tar xz -C /tmp && "
+        f"mv /tmp/gh_{gh_version}_linux_amd64/bin/gh ~/.local/bin/gh && "
+        f"rm -rf /tmp/gh_{gh_version}_linux_amd64",
+        check=False,
+    )
+    if result.returncode != 0:
+        console.print("[yellow]Could not install gh CLI — PR creation may fail.[/yellow]")
+        return
+    console.print("gh CLI installed.")
+
+
+def _configure_git_remote(backend: Backend, name: str, email: str) -> None:
+    import shlex
+
+    backend.run(f"git config --global user.name {shlex.quote(name)}")
+    backend.run(f"git config --global user.email {shlex.quote(email)}")
+    console.print(f"Git identity configured: {name} <{email}>")
 
 
 def _resolve_main_hash(nightly_hash: str) -> str:

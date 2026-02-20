@@ -141,6 +141,446 @@ def run(
     )
 
 
+def _get_local_credentials() -> tuple[str | None, str | None, str | None]:
+    """Get GH_TOKEN and git identity from local machine."""
+    import subprocess as _sp
+
+    _gh_result = _sp.run(
+        ["gh", "auth", "token"], capture_output=True, text=True, check=False
+    )
+    gh_token = _gh_result.stdout.strip() if _gh_result.returncode == 0 else None
+
+    _name_result = _sp.run(
+        ["git", "config", "user.name"], capture_output=True, text=True, check=False
+    )
+    git_name = _name_result.stdout.strip() or None
+
+    _email_result = _sp.run(
+        ["git", "config", "user.email"], capture_output=True, text=True, check=False
+    )
+    git_email = _email_result.stdout.strip() or None
+
+    return gh_token, git_name, git_email
+
+
+def _configure_pod_auth(backend, gh_token: str | None) -> None:
+    """Configure GitHub auth + SSH on a pod."""
+    if gh_token:
+        console.print("Configuring GitHub auth on pod...")
+        hosts_yml = (
+            "github.com:\n"
+            f"    oauth_token: {gh_token}\n"
+            "    git_protocol: https\n"
+        )
+        backend.run("mkdir -p ~/.config/gh")
+        backend.run(
+            f"cat > ~/.config/gh/hosts.yml << 'GH_HOSTS_EOF'\n{hosts_yml}GH_HOSTS_EOF"
+        )
+        backend.run("gh auth setup-git", check=False)
+    else:
+        console.print(
+            "[yellow]No GH_TOKEN found locally — PR creation will be skipped.[/yellow]"
+        )
+
+    # Add GitHub SSH host keys so git push over SSH doesn't fail
+    backend.run(
+        "mkdir -p ~/.ssh && ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null",
+        check=False,
+    )
+
+
+def _upload_previous_artifacts(backend, job_id: str, job_dir: str) -> None:
+    """Upload locally cached artifacts to a new pod for continuation."""
+    results_dir = Path.home() / ".ptq" / "results" / job_id
+    if not results_dir.exists():
+        return
+    for artifact in ["worklog.md", "report.md", "fix.diff"]:
+        local_path = results_dir / artifact
+        if local_path.exists() and local_path.stat().st_size > 0:
+            backend.copy_to(local_path, f"{job_dir}/{artifact}")
+            console.print(f"  uploaded {artifact}")
+
+
+def _auto_resume(
+    *,
+    resume: str,
+    prompt: str | None,
+    gpu_type: str,
+    gpus: int,
+    hours: float,
+    no_pr: bool,
+    keep: bool,
+    model: str,
+    max_turns: int,
+    follow: bool,
+) -> None:
+    """Resume a previous auto job, reusing pod if still alive."""
+    if not prompt:
+        raise typer.BadParameter("--prompt/-p is required when using --resume.")
+
+    from ptq.agent import launch_agent
+    from ptq.issue import fetch_issue
+    from ptq.job import get_job, get_reservation_id, resolve_job_id, save_reservation_id
+    from ptq.provision import cancel_reservation, create_reservation, ensure_ssh_config
+    from ptq.results import fetch_results
+    from ptq.ssh import RemoteBackend
+    from ptq.workspace import setup_workspace
+
+    # Resolve the job
+    job_id = resolve_job_id(resume)
+    job = get_job(job_id)
+    issue = job.get("issue")
+    old_pod = job.get("machine")
+
+    console.print(f"[bold]Resuming job {job_id}[/bold]")
+    if issue is not None:
+        console.print(f"Fetching issue #{issue}...")
+        issue_data = fetch_issue(issue)
+        console.print(f"[bold]{issue_data['title']}[/bold]")
+    else:
+        issue_data = None
+
+    # Try to reach the old pod
+    pod_reachable = False
+    if old_pod:
+        import subprocess as _sp
+
+        console.print(f"Checking if pod {old_pod} is still reachable...")
+        try:
+            result = _sp.run(
+                ["ssh", "-o", "StrictHostKeyChecking=no",
+                 "-o", "ConnectTimeout=5", old_pod, "echo alive"],
+                capture_output=True, text=True, timeout=10,
+            )
+            pod_reachable = result.returncode == 0 and "alive" in result.stdout
+        except _sp.TimeoutExpired:
+            pod_reachable = False
+
+    gh_token, git_name, git_email = _get_local_credentials()
+
+    reservation_id = get_reservation_id(job_id)
+    new_reservation = False
+
+    if pod_reachable:
+        console.print(f"[bold green]Pod {old_pod} still alive — reusing.[/bold green]")
+        pod_name = old_pod
+        backend = RemoteBackend(machine=pod_name)
+    else:
+        # Need a new reservation
+        console.print("[yellow]Pod no longer reachable — creating new reservation.[/yellow]")
+        if not ensure_ssh_config():
+            console.print(
+                "[yellow]Warning: ~/.ssh/config may not include gpu-dev SSH config.[/yellow]"
+            )
+
+        reservation_name = f"ptq-resume-{issue}" if issue else "ptq-resume"
+        console.print(f"Reserving {gpus}x {gpu_type} for up to {hours}h...")
+
+        reservation_id, pod_name, conn_info = create_reservation(
+            gpu_type=gpu_type,
+            gpu_count=gpus,
+            duration_hours=hours,
+            name=reservation_name,
+        )
+        new_reservation = True
+        console.print(
+            f"[bold green]Reservation active[/bold green]: {reservation_id[:8]}... "
+            f"(pod: {pod_name})"
+        )
+
+        # Full workspace setup on new pod
+        backend = RemoteBackend(machine=pod_name)
+        console.print("Setting up workspace...")
+        setup_workspace(backend, git_name=git_name, git_email=git_email)
+        _configure_pod_auth(backend, gh_token)
+
+        # Upload previous artifacts so the agent has context
+        workspace = backend.workspace
+        job_dir = f"{workspace}/jobs/{job_id}"
+        backend.run(f"mkdir -p {job_dir}")
+        console.print("Uploading previous artifacts...")
+        _upload_previous_artifacts(backend, job_id, job_dir)
+
+        # Update job entry with new machine
+        from ptq.ssh import load_jobs_db, save_jobs_db
+
+        db = load_jobs_db()
+        if job_id in db:
+            db[job_id]["machine"] = pod_name
+            save_jobs_db(db)
+
+    try:
+        # Build agent message — always instruct to push when resuming
+        push_instruction = ""
+        if not no_pr and issue is not None:
+            push_instruction = (
+                "\n\nAfter addressing the follow-up:"
+                "\n1. Run `lintrunner -a` (install with `pip install lintrunner lintrunner-adapters && lintrunner init` if needed)"
+                "\n2. Use the verify-fix skill to run tests"
+                f"\n3. Commit and push all changes to the existing branch `ptq/{issue}`"
+                "\n4. If no branch exists yet, use the make-pr skill to create a draft PR"
+            )
+
+        agent_message = prompt
+        if push_instruction:
+            agent_message = f"{agent_message}{push_instruction}"
+
+        job_id = launch_agent(
+            backend,
+            issue_data=issue_data,
+            issue_number=issue,
+            machine=pod_name,
+            follow=follow,
+            model=model,
+            max_turns=max_turns,
+            message=agent_message,
+        )
+
+        if job_id and reservation_id:
+            save_reservation_id(job_id, reservation_id)
+
+        if job_id:
+            console.print("Fetching results...")
+            try:
+                results_dir = fetch_results(job_id)
+                console.print(f"Artifacts saved to: {results_dir}")
+            except Exception as e:
+                console.print(f"[yellow]Could not fetch results: {e}[/yellow]")
+
+    finally:
+        if new_reservation and reservation_id and follow and not keep:
+            console.print(f"Cancelling reservation {reservation_id[:8]}...")
+            if cancel_reservation(reservation_id):
+                console.print("[bold]Reservation cancelled.[/bold]")
+            else:
+                console.print(
+                    f"[yellow]Could not cancel reservation {reservation_id}. "
+                    f"Cancel manually: gpu-dev cancel {reservation_id}[/yellow]"
+                )
+        elif reservation_id and (keep or not follow):
+            console.print(
+                f"Reservation {reservation_id[:8]}... still active "
+                f"(auto-expires in {hours}h)."
+            )
+            console.print(
+                f"  ssh {pod_name}  # to connect"
+            )
+            console.print(
+                f"  ptq auto --resume {issue or job_id} -p '...'  # to continue"
+            )
+            console.print(
+                f"  gpu-dev cancel {reservation_id}  # to cancel early"
+            )
+
+
+@app.command()
+def auto(
+    issue: Annotated[int | None, typer.Option(help="GitHub issue number.")] = None,
+    message: Annotated[
+        str | None,
+        typer.Option("--message", "-m", help="Custom instruction for the agent."),
+    ] = None,
+    input_file: Annotated[
+        Path | None,
+        typer.Option("--input", "-i", help="Read task description from a file."),
+    ] = None,
+    gpu_type: Annotated[str, typer.Option(help="GPU type.")] = "h200",
+    gpus: Annotated[int, typer.Option(help="Number of GPUs.")] = 1,
+    hours: Annotated[float, typer.Option(help="Max reservation hours.")] = 4.0,
+    dockerfile: Annotated[
+        Path | None, typer.Option(help="Custom Dockerfile to use.")
+    ] = None,
+    no_pr: Annotated[
+        bool, typer.Option("--no-pr", help="Skip PR creation.")
+    ] = False,
+    prompt: Annotated[
+        str | None,
+        typer.Option("--prompt", "-p", help="Extra guidance for the agent."),
+    ] = None,
+    resume: Annotated[
+        str | None,
+        typer.Option("--resume", help="Resume a previous job (job ID or issue number)."),
+    ] = None,
+    keep: Annotated[
+        bool,
+        typer.Option("--keep", help="Keep reservation alive after agent finishes."),
+    ] = False,
+    model: Annotated[str, typer.Option(help="Claude model to use.")] = "opus",
+    max_turns: Annotated[int, typer.Option(help="Max agent turns.")] = 100,
+    follow: Annotated[
+        bool, typer.Option(help="Stream agent output to terminal.")
+    ] = True,
+) -> None:
+    """Full auto: reserve GPU, setup, run agent, fetch results, cancel reservation.
+
+    Handles the complete lifecycle: gpu-dev reservation -> workspace setup ->
+    agent launch -> results fetch -> reservation cancellation. The reservation
+    auto-cancels when the agent finishes (or on Ctrl+C / crash).
+
+    Use --resume to continue a previous job on the same (or new) pod.
+    Use --keep to keep the reservation alive after the agent finishes.
+
+    Examples:
+        ptq auto --issue 149002
+        ptq auto --issue 149002 --gpu-type a100 --hours 2
+        ptq auto --issue 149002 --no-pr
+        ptq auto --issue 149002 -p "focus on the nan_assert codepath"
+        ptq auto --issue 149002 --keep         # keep pod alive after
+        ptq auto --resume 149002 -p "try a different approach"
+        ptq auto --resume 149002 --keep -p "fix lint"  # keep pod for more work
+        ptq auto -m "investigate flex_attention OOM" --hours 6
+    """
+    if resume is not None:
+        return _auto_resume(
+            resume=resume,
+            prompt=prompt,
+            gpu_type=gpu_type,
+            gpus=gpus,
+            hours=hours,
+            no_pr=no_pr,
+            keep=keep,
+            model=model,
+            max_turns=max_turns,
+            follow=follow,
+        )
+
+    if input_file is not None and message is not None:
+        raise typer.BadParameter("--input and --message are mutually exclusive.")
+    if input_file is not None:
+        if not input_file.exists():
+            raise typer.BadParameter(f"File not found: {input_file}")
+        message = input_file.read_text()
+    if issue is None and message is None:
+        raise typer.BadParameter("Provide --issue or --message/-i.")
+
+    from ptq.agent import launch_agent
+    from ptq.issue import fetch_issue
+    from ptq.job import save_reservation_id
+    from ptq.provision import cancel_reservation, create_reservation, ensure_ssh_config
+    from ptq.results import fetch_results
+    from ptq.ssh import RemoteBackend
+    from ptq.workspace import setup_workspace
+
+    # 1. Fetch issue data (fail fast before reserving GPU)
+    if issue is not None:
+        console.print(f"Fetching issue #{issue}...")
+        issue_data = fetch_issue(issue)
+        console.print(f"[bold]{issue_data['title']}[/bold]")
+    else:
+        issue_data = None
+
+    # 2. Build Docker context with skills (only if custom dockerfile provided)
+    docker_context = None
+    if dockerfile:
+        from ptq.docker import build_context_tarball
+
+        console.print("Building Docker context...")
+        docker_context = build_context_tarball(
+            extra_dockerfile=dockerfile,
+        )
+
+    # 3. Verify SSH config
+    if not ensure_ssh_config():
+        console.print(
+            "[yellow]Warning: ~/.ssh/config may not include gpu-dev SSH config. "
+            "Run gpu-dev setup if SSH connection fails.[/yellow]"
+        )
+
+    # 4. Create reservation
+    reservation_name = f"ptq-{issue}" if issue else "ptq-adhoc"
+    console.print(
+        f"Reserving {gpus}x {gpu_type} for up to {hours}h..."
+    )
+
+    gh_token, git_name, git_email = _get_local_credentials()
+
+    reservation_id = None
+    job_id = None
+    try:
+        reservation_id, pod_name, conn_info = create_reservation(
+            gpu_type=gpu_type,
+            gpu_count=gpus,
+            duration_hours=hours,
+            dockerfile=docker_context,
+            name=reservation_name,
+        )
+        console.print(
+            f"[bold green]Reservation active[/bold green]: {reservation_id[:8]}... "
+            f"(pod: {pod_name})"
+        )
+
+        # 5. Setup workspace
+        backend = RemoteBackend(machine=pod_name)
+        console.print("Setting up workspace...")
+        setup_workspace(backend, git_name=git_name, git_email=git_email)
+        _configure_pod_auth(backend, gh_token)
+
+        # 6. Build agent message with PR instruction
+        pr_instruction = ""
+        if not no_pr and issue is not None:
+            pr_instruction = (
+                "\n\nAfter fixing the issue, use the verify-fix skill to run "
+                "tests and perf checks, then use the make-pr skill to create "
+                "a draft PR."
+            )
+
+        # 7. Launch agent
+        agent_message = message or ""
+        if prompt:
+            agent_message = f"{agent_message}\n\n{prompt}" if agent_message else prompt
+        if pr_instruction:
+            agent_message = f"{agent_message}{pr_instruction}"
+        job_id = launch_agent(
+            backend,
+            issue_data=issue_data,
+            issue_number=issue,
+            machine=pod_name,
+            follow=follow,
+            model=model,
+            max_turns=max_turns,
+            message=agent_message or None,
+        )
+
+        # Track reservation with job
+        if job_id:
+            save_reservation_id(job_id, reservation_id)
+
+        # 8. Fetch results
+        if job_id:
+            console.print("Fetching results...")
+            try:
+                results_dir = fetch_results(job_id)
+                console.print(f"Artifacts saved to: {results_dir}")
+            except Exception as e:
+                console.print(f"[yellow]Could not fetch results: {e}[/yellow]")
+
+    finally:
+        # 9. Cancel reservation on exit — unless --keep or --no-follow
+        if reservation_id and follow and not keep:
+            console.print(f"Cancelling reservation {reservation_id[:8]}...")
+            if cancel_reservation(reservation_id):
+                console.print("[bold]Reservation cancelled.[/bold]")
+            else:
+                console.print(
+                    f"[yellow]Could not cancel reservation {reservation_id}. "
+                    f"Cancel manually: gpu-dev cancel {reservation_id}[/yellow]"
+                )
+        elif reservation_id and (keep or not follow):
+            console.print(
+                f"Reservation {reservation_id[:8]}... still active "
+                f"(auto-expires in {hours}h)."
+            )
+            console.print(
+                f"  ssh {pod_name}  # to connect"
+            )
+            console.print(
+                f"  ptq auto --resume {issue or job_id} -p '...'  # to continue"
+            )
+            console.print(
+                f"  gpu-dev cancel {reservation_id}  # to cancel early"
+            )
+
+
 @app.command()
 def results(
     job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
@@ -175,8 +615,8 @@ def apply(
 
 
 def _clean_single_job(job_id: str) -> None:
-    """Kill agent, remove remote files, drop from DB."""
-    from ptq.job import get_job
+    """Kill agent, cancel reservation, remove remote files, drop from DB."""
+    from ptq.job import get_job, get_reservation_id
     from ptq.ssh import backend_for_job, load_jobs_db, save_jobs_db
 
     job = get_job(job_id)
@@ -188,6 +628,15 @@ def _clean_single_job(job_id: str) -> None:
     if pid and backend.is_pid_alive(pid):
         backend.kill_pid(pid)
         console.print(f"  killed agent (pid {pid})")
+
+    res_id = get_reservation_id(job_id)
+    if res_id:
+        from ptq.provision import cancel_reservation
+
+        if cancel_reservation(res_id):
+            console.print(f"  cancelled reservation {res_id[:8]}...")
+        else:
+            console.print(f"  [yellow]could not cancel reservation {res_id}[/yellow]")
 
     backend.run(
         f"cd {ws}/pytorch && git worktree remove {job_dir}/pytorch --force",
@@ -337,6 +786,10 @@ def list_jobs() -> None:
         console.print("No jobs.")
         return
 
+    has_reservations = any(
+        entry.get("reservation_id") for entry in db.values()
+    )
+
     table = Table(
         show_header=True, header_style="bold", show_lines=False, pad_edge=False
     )
@@ -345,6 +798,8 @@ def list_jobs() -> None:
     table.add_column("Issue", style="cyan")
     table.add_column("Runs", justify="right")
     table.add_column("Target")
+    if has_reservations:
+        table.add_column("Reservation", style="dim")
 
     for job_id, entry in sorted(db.items()):
         issue_val = entry.get("issue")
@@ -358,7 +813,11 @@ def list_jobs() -> None:
         else:
             alive = False
         status = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
-        table.add_row(status, job_id, issue_display, runs, target)
+        row = [status, job_id, issue_display, runs, target]
+        if has_reservations:
+            res_id = entry.get("reservation_id", "")
+            row.append(res_id[:8] if res_id else "")
+        table.add_row(*row)
 
     console.print(table)
     console.print()

@@ -5,11 +5,13 @@ import pytest
 from ptq.job import (
     find_existing_job,
     get_job,
+    get_reservation_id,
     increment_run,
     make_job_id,
     register_job,
     resolve_job_id,
     save_pid,
+    save_reservation_id,
 )
 
 
@@ -99,6 +101,30 @@ class TestSavePid:
 
     def test_noop_for_unknown(self, jobs_db):
         save_pid("missing", 1234)
+
+
+class TestSaveReservationId:
+    def test_saves_reservation_id(self, jobs_db):
+        jobs_db["j1"] = {"issue": 1, "runs": 1}
+        save_reservation_id("j1", "res-abc-123")
+        assert jobs_db["j1"]["reservation_id"] == "res-abc-123"
+
+    def test_noop_for_unknown(self, jobs_db):
+        save_reservation_id("missing", "res-abc-123")
+        assert "missing" not in jobs_db
+
+
+class TestGetReservationId:
+    def test_found(self, jobs_db):
+        jobs_db["j1"] = {"issue": 1, "runs": 1, "reservation_id": "res-xyz"}
+        assert get_reservation_id("j1") == "res-xyz"
+
+    def test_no_reservation(self, jobs_db):
+        jobs_db["j1"] = {"issue": 1, "runs": 1}
+        assert get_reservation_id("j1") is None
+
+    def test_missing_job(self, jobs_db):
+        assert get_reservation_id("nonexistent") is None
 
 
 class TestFindExistingJob:

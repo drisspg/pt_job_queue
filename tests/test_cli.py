@@ -51,6 +51,23 @@ class TestRunValidation:
         assert mock_launch.call_args.kwargs["message"] == "do the thing"
 
 
+class TestAutoValidation:
+    def test_no_issue_no_message(self):
+        result = runner.invoke(app, ["auto"])
+        assert result.exit_code != 0
+        assert "Provide --issue or --message" in result.output
+
+    def test_input_and_message_mutually_exclusive(self):
+        result = runner.invoke(app, ["auto", "-i", "f.md", "-m", "hello"])
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_input_file_not_found(self):
+        result = runner.invoke(app, ["auto", "-i", "/nonexistent/path.md"])
+        assert result.exit_code != 0
+        assert "File not found" in result.output
+
+
 class TestSetupValidation:
     def test_no_machine_no_local(self):
         result = runner.invoke(app, ["setup"])
