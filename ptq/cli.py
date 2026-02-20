@@ -141,6 +141,217 @@ def run(
     )
 
 
+def _get_local_credentials() -> tuple[str | None, str | None, str | None]:
+    """Get GH_TOKEN and git identity from local machine."""
+    import subprocess as _sp
+
+    _gh_result = _sp.run(
+        ["gh", "auth", "token"], capture_output=True, text=True, check=False
+    )
+    gh_token = _gh_result.stdout.strip() if _gh_result.returncode == 0 else None
+
+    _name_result = _sp.run(
+        ["git", "config", "user.name"], capture_output=True, text=True, check=False
+    )
+    git_name = _name_result.stdout.strip() or None
+
+    _email_result = _sp.run(
+        ["git", "config", "user.email"], capture_output=True, text=True, check=False
+    )
+    git_email = _email_result.stdout.strip() or None
+
+    return gh_token, git_name, git_email
+
+
+def _configure_pod_auth(backend, gh_token: str | None) -> None:
+    """Configure GitHub auth + SSH on a pod."""
+    if gh_token:
+        console.print("Configuring GitHub auth on pod...")
+        hosts_yml = (
+            "github.com:\n"
+            f"    oauth_token: {gh_token}\n"
+            "    git_protocol: https\n"
+        )
+        backend.run("mkdir -p ~/.config/gh")
+        backend.run(
+            f"cat > ~/.config/gh/hosts.yml << 'GH_HOSTS_EOF'\n{hosts_yml}GH_HOSTS_EOF"
+        )
+        backend.run("gh auth setup-git", check=False)
+    else:
+        console.print(
+            "[yellow]No GH_TOKEN found locally — PR creation will be skipped.[/yellow]"
+        )
+
+    # Add GitHub SSH host keys so git push over SSH doesn't fail
+    backend.run(
+        "mkdir -p ~/.ssh && ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null",
+        check=False,
+    )
+
+
+def _upload_previous_artifacts(backend, job_id: str, job_dir: str) -> None:
+    """Upload locally cached artifacts to a new pod for continuation."""
+    results_dir = Path.home() / ".ptq" / "results" / job_id
+    if not results_dir.exists():
+        return
+    for artifact in ["worklog.md", "report.md", "fix.diff"]:
+        local_path = results_dir / artifact
+        if local_path.exists() and local_path.stat().st_size > 0:
+            backend.copy_to(local_path, f"{job_dir}/{artifact}")
+            console.print(f"  uploaded {artifact}")
+
+
+def _auto_resume(
+    *,
+    resume: str,
+    prompt: str | None,
+    gpu_type: str,
+    gpus: int,
+    hours: float,
+    no_pr: bool,
+    model: str,
+    max_turns: int,
+    follow: bool,
+) -> None:
+    """Resume a previous auto job, reusing pod if still alive."""
+    if not prompt:
+        raise typer.BadParameter("--prompt/-p is required when using --resume.")
+
+    from ptq.agent import launch_agent
+    from ptq.issue import fetch_issue
+    from ptq.job import get_job, get_reservation_id, resolve_job_id, save_reservation_id
+    from ptq.provision import cancel_reservation, create_reservation, ensure_ssh_config
+    from ptq.results import fetch_results
+    from ptq.ssh import RemoteBackend
+    from ptq.workspace import setup_workspace
+
+    # Resolve the job
+    job_id = resolve_job_id(resume)
+    job = get_job(job_id)
+    issue = job.get("issue")
+    old_pod = job.get("machine")
+
+    console.print(f"[bold]Resuming job {job_id}[/bold]")
+    if issue is not None:
+        console.print(f"Fetching issue #{issue}...")
+        issue_data = fetch_issue(issue)
+        console.print(f"[bold]{issue_data['title']}[/bold]")
+    else:
+        issue_data = None
+
+    # Try to reach the old pod
+    pod_reachable = False
+    if old_pod:
+        console.print(f"Checking if pod {old_pod} is still reachable...")
+        backend = RemoteBackend(machine=old_pod)
+        result = backend.run("echo alive", check=False)
+        pod_reachable = result.returncode == 0 and "alive" in result.stdout
+
+    gh_token, git_name, git_email = _get_local_credentials()
+
+    reservation_id = get_reservation_id(job_id)
+    new_reservation = False
+
+    if pod_reachable:
+        console.print(f"[bold green]Pod {old_pod} still alive — reusing.[/bold green]")
+        pod_name = old_pod
+        backend = RemoteBackend(machine=pod_name)
+    else:
+        # Need a new reservation
+        console.print("[yellow]Pod no longer reachable — creating new reservation.[/yellow]")
+        if not ensure_ssh_config():
+            console.print(
+                "[yellow]Warning: ~/.ssh/config may not include gpu-dev SSH config.[/yellow]"
+            )
+
+        reservation_name = f"ptq-resume-{issue}" if issue else "ptq-resume"
+        console.print(f"Reserving {gpus}x {gpu_type} for up to {hours}h...")
+
+        reservation_id, pod_name, conn_info = create_reservation(
+            gpu_type=gpu_type,
+            gpu_count=gpus,
+            duration_hours=hours,
+            name=reservation_name,
+        )
+        new_reservation = True
+        console.print(
+            f"[bold green]Reservation active[/bold green]: {reservation_id[:8]}... "
+            f"(pod: {pod_name})"
+        )
+
+        # Full workspace setup on new pod
+        backend = RemoteBackend(machine=pod_name)
+        console.print("Setting up workspace...")
+        setup_workspace(backend, git_name=git_name, git_email=git_email)
+        _configure_pod_auth(backend, gh_token)
+
+        # Upload previous artifacts so the agent has context
+        workspace = backend.workspace
+        job_dir = f"{workspace}/jobs/{job_id}"
+        backend.run(f"mkdir -p {job_dir}")
+        console.print("Uploading previous artifacts...")
+        _upload_previous_artifacts(backend, job_id, job_dir)
+
+        # Update job entry with new machine
+        from ptq.ssh import load_jobs_db, save_jobs_db
+
+        db = load_jobs_db()
+        if job_id in db:
+            db[job_id]["machine"] = pod_name
+            save_jobs_db(db)
+
+    try:
+        # Build agent message
+        pr_instruction = ""
+        if not no_pr and issue is not None:
+            pr_instruction = (
+                "\n\nAfter addressing the follow-up, use the verify-fix skill "
+                "to run tests, then use the make-pr skill to create a draft PR."
+            )
+
+        agent_message = prompt
+        if pr_instruction:
+            agent_message = f"{agent_message}{pr_instruction}"
+
+        job_id = launch_agent(
+            backend,
+            issue_data=issue_data,
+            issue_number=issue,
+            machine=pod_name,
+            follow=follow,
+            model=model,
+            max_turns=max_turns,
+            message=agent_message,
+        )
+
+        if job_id and reservation_id:
+            save_reservation_id(job_id, reservation_id)
+
+        if job_id:
+            console.print("Fetching results...")
+            try:
+                results_dir = fetch_results(job_id)
+                console.print(f"Artifacts saved to: {results_dir}")
+            except Exception as e:
+                console.print(f"[yellow]Could not fetch results: {e}[/yellow]")
+
+    finally:
+        if new_reservation and reservation_id and follow:
+            console.print(f"Cancelling reservation {reservation_id[:8]}...")
+            if cancel_reservation(reservation_id):
+                console.print("[bold]Reservation cancelled.[/bold]")
+            else:
+                console.print(
+                    f"[yellow]Could not cancel reservation {reservation_id}. "
+                    f"Cancel manually: gpu-dev cancel {reservation_id}[/yellow]"
+                )
+        elif new_reservation and reservation_id and not follow:
+            console.print(
+                f"Reservation {reservation_id[:8]}... still active "
+                f"(auto-expires in {hours}h)."
+            )
+
+
 @app.command()
 def auto(
     issue: Annotated[int | None, typer.Option(help="GitHub issue number.")] = None,
@@ -165,6 +376,10 @@ def auto(
         str | None,
         typer.Option("--prompt", "-p", help="Extra guidance for the agent."),
     ] = None,
+    resume: Annotated[
+        str | None,
+        typer.Option("--resume", help="Resume a previous job (job ID or issue number)."),
+    ] = None,
     model: Annotated[str, typer.Option(help="Claude model to use.")] = "opus",
     max_turns: Annotated[int, typer.Option(help="Max agent turns.")] = 100,
     follow: Annotated[
@@ -177,13 +392,29 @@ def auto(
     agent launch -> results fetch -> reservation cancellation. The reservation
     auto-cancels when the agent finishes (or on Ctrl+C / crash).
 
+    Use --resume to continue a previous job on the same (or new) pod.
+
     Examples:
         ptq auto --issue 149002
         ptq auto --issue 149002 --gpu-type a100 --hours 2
         ptq auto --issue 149002 --no-pr
         ptq auto --issue 149002 -p "focus on the nan_assert codepath"
+        ptq auto --resume 149002 -p "try a different approach"
         ptq auto -m "investigate flex_attention OOM" --hours 6
     """
+    if resume is not None:
+        return _auto_resume(
+            resume=resume,
+            prompt=prompt,
+            gpu_type=gpu_type,
+            gpus=gpus,
+            hours=hours,
+            no_pr=no_pr,
+            model=model,
+            max_turns=max_turns,
+            follow=follow,
+        )
+
     if input_file is not None and message is not None:
         raise typer.BadParameter("--input and --message are mutually exclusive.")
     if input_file is not None:
@@ -232,6 +463,8 @@ def auto(
         f"Reserving {gpus}x {gpu_type} for up to {hours}h..."
     )
 
+    gh_token, git_name, git_email = _get_local_credentials()
+
     reservation_id = None
     job_id = None
     try:
@@ -247,52 +480,11 @@ def auto(
             f"(pod: {pod_name})"
         )
 
-        # 5. Setup workspace (with git identity from local machine)
-        import subprocess as _sp
-
-        _gh_result = _sp.run(
-            ["gh", "auth", "token"], capture_output=True, text=True, check=False
-        )
-        gh_token = _gh_result.stdout.strip() if _gh_result.returncode == 0 else None
-
-        _name_result = _sp.run(
-            ["git", "config", "user.name"], capture_output=True, text=True, check=False
-        )
-        git_name = _name_result.stdout.strip() or None
-
-        _email_result = _sp.run(
-            ["git", "config", "user.email"], capture_output=True, text=True, check=False
-        )
-        git_email = _email_result.stdout.strip() or None
-
+        # 5. Setup workspace
         backend = RemoteBackend(machine=pod_name)
         console.print("Setting up workspace...")
         setup_workspace(backend, git_name=git_name, git_email=git_email)
-
-        # Configure GitHub auth + SSH on pod
-        if gh_token:
-            console.print("Configuring GitHub auth on pod...")
-            hosts_yml = (
-                "github.com:\n"
-                f"    oauth_token: {gh_token}\n"
-                "    git_protocol: https\n"
-            )
-            backend.run("mkdir -p ~/.config/gh")
-            backend.run(
-                f"cat > ~/.config/gh/hosts.yml << 'GH_HOSTS_EOF'\n{hosts_yml}GH_HOSTS_EOF"
-            )
-            # Configure git to use gh as credential helper (for git push over HTTPS)
-            backend.run("gh auth setup-git", check=False)
-        else:
-            console.print(
-                "[yellow]No GH_TOKEN found locally — PR creation will be skipped.[/yellow]"
-            )
-
-        # Add GitHub SSH host keys so git push over SSH doesn't fail
-        backend.run(
-            "mkdir -p ~/.ssh && ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null",
-            check=False,
-        )
+        _configure_pod_auth(backend, gh_token)
 
         # 6. Build agent message with PR instruction
         pr_instruction = ""
