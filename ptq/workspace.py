@@ -199,19 +199,28 @@ def _install_gh_remote(backend: Backend) -> None:
             console.print("gh CLI installed (conda).")
             return
     # Fallback: download from GitHub releases
-    install_cmd = (
-        "GH_VERSION=$(curl -sL https://api.github.com/repos/cli/cli/releases/latest "
-        "| grep -oP '\"tag_name\":\\s*\"v\\K[^\"]+') && "
-        "curl -sL https://github.com/cli/cli/releases/download/v${GH_VERSION}/"
-        "gh_${GH_VERSION}_linux_amd64.tar.gz | tar xz -C /tmp && "
-        "mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh ~/.local/bin/gh && "
-        "rm -rf /tmp/gh_${GH_VERSION}_linux_amd64"
+    # Resolve latest version via API, extract with Python (avoids shell escaping issues)
+    ver_result = backend.run(
+        "curl -sL https://api.github.com/repos/cli/cli/releases/latest"
+        " | python3 -c \"import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))\"",
+        check=False,
     )
-    result = backend.run(install_cmd, check=False)
+    gh_version = ver_result.stdout.strip() if ver_result.returncode == 0 else ""
+    if not gh_version:
+        console.print("[yellow]Could not determine gh CLI version — PR creation may fail.[/yellow]")
+        return
+    backend.run("mkdir -p ~/.local/bin", check=False)
+    result = backend.run(
+        f"curl -sL https://github.com/cli/cli/releases/download/v{gh_version}/"
+        f"gh_{gh_version}_linux_amd64.tar.gz | tar xz -C /tmp && "
+        f"mv /tmp/gh_{gh_version}_linux_amd64/bin/gh ~/.local/bin/gh && "
+        f"rm -rf /tmp/gh_{gh_version}_linux_amd64",
+        check=False,
+    )
     if result.returncode != 0:
         console.print("[yellow]Could not install gh CLI — PR creation may fail.[/yellow]")
         return
-    console.print("gh CLI installed (GitHub releases).")
+    console.print("gh CLI installed.")
 
 
 def _configure_git_remote(backend: Backend, name: str, email: str) -> None:

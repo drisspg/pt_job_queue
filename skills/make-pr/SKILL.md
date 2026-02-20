@@ -15,7 +15,21 @@ Confirm fix.diff exists and is non-empty:
 test -s $JOB_DIR/fix.diff || echo "ERROR: fix.diff is empty or missing"
 ```
 
-### 2. Create Branch and Commit
+### 2. Lint and Auto-fix
+Run the linter on changed files and auto-fix any issues before committing:
+```bash
+cd $JOB_DIR/pytorch
+pip install lintrunner lintrunner-adapters 2>/dev/null
+lintrunner init 2>/dev/null
+lintrunner -a 2>&1 || true
+```
+If `lintrunner` is not available, at minimum run:
+```bash
+$WORKSPACE/.venv/bin/python -m ruff check --fix .
+$WORKSPACE/.venv/bin/python -m ruff format .
+```
+
+### 3. Create Branch and Commit
 ```bash
 cd $JOB_DIR/pytorch
 git checkout -b ptq/$ISSUE_NUMBER
@@ -25,7 +39,7 @@ git commit -m "Fix #$ISSUE_NUMBER: <short description of fix>
 <one-paragraph explanation of root cause and what the fix does>"
 ```
 
-### 3. Push
+### 4. Push
 Try pushing directly to pytorch/pytorch first. If that fails (permissions), fork and push:
 ```bash
 git push origin ptq/$ISSUE_NUMBER 2>&1 || {
@@ -35,7 +49,7 @@ git push origin ptq/$ISSUE_NUMBER 2>&1 || {
 }
 ```
 
-### 4. Build PR Body and Create PR
+### 5. Build PR Body and Create PR
 Read these files to construct the PR body:
 - `$JOB_DIR/report.md` — summary of the fix
 - `$JOB_DIR/worklog.md` — full investigation log
@@ -74,7 +88,7 @@ gh pr create \
   --base main
 ```
 
-### 5. Record Result
+### 6. Record Result
 Append the PR URL to the worklog:
 ```markdown
 ## Pull Request
@@ -82,7 +96,7 @@ Append the PR URL to the worklog:
 - Status: Draft
 ```
 
-### 6. Fallback
+### 7. Fallback
 If `gh auth` fails or PR creation fails for any reason:
 1. Save the PR body to `$JOB_DIR/pr_body.md`
 2. Save the branch name and push instructions to the worklog
