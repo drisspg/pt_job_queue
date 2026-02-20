@@ -1,6 +1,6 @@
 # Make PR
 
-Create a draft GitHub PR for the fix.
+Create a draft GitHub PR for the fix with a structured body.
 
 ## Prerequisites
 - fix.diff is non-empty
@@ -25,28 +25,56 @@ git commit -m "Fix #$ISSUE_NUMBER: <short description of fix>
 <one-paragraph explanation of root cause and what the fix does>"
 ```
 
-### 3. Push and Create PR
+### 3. Push
 Try pushing directly to pytorch/pytorch first. If that fails (permissions), fork and push:
 ```bash
-# Try direct push
 git push origin ptq/$ISSUE_NUMBER 2>&1 || {
-  # Fork and push
   gh repo fork pytorch/pytorch --clone=false
   git remote add fork $(gh repo view --json sshUrl -q .sshUrl 2>/dev/null || echo "git@github.com:$(gh api user -q .login)/pytorch.git")
   git push fork ptq/$ISSUE_NUMBER
 }
 ```
 
-Create the draft PR using the report as the body:
+### 4. Build PR Body and Create PR
+Read these files to construct the PR body:
+- `$JOB_DIR/report.md` — summary of the fix
+- `$JOB_DIR/worklog.md` — full investigation log
+- `$JOB_DIR/fix.diff` — the diff
+
+The PR body MUST follow this exact template structure:
+
+    ## Summary
+    <paste contents of report.md here>
+
+    ## User prompt
+    > <extract the user's prompt from the first "> **User:**" line in worklog.md>
+
+    <details><summary>Worklog</summary>
+
+    <paste contents of worklog.md here>
+
+    </details>
+
+    <details><summary>Diff</summary>
+
+    ```diff
+    <paste contents of fix.diff here>
+    ```
+
+    </details>
+
+    🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Write this body to `/tmp/pr_body.md`, then create the PR:
 ```bash
 gh pr create \
   --draft \
   --title "Fix #$ISSUE_NUMBER: <short description>" \
-  --body-file $JOB_DIR/report.md \
+  --body-file /tmp/pr_body.md \
   --base main
 ```
 
-### 4. Record Result
+### 5. Record Result
 Append the PR URL to the worklog:
 ```markdown
 ## Pull Request
@@ -54,7 +82,7 @@ Append the PR URL to the worklog:
 - Status: Draft
 ```
 
-### 5. Fallback
+### 6. Fallback
 If `gh auth` fails or PR creation fails for any reason:
 1. Save the PR body to `$JOB_DIR/pr_body.md`
 2. Save the branch name and push instructions to the worklog

@@ -247,10 +247,44 @@ def auto(
             f"(pod: {pod_name})"
         )
 
-        # 5. Setup workspace
+        # 5. Setup workspace (with git identity from local machine)
+        import subprocess as _sp
+
+        _gh_result = _sp.run(
+            ["gh", "auth", "token"], capture_output=True, text=True, check=False
+        )
+        gh_token = _gh_result.stdout.strip() if _gh_result.returncode == 0 else None
+
+        _name_result = _sp.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, check=False
+        )
+        git_name = _name_result.stdout.strip() or None
+
+        _email_result = _sp.run(
+            ["git", "config", "user.email"], capture_output=True, text=True, check=False
+        )
+        git_email = _email_result.stdout.strip() or None
+
         backend = RemoteBackend(machine=pod_name)
         console.print("Setting up workspace...")
-        setup_workspace(backend)
+        setup_workspace(backend, git_name=git_name, git_email=git_email)
+
+        # Configure GitHub auth on pod
+        if gh_token:
+            console.print("Configuring GitHub auth on pod...")
+            hosts_yml = (
+                "github.com:\n"
+                f"    oauth_token: {gh_token}\n"
+                "    git_protocol: https\n"
+            )
+            backend.run("mkdir -p ~/.config/gh")
+            backend.run(
+                f"cat > ~/.config/gh/hosts.yml << 'GH_HOSTS_EOF'\n{hosts_yml}GH_HOSTS_EOF"
+            )
+        else:
+            console.print(
+                "[yellow]No GH_TOKEN found locally — PR creation will be skipped.[/yellow]"
+            )
 
         # 6. Build agent message with PR instruction
         pr_instruction = ""
