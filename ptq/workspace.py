@@ -49,6 +49,7 @@ def setup_workspace(backend: Backend, *, build: bool = False) -> None:
     console.print("Creating workspace directories...")
     backend.run(f"mkdir -p {workspace}/jobs {workspace}/scripts")
 
+    _ensure_ccache_config(backend)
     _clone_pytorch(backend, workspace)
 
     console.print("Installing Python 3.12 via uv...")
@@ -138,6 +139,32 @@ def deploy_scripts(backend: Backend) -> None:
             shutil.copy2(script, dest_dir / script.name)
 
     backend.run(f"chmod +x {workspace}/scripts/*.sh")
+
+
+_CCACHE_CONF = """\
+max_size = 25G
+base_dir = {home}
+"""
+
+
+def _ensure_ccache_config(backend: Backend) -> None:
+    result = backend.run("which ccache", check=False)
+    if result.returncode != 0:
+        console.print("[yellow]ccache not found, skipping config.[/yellow]")
+        return
+
+    conf_dir = "~/.config/ccache"
+    conf_file = f"{conf_dir}/ccache.conf"
+    existing = backend.run(f"cat {conf_file}", check=False)
+    if existing.returncode == 0 and "base_dir" in existing.stdout:
+        console.print("ccache config already has base_dir, skipping.")
+        return
+
+    home = backend.run("echo $HOME", check=False).stdout.strip()
+    conf = _CCACHE_CONF.format(home=home)
+    backend.run(f"mkdir -p {conf_dir}")
+    backend.run(f"cat > {conf_file} << 'CCACHE_EOF'\n{conf}CCACHE_EOF")
+    console.print(f"Configured ccache with base_dir={home}")
 
 
 def _install_uv_remote(backend: RemoteBackend) -> None:
