@@ -1,8 +1,39 @@
 from __future__ import annotations
 
+import re
+
 from rich.console import Console
 
 from ptq.ssh import Backend, RemoteBackend
+
+_CUDA_VERSION_RE = re.compile(r"CUDA Version:\s*(\d+)\.(\d+)")
+
+_SUPPORTED_CUDA = {
+    (12, 4): "cu124",
+    (12, 6): "cu126",
+    (12, 8): "cu128",
+    (13, 0): "cu130",
+}
+
+
+def detect_cuda_version(backend: Backend) -> str:
+    result = backend.run("nvidia-smi", check=False)
+    if result.returncode != 0:
+        raise SystemExit("nvidia-smi not found or failed.")
+    m = _CUDA_VERSION_RE.search(result.stdout)
+    if not m:
+        raise SystemExit("Could not parse CUDA version from nvidia-smi output.")
+    major, minor = int(m.group(1)), int(m.group(2))
+    if major < 12:
+        raise SystemExit(f"CUDA {major}.{minor} is too old (need >= 12.4).")
+    best = None
+    for (sup_major, sup_minor), tag in sorted(_SUPPORTED_CUDA.items()):
+        if (major, minor) >= (sup_major, sup_minor):
+            best = tag
+    if best is None:
+        raise SystemExit(f"CUDA {major}.{minor} is too old (need >= 12.4).")
+    return best
+
 
 console = Console()
 

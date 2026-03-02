@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 
 app = typer.Typer(
-    name="ptq", help="PyTorch Job Queue — dispatch Claude agents to fix PyTorch issues."
+    name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix PyTorch issues."
 )
 console = Console()
 
@@ -61,8 +61,15 @@ def run(
     follow: Annotated[
         bool, typer.Option(help="Stream agent output to terminal.")
     ] = True,
-    model: Annotated[str, typer.Option(help="Claude model to use.")] = "opus",
+    model: Annotated[str, typer.Option(help="Model to use.")] = "opus",
     max_turns: Annotated[int, typer.Option(help="Max agent turns.")] = 100,
+    agent: Annotated[
+        str, typer.Option(help="Agent type: claude, codex, or cursor.")
+    ] = "claude",
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Stream build output and show timings."),
+    ] = False,
     workspace: Annotated[
         str | None, typer.Option(help="Custom workspace path.")
     ] = None,
@@ -75,15 +82,15 @@ def run(
         typer.Option("--input", "-i", help="Read task description from a file."),
     ] = None,
 ) -> None:
-    """Launch a Claude agent to investigate a PyTorch issue or run an adhoc task.
+    """Launch an AI agent to investigate a PyTorch issue or run an adhoc task.
 
     Provide --issue for GitHub issue investigation, or --message for a freeform task.
     Re-run an existing job by passing its JOB_ID (or issue number) as a positional arg.
 
     Examples:
         ptq run --issue 174923 --machine aws-gpu-dev
-        ptq run -m "investigate flex_attention OOM on H100" --machine gpu-dev
-        ptq run -i task.md --machine gpu-dev
+        ptq run --agent codex -m "investigate OOM" --machine gpu-dev
+        ptq run -i task.md --machine gpu-dev --agent cursor
         ptq run 20260214-174923 -m "look at flex_attention.py instead"
         ptq run 174923 -m "try a different approach"
     """
@@ -98,20 +105,22 @@ def run(
     from ptq.issue import fetch_issue
     from ptq.ssh import LocalBackend, RemoteBackend
 
+    resolved_job_id: str | None = None
     if job_id is not None:
         from ptq.job import get_job, resolve_job_id
 
-        resolved = resolve_job_id(job_id)
-        job = get_job(resolved)
+        resolved_job_id = resolve_job_id(job_id)
+        job = get_job(resolved_job_id)
         issue = issue or job["issue"]
         machine = machine or job.get("machine")
         local = local or job.get("local", False)
         workspace = workspace or job.get("workspace")
+        agent = job.get("agent", agent)
 
     if issue is None and message is None and job_id is None:
         raise typer.BadParameter("Provide --issue, --message, or a JOB_ID to re-run.")
     if not machine and not local:
-        raise typer.BadParameter("Provide --machine or --local.")
+        local = True
 
     if issue is not None:
         console.print(f"Fetching issue #{issue}...")
@@ -138,6 +147,9 @@ def run(
         model=model,
         max_turns=max_turns,
         message=message,
+        agent_type=agent,
+        existing_job_id=resolved_job_id,
+        verbose=verbose,
     )
 
 
@@ -345,6 +357,7 @@ def list_jobs() -> None:
     table.add_column("Status", width=9)
     table.add_column("Job ID")
     table.add_column("Issue", style="cyan")
+    table.add_column("Agent", width=7)
     table.add_column("Runs", justify="right")
     table.add_column("Target")
 
@@ -353,6 +366,7 @@ def list_jobs() -> None:
         issue_display = f"#{issue_val}" if issue_val is not None else "[dim]adhoc[/dim]"
         runs = str(entry.get("runs", 1))
         target = entry.get("machine") or "local"
+        agent_name = entry.get("agent", "claude")
         pid = entry.get("pid")
         if pid:
             backend = backend_for_job(job_id)
@@ -360,7 +374,7 @@ def list_jobs() -> None:
         else:
             alive = False
         status = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
-        table.add_row(status, job_id, issue_display, runs, target)
+        table.add_row(status, job_id, issue_display, agent_name, runs, target)
 
     console.print(table)
     console.print()
@@ -425,7 +439,10 @@ def peek(
         console.print("[yellow]No worklog yet.[/yellow]")
 
     if log_lines > 0:
-        log_file = f"{ws}/jobs/{job_id}/claude-{runs}.log"
+        from ptq.agents import get_agent
+
+        agent = get_agent(job.get("agent", "claude"))
+        log_file = f"{ws}/jobs/{job_id}/{agent.log_filename(runs)}"
         tail_result = backend.run(f"tail -{log_lines} {log_file}", check=False)
         if tail_result.stdout.strip():
             console.print()
@@ -435,18 +452,14 @@ def peek(
                 if not line:
                     continue
                 try:
-                    event = json.loads(line)
-                    match event.get("type"):
-                        case "assistant":
-                            for block in event.get("message", {}).get("content", []):
-                                if block.get("type") == "text" and block.get("text"):
-                                    console.print(f"  [dim]{block['text'][:200]}[/dim]")
-                                elif block.get("type") == "tool_use":
-                                    console.print(
-                                        f"  [cyan]{block.get('name', '')}[/cyan]"
-                                    )
-                        case _:
-                            pass
+                    for ev in agent.parse_stream_line(line):
+                        match ev.kind:
+                            case "text":
+                                console.print(f"  [dim]{ev.text[:200]}[/dim]")
+                            case "tool_use":
+                                console.print(f"  [cyan]{ev.tool_name}[/cyan]")
+                            case _:
+                                pass
                 except (json.JSONDecodeError, ValueError):
                     console.print(f"  [dim]{line[:200]}[/dim]")
 
@@ -486,7 +499,10 @@ def status(
         console.print(f"[bold dim]stopped[/bold dim]  {job_id}  (run {runs}, {target})")
         console.print(f"  ptq results {job_id}")
 
-    log_file = f"{ws}/jobs/{job_id}/claude-{runs}.log"
+    from ptq.agents import get_agent as _get_agent
+
+    _agent = _get_agent(job.get("agent", "claude"))
+    log_file = f"{ws}/jobs/{job_id}/{_agent.log_filename(runs)}"
     tail = backend.run(f"tail -1 {log_file}", check=False)
     if tail.stdout.strip():
         console.print(f"\n  last log: [dim]{tail.stdout.strip()[:120]}[/dim]")
