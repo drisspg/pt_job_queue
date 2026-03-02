@@ -20,17 +20,17 @@ def setup(
     local: Annotated[
         bool, typer.Option("--local", help="Set up local workspace instead.")
     ] = False,
-    cuda: Annotated[
-        str | None, typer.Option(help="CUDA tag override (cu124, cu126, cu128, cu130).")
-    ] = None,
-    cpu: Annotated[
-        bool, typer.Option("--cpu", help="Use CPU-only PyTorch (for macOS/testing).")
+    build: Annotated[
+        bool, typer.Option("--build", help="Also compile PyTorch from source.")
     ] = False,
     workspace: Annotated[
         str | None, typer.Option(help="Custom workspace path.")
     ] = None,
 ) -> None:
-    """One-time workspace setup on a remote machine or locally."""
+    """One-time workspace setup: clone PyTorch with submodules, create venv, install build deps.
+
+    Use --build to also compile PyTorch from source (needed for C++ edit support).
+    """
     if not machine and not local:
         raise typer.BadParameter("Provide a machine name or use --local.")
 
@@ -45,7 +45,7 @@ def setup(
             machine=machine, workspace=workspace or "~/ptq_workspace"
         )
 
-    setup_workspace(backend, cuda_tag=cuda, cpu=cpu)
+    setup_workspace(backend, build=build)
 
 
 @app.command()
@@ -190,7 +190,8 @@ def _clean_single_job(job_id: str) -> None:
         console.print(f"  killed agent (pid {pid})")
 
     backend.run(
-        f"cd {ws}/pytorch && git worktree remove {job_dir}/pytorch --force",
+        f"cd {ws}/pytorch && python tools/create_worktree.py remove pytorch "
+        f"--parent-dir {job_dir}",
         check=False,
     )
     backend.run(f"rm -rf {job_dir}", check=False)
@@ -261,7 +262,8 @@ def _clean_machine(
 
         job_dir = f"{ws}/jobs/{jid}"
         backend.run(
-            f"cd {ws}/pytorch && git worktree remove {job_dir}/pytorch --force",
+            f"cd {ws}/pytorch && python tools/create_worktree.py remove pytorch "
+            f"--parent-dir {job_dir}",
             check=False,
         )
         backend.run(f"rm -rf {job_dir}")

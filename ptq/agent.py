@@ -180,11 +180,33 @@ def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str
     return "\n".join(sections)
 
 
+def _setup_job_venv(backend: Backend, job_dir: str, worktree_path: str) -> None:
+    console.print("Creating per-job venv...")
+    backend.run(f"cd {job_dir} && uv venv --python 3.12")
+
+    job_python = f"{job_dir}/.venv/bin/python"
+    console.print("Installing build deps + editable pytorch...")
+    backend.run(
+        f"cd {worktree_path} && "
+        f"uv pip install --python {job_python} -r requirements-build.txt"
+    )
+    result = backend.run(
+        f"cd {worktree_path} && USE_NINJA=1 uv pip install --python {job_python} -e .",
+        check=False,
+    )
+    if result.returncode != 0:
+        console.print(f"[red]Editable install failed:[/red]\n{result.stderr}")
+        console.print("[yellow]Agent will need to build manually.[/yellow]")
+    else:
+        console.print("[green]Editable install complete.[/green]")
+
+
 def _validate_workspace(backend: Backend, workspace: str) -> None:
-    for path in [f"{workspace}/pytorch/.git", f"{workspace}/.venv/bin/python"]:
-        result = backend.run(f"test -e {path}", check=False)
-        if result.returncode != 0:
-            raise SystemExit(f"Workspace broken: {path} missing. Re-run: ptq setup")
+    result = backend.run(f"test -d {workspace}/pytorch/.git", check=False)
+    if result.returncode != 0:
+        raise SystemExit(
+            f"Workspace broken: {workspace}/pytorch/.git missing. Re-run: ptq setup"
+        )
 
 
 def _stamp_worklog_header(
@@ -246,10 +268,12 @@ def launch_agent(
         f"test -d {worktree_path}/.git || test -f {worktree_path}/.git", check=False
     )
     if worktree_exists.returncode != 0:
-        console.print("Creating git worktree...")
+        console.print("Creating worktree with submodules...")
         backend.run(
-            f"cd {workspace}/pytorch && git worktree add {worktree_path} HEAD",
+            f"cd {workspace}/pytorch && python tools/create_worktree.py create pytorch "
+            f"--parent-dir {job_dir} --commit HEAD",
         )
+        _setup_job_venv(backend, job_dir, worktree_path)
     else:
         console.print("Reusing existing worktree.")
 
@@ -260,7 +284,6 @@ def launch_agent(
                 "enabled": True,
                 "allowedDirectories": [
                     job_dir,
-                    f"{workspace}/.venv",
                     f"{workspace}/scripts",
                 ],
             },

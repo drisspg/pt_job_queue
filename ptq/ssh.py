@@ -20,12 +20,15 @@ class RemoteBackend:
     def _with_path(cmd: str) -> str:
         return f'source ~/.profile 2>/dev/null; source ~/.bashrc 2>/dev/null; source ~/.zshrc 2>/dev/null; export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && {cmd}'
 
-    def run(self, cmd: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, cmd: str, check: bool = True, stream: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        kwargs: dict = {"text": True, "check": check}
+        if not stream:
+            kwargs["capture_output"] = True
         return subprocess.run(
             ["ssh", *self.ssh_opts, self.machine, self._with_path(cmd)],
-            capture_output=True,
-            text=True,
-            check=check,
+            **kwargs,
         )
 
     def launch_background(self, cmd: str, log_file: str) -> int | None:
@@ -81,12 +84,15 @@ class LocalBackend:
     def _workspace_path(self) -> Path:
         return Path(self.workspace).expanduser()
 
-    def run(self, cmd: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, cmd: str, check: bool = True, stream: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        kwargs: dict = {"text": True, "check": check}
+        if not stream:
+            kwargs["capture_output"] = True
         return subprocess.run(
             ["zsh", "-c", cmd],
-            capture_output=True,
-            text=True,
-            check=check,
+            **kwargs,
         )
 
     def launch_background(self, cmd: str, log_file: str) -> int | None:
