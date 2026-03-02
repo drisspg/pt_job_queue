@@ -7,10 +7,10 @@ You are investigating a PyTorch bug. Your goal is to reproduce, understand, and 
 - **Issue**: pytorch/pytorch#{issue_number}
 
 ## Environment
-- **Python** (always use this): `{workspace}/.venv/bin/python`
+- **Python** (always use this): `{workspace}/jobs/{job_id}/.venv/bin/python`
 - **PyTorch source** (edit here): `{workspace}/jobs/{job_id}/pytorch/`
 - **Job artifacts** (write output here): `{workspace}/jobs/{job_id}/`
-- **Apply script** (sync edits to venv): `bash {workspace}/scripts/apply_to_site_pkgs.sh {workspace}/jobs/{job_id}/pytorch`
+- **Rebuild script** (after C++ changes): `bash {workspace}/scripts/rebuild.sh {workspace}/jobs/{job_id}/pytorch`
 
 ## Issue Context
 
@@ -25,27 +25,23 @@ Maintain a running worklog at `{workspace}/jobs/{job_id}/worklog.md`. Append to 
 ### Stay in your worktree
 You MUST only read and write files within these directories:
 - `{workspace}/jobs/{job_id}/` (your job directory — edits, scripts, artifacts)
-- `{workspace}/.venv/` (read-only, for running python)
-- `{workspace}/scripts/` (read-only, for apply script)
+- `{workspace}/scripts/` (read-only, for rebuild script)
 
 NEVER `cd` outside your worktree. NEVER read, write, or run git commands against any other pytorch checkout or directory. All pytorch source is in YOUR worktree at `{workspace}/jobs/{job_id}/pytorch/`.
 
-### Always use the venv python
-Run ALL python commands with `{workspace}/.venv/bin/python`. NEVER use bare `python`, `python3`, or any other python binary. NEVER use `conda`, `pip install`, or modify the environment.
+### Always use your job's python
+Run ALL python commands with `{workspace}/jobs/{job_id}/.venv/bin/python`. NEVER use bare `python`, `python3`, or any other python binary. NEVER use `conda`, `pip install`, or modify the environment.
 
-### Always use the apply script to sync changes
-After editing source files, sync them to the venv with:
-```
-bash {workspace}/scripts/apply_to_site_pkgs.sh {workspace}/jobs/{job_id}/pytorch
-```
-NEVER manually copy files to site-packages. NEVER search for or modify any pytorch installation outside your worktree. If the apply script fails, debug the script — do not work around it.
+### Syncing changes
+- **Python changes**: Picked up automatically (editable install). No action needed.
+- **C++ changes**: Rebuild with `bash {workspace}/scripts/rebuild.sh {workspace}/jobs/{job_id}/pytorch`. This runs an incremental build — only changed files are recompiled.
 
 ## Instructions
 
 ### 1. Reproduce
 - If a repro script exists at `{workspace}/jobs/{job_id}/repro.py`, run it:
   ```
-  {workspace}/.venv/bin/python {workspace}/jobs/{job_id}/repro.py
+  {workspace}/jobs/{job_id}/.venv/bin/python {workspace}/jobs/{job_id}/repro.py
   ```
 - If no repro script exists, write one based on the issue description and run it.
 - Confirm you see the reported error/behavior.
@@ -54,18 +50,15 @@ NEVER manually copy files to site-packages. NEVER search for or modify any pytor
 - Read relevant PyTorch source code in `{workspace}/jobs/{job_id}/pytorch/`.
 - Trace the code path from the repro to the root cause.
 - Understand why the bug occurs.
+- Key C++ source locations: `aten/src/ATen/`, `torch/csrc/`, `c10/`
 
 ### 3. Fix
-- Edit the Python source files in `{workspace}/jobs/{job_id}/pytorch/` to fix the bug.
-- Make minimal, targeted changes. Python-only fixes.
-- Do NOT modify C++/CUDA files.
+- Edit source files in `{workspace}/jobs/{job_id}/pytorch/` to fix the bug.
+- Make minimal, targeted changes.
+- If you edit C++ files, rebuild: `bash {workspace}/scripts/rebuild.sh {workspace}/jobs/{job_id}/pytorch`
 
 ### 4. Test
-- Apply your edits to the installed site-packages:
-  ```
-  bash {workspace}/scripts/apply_to_site_pkgs.sh {workspace}/jobs/{job_id}/pytorch
-  ```
-- Re-run the repro script with `{workspace}/.venv/bin/python` to confirm the fix works.
+- Re-run the repro script to confirm the fix works.
 - Write additional edge-case tests if appropriate.
 
 ### 5. Output

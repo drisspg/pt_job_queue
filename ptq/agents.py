@@ -1,0 +1,316 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from ptq.ssh import Backend
+
+
+@dataclass
+class RunContext:
+    worktree_path: str
+    job_dir: str
+    message: str
+    model: str
+    max_turns: int
+    system_prompt_file: str
+    unbuffer_prefix: str = ""
+
+
+@dataclass
+class StreamEvent:
+    kind: Literal["text", "tool_use", "tool_result", "error"]
+    text: str = ""
+    tool_name: str = ""
+    tool_input: dict = field(default_factory=dict)
+
+
+@runtime_checkable
+class Agent(Protocol):
+    name: str
+
+    def build_cmd(self, ctx: RunContext) -> str: ...
+    def parse_stream_line(self, line: str) -> list[StreamEvent]: ...
+    def log_filename(self, run_number: int) -> str: ...
+    def setup_workspace(
+        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+    ) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Claude
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ClaudeAgent:
+    name: str = "claude"
+
+    def build_cmd(self, ctx: RunContext) -> str:
+        escaped = ctx.message.replace("'", "'\\''")
+        return (
+            f"cd {ctx.worktree_path} && "
+            f"{ctx.unbuffer_prefix}"
+            f"claude -p '{escaped}' "
+            f"--model {ctx.model} "
+            f"--max-turns {ctx.max_turns} "
+            f"--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' "
+            f"--dangerously-skip-permissions "
+            f"--append-system-prompt-file {ctx.system_prompt_file} "
+            f"--output-format stream-json "
+            f"--verbose"
+        )
+
+    def parse_stream_line(self, line: str) -> list[StreamEvent]:
+        event = json.loads(line)
+        events: list[StreamEvent] = []
+        match event.get("type"):
+            case "assistant":
+                for block in event.get("message", {}).get("content", []):
+                    if block.get("type") == "text" and block.get("text"):
+                        events.append(StreamEvent(kind="text", text=block["text"]))
+                    elif block.get("type") == "tool_use":
+                        events.append(
+                            StreamEvent(
+                                kind="tool_use",
+                                tool_name=block.get("name", ""),
+                                tool_input=block.get("input", {}),
+                            )
+                        )
+            case "user":
+                for block in event.get("message", {}).get("content", []):
+                    if block.get("type") != "tool_result":
+                        continue
+                    content = block.get("content", "")
+                    is_error = block.get("is_error", False)
+                    if is_error:
+                        events.append(StreamEvent(kind="error", text=content))
+                    elif content:
+                        result = event.get("tool_use_result", {})
+                        stdout = (
+                            result.get("stdout", "") if isinstance(result, dict) else ""
+                        )
+                        events.append(
+                            StreamEvent(kind="tool_result", text=stdout or content)
+                        )
+        return events
+
+    def log_filename(self, run_number: int) -> str:
+        return f"claude-{run_number}.log"
+
+    def setup_workspace(
+        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+    ) -> None:
+        backend.run(f"mkdir -p {worktree_path}/.claude", check=False)
+        settings = json.dumps(
+            {
+                "sandbox": {
+                    "enabled": True,
+                    "allowedDirectories": [job_dir, f"{workspace}/scripts"],
+                },
+                "env": {"CLAUDE_CODE_ATTRIBUTION_HEADER": "0"},
+            }
+        )
+        backend.run(
+            f"cat > {worktree_path}/.claude/settings.json << 'SETTINGS_EOF'\n{settings}\nSETTINGS_EOF"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Codex
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CodexAgent:
+    name: str = "codex"
+
+    def build_cmd(self, ctx: RunContext) -> str:
+        escaped = ctx.message.replace("'", "'\\''")
+        return (
+            f"{ctx.unbuffer_prefix}"
+            f"codex exec '{escaped}' "
+            f"--model {ctx.model} "
+            f"--dangerously-bypass-approvals-and-sandbox "
+            f"-C {ctx.worktree_path} "
+            f"--json"
+        )
+
+    def parse_stream_line(self, line: str) -> list[StreamEvent]:
+        event = json.loads(line)
+        events: list[StreamEvent] = []
+        match event.get("type"):
+            case "item.completed":
+                item = event.get("item", {})
+                match item.get("type"):
+                    case "agent_message":
+                        events.append(
+                            StreamEvent(kind="text", text=item.get("text", ""))
+                        )
+                    case "command_execution":
+                        cmd = item.get("command", "")
+                        output = item.get("aggregated_output", "")
+                        exit_code = item.get("exit_code")
+                        if exit_code is not None:
+                            events.append(
+                                StreamEvent(
+                                    kind="tool_use",
+                                    tool_name="Bash",
+                                    tool_input={"command": cmd},
+                                )
+                            )
+                            events.append(StreamEvent(kind="tool_result", text=output))
+                    case "reasoning":
+                        pass
+            case "error":
+                events.append(StreamEvent(kind="error", text=event.get("message", "")))
+        return events
+
+    def log_filename(self, run_number: int) -> str:
+        return f"codex-{run_number}.log"
+
+    def setup_workspace(
+        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+    ) -> None:
+        backend.run(
+            f"cp {job_dir}/system_prompt.md {worktree_path}/AGENTS.md", check=False
+        )
+
+
+# ---------------------------------------------------------------------------
+# Cursor Agent
+# ---------------------------------------------------------------------------
+
+_CURSOR_TOOL_NAME_MAP = {
+    "readToolCall": "Read",
+    "shellToolCall": "Bash",
+    "editToolCall": "Edit",
+    "writeToolCall": "Write",
+    "grepToolCall": "Grep",
+    "globToolCall": "Glob",
+    "listToolCall": "List",
+}
+
+
+@dataclass
+class CursorAgent:
+    name: str = "cursor"
+
+    def build_cmd(self, ctx: RunContext) -> str:
+        escaped = ctx.message.replace("'", "'\\''")
+        return (
+            f"{ctx.unbuffer_prefix}"
+            f"agent -p '{escaped}' "
+            f"--model {ctx.model} "
+            f"--force "
+            f"--workspace {ctx.worktree_path} "
+            f"--output-format stream-json"
+        )
+
+    def parse_stream_line(self, line: str) -> list[StreamEvent]:
+        event = json.loads(line)
+        events: list[StreamEvent] = []
+        match event.get("type"):
+            case "assistant":
+                for block in event.get("message", {}).get("content", []):
+                    if block.get("type") == "text" and block.get("text"):
+                        events.append(StreamEvent(kind="text", text=block["text"]))
+            case "tool_call":
+                tool_call = event.get("tool_call", {})
+                tool_key = next(iter(tool_call), "")
+                tool_name = _CURSOR_TOOL_NAME_MAP.get(tool_key, tool_key)
+                subtype = event.get("subtype", "")
+                if subtype == "started":
+                    args = tool_call.get(tool_key, {}).get("args", {})
+                    events.append(
+                        StreamEvent(
+                            kind="tool_use", tool_name=tool_name, tool_input=args
+                        )
+                    )
+                elif subtype == "completed":
+                    inner = tool_call.get(tool_key, {})
+                    result = inner.get("result", {})
+                    success = result.get("success", {})
+                    content = success.get("content", "") or success.get("output", "")
+                    if content:
+                        events.append(StreamEvent(kind="tool_result", text=content))
+            case "result":
+                if event.get("is_error"):
+                    events.append(
+                        StreamEvent(
+                            kind="error", text=event.get("result", "unknown error")
+                        )
+                    )
+        return events
+
+    def log_filename(self, run_number: int) -> str:
+        return f"cursor-{run_number}.log"
+
+    def setup_workspace(
+        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+    ) -> None:
+        backend.run(
+            f"cp {job_dir}/system_prompt.md {worktree_path}/.cursorrules", check=False
+        )
+
+
+# ---------------------------------------------------------------------------
+# Registry
+#
+# Adding a new agent:
+#
+# 1. Run the CLI in JSON/streaming mode with a simple prompt to capture the
+#    output format:
+#        <binary> exec 'say hello' --json  (or equivalent flags)
+#    Look at the JSONL lines to understand the event schema.
+#
+# 2. Create a @dataclass below that structurally satisfies the Agent protocol:
+#
+#        @dataclass
+#        class MyAgent:
+#            name: str = "myagent"
+#
+#            def build_cmd(self, ctx: RunContext) -> str:
+#                # Return the full shell command. Use ctx for message, model,
+#                # worktree_path, etc. Escape ctx.message for shell quoting.
+#                ...
+#
+#            def parse_stream_line(self, line: str) -> list[StreamEvent]:
+#                # Parse one JSONL line into normalized StreamEvent objects.
+#                # Return [] for lines that should be ignored (init, heartbeat).
+#                ...
+#
+#            def log_filename(self, run_number: int) -> str:
+#                return f"myagent-{run_number}.log"
+#
+#            def setup_workspace(
+#                self, backend: Backend, worktree_path: str,
+#                job_dir: str, workspace: str,
+#            ) -> None:
+#                # Write agent-specific config files into the worktree.
+#                # e.g. AGENTS.md for codex, .cursorrules for cursor,
+#                #      .claude/settings.json for claude.
+#                # The system prompt is already at {job_dir}/system_prompt.md.
+#                ...
+#
+# 3. Add it to the AGENTS dict below.
+#
+# 4. Run: ptq run --agent myagent -m "hello" --local
+#
+# No changes needed in agent.py, cli.py, or anywhere else.
+# ---------------------------------------------------------------------------
+
+AGENTS: dict[str, type[ClaudeAgent] | type[CodexAgent] | type[CursorAgent]] = {
+    "claude": ClaudeAgent,
+    "codex": CodexAgent,
+    "cursor": CursorAgent,
+}
+
+
+def get_agent(name: str) -> Agent:
+    if name not in AGENTS:
+        available = ", ".join(AGENTS)
+        raise SystemExit(f"Unknown agent: {name}. Available: {available}")
+    return AGENTS[name]()

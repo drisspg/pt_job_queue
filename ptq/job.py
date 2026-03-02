@@ -36,9 +36,10 @@ def register_job(
     local: bool = False,
     workspace: str | None = None,
     run_number: int = 1,
+    agent_type: str = "claude",
 ) -> None:
     db = load_jobs_db()
-    entry: dict = {"issue": issue_number, "runs": run_number}
+    entry: dict = {"issue": issue_number, "runs": run_number, "agent": agent_type}
     if local:
         entry["local"] = True
         entry["workspace"] = workspace or "~/.ptq_workspace"

@@ -4,10 +4,12 @@ import json
 import re
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from rich.console import Console
 
+from ptq.agents import RunContext, StreamEvent, get_agent
 from ptq.issue import extract_repro_script, format_issue_context
 from ptq.job import (
     find_existing_job,
@@ -20,6 +22,15 @@ from ptq.ssh import Backend, RemoteBackend
 from ptq.workspace import deploy_scripts
 
 console = Console()
+
+
+@contextmanager
+def _timed(label: str):
+    t0 = time.monotonic()
+    yield
+    elapsed = time.monotonic() - t0
+    console.print(f"[dim]  {label}: {elapsed:.1f}s[/dim]")
+
 
 PROMPT_TEMPLATE = (
     Path(__file__).parent.parent / "prompts" / "investigate.md"
@@ -80,65 +91,47 @@ def _indent(text: str, prefix: str = "    ") -> str:
     return "\n".join(prefix + line for line in text.splitlines())
 
 
-def _print_stream_event(line: str) -> None:
-    line = _clean(line.strip())
-    if not line:
-        return
-    event = json.loads(line)
-    match event.get("type"):
-        case "assistant":
-            for block in event.get("message", {}).get("content", []):
-                if block.get("type") == "text" and block.get("text"):
-                    console.print(_clean(block["text"]), end="", highlight=False)
-                elif block.get("type") == "tool_use":
-                    tool = block.get("name", "")
-                    inp = block.get("input", {})
-                    console.print()
-                    match tool:
-                        case "Bash":
-                            console.print(
-                                f"  [bold cyan]$[/bold cyan] [dim]{inp.get('command', '')}[/dim]"
-                            )
-                        case "Read":
-                            console.print(
-                                f"  [cyan]read[/cyan] [dim]{inp.get('file_path', '')}[/dim]"
-                            )
-                        case "Edit":
-                            console.print(
-                                f"  [yellow]edit[/yellow] [dim]{inp.get('file_path', '')}[/dim]"
-                            )
-                        case "Write":
-                            console.print(
-                                f"  [green]write[/green] [dim]{inp.get('file_path', '')}[/dim]"
-                            )
-                        case "Grep":
-                            console.print(
-                                f"  [cyan]grep[/cyan] [dim]{inp.get('pattern', '')}[/dim]"
-                            )
-                        case "Glob":
-                            console.print(
-                                f"  [cyan]glob[/cyan] [dim]{inp.get('pattern', '')}[/dim]"
-                            )
-                        case _:
-                            console.print(f"  [dim]{tool}[/dim]")
-        case "user":
-            for block in event.get("message", {}).get("content", []):
-                if block.get("type") != "tool_result":
-                    continue
-                content = block.get("content", "")
-                is_error = block.get("is_error", False)
-                if is_error:
-                    console.print(f"[red]{_indent(_truncate(_clean(content)))}[/red]")
-                elif content:
-                    result = event.get("tool_use_result", {})
-                    stdout = (
-                        result.get("stdout", "") if isinstance(result, dict) else ""
+def _render_event(ev: StreamEvent) -> None:
+    match ev.kind:
+        case "text":
+            console.print(_clean(ev.text), end="", highlight=False)
+        case "tool_use":
+            console.print()
+            inp = ev.tool_input
+            match ev.tool_name:
+                case "Bash":
+                    console.print(
+                        f"  [bold cyan]$[/bold cyan] [dim]{inp.get('command', '')}[/dim]"
                     )
-                    if stdout.strip():
-                        console.print(
-                            f"[dim]{_indent(_truncate(_clean(stdout)))}[/dim]"
-                        )
-                console.print()
+                case "Read":
+                    console.print(
+                        f"  [cyan]read[/cyan] [dim]{inp.get('file_path', '') or inp.get('path', '')}[/dim]"
+                    )
+                case "Edit":
+                    console.print(
+                        f"  [yellow]edit[/yellow] [dim]{inp.get('file_path', '') or inp.get('path', '')}[/dim]"
+                    )
+                case "Write":
+                    console.print(
+                        f"  [green]write[/green] [dim]{inp.get('file_path', '') or inp.get('path', '')}[/dim]"
+                    )
+                case "Grep":
+                    console.print(
+                        f"  [cyan]grep[/cyan] [dim]{inp.get('pattern', '')}[/dim]"
+                    )
+                case "Glob":
+                    console.print(
+                        f"  [cyan]glob[/cyan] [dim]{inp.get('pattern', '')}[/dim]"
+                    )
+                case _:
+                    console.print(f"  [dim]{ev.tool_name}[/dim]")
+        case "tool_result":
+            if ev.text.strip():
+                console.print(f"[dim]{_indent(_truncate(_clean(ev.text)))}[/dim]")
+            console.print()
+        case "error":
+            console.print(f"[red]{_indent(_truncate(_clean(ev.text)))}[/red]")
+            console.print()
 
 
 DEFAULT_MESSAGE = (
@@ -180,11 +173,43 @@ def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str
     return "\n".join(sections)
 
 
+def _setup_job_venv(
+    backend: Backend, job_dir: str, worktree_path: str, *, verbose: bool = False
+) -> None:
+    console.print("Creating per-job venv...")
+    with _timed("venv creation"):
+        backend.run(f"cd {job_dir} && uv venv --python 3.12")
+
+    job_python = f"{job_dir}/.venv/bin/python"
+    console.print("Installing build deps...")
+    with _timed("build deps"):
+        backend.run(
+            f"cd {worktree_path} && "
+            f"uv pip install --python {job_python} -r requirements-build.txt",
+            stream=verbose,
+        )
+    pip_verbose = " -v" if verbose else ""
+    console.print("Editable install (pytorch)...")
+    with _timed("editable install"):
+        result = backend.run(
+            f"cd {worktree_path} && CCACHE_NOHASHDIR=true USE_NINJA=1 "
+            f"uv pip install --python {job_python} --no-build-isolation{pip_verbose} -e .",
+            check=False,
+            stream=verbose,
+        )
+    if result.returncode != 0:
+        console.print(f"[red]Editable install failed:[/red]\n{result.stderr}")
+        console.print("[yellow]Agent will need to build manually.[/yellow]")
+    else:
+        console.print("[green]Editable install complete.[/green]")
+
+
 def _validate_workspace(backend: Backend, workspace: str) -> None:
-    for path in [f"{workspace}/pytorch/.git", f"{workspace}/.venv/bin/python"]:
-        result = backend.run(f"test -e {path}", check=False)
-        if result.returncode != 0:
-            raise SystemExit(f"Workspace broken: {path} missing. Re-run: ptq setup")
+    result = backend.run(f"test -d {workspace}/pytorch/.git", check=False)
+    if result.returncode != 0:
+        raise SystemExit(
+            f"Workspace broken: {workspace}/pytorch/.git missing. Re-run: ptq setup"
+        )
 
 
 def _stamp_worklog_header(
@@ -211,11 +236,21 @@ def launch_agent(
     model: str = "opus",
     max_turns: int = 100,
     message: str | None = None,
+    agent_type: str = "claude",
+    existing_job_id: str | None = None,
+    verbose: bool = False,
 ) -> str:
+    agent = get_agent(agent_type)
     workspace = backend.workspace
     is_adhoc = issue_number is None
 
-    if is_adhoc:
+    if existing_job_id:
+        job_id = existing_job_id
+        run_number = increment_run(job_id)
+        label = f"issue #{issue_number}" if issue_number else "adhoc"
+        console.print(f"[bold]Job {job_id}[/bold] — {label} (run {run_number})")
+        existing = job_id
+    elif is_adhoc:
         existing = None
         job_id = make_job_id(message=message)
         run_number = 1
@@ -240,38 +275,37 @@ def launch_agent(
         _validate_workspace(backend, workspace)
 
     backend.run(f"mkdir -p {job_dir}")
+
+    if not existing:
+        register_job(
+            job_id,
+            issue_number=issue_number,
+            machine=machine,
+            local=local,
+            workspace=workspace,
+            run_number=run_number,
+            agent_type=agent_type,
+        )
+
     deploy_scripts(backend)
 
     worktree_exists = backend.run(
         f"test -d {worktree_path}/.git || test -f {worktree_path}/.git", check=False
     )
     if worktree_exists.returncode != 0:
-        console.print("Creating git worktree...")
-        backend.run(
-            f"cd {workspace}/pytorch && git worktree add {worktree_path} HEAD",
-        )
+        console.print("Creating worktree with submodules...")
+        with _timed("worktree creation"):
+            backend.run(
+                f"cd {workspace}/pytorch && python tools/create_worktree.py create pytorch "
+                f"--parent-dir {job_dir} --commit HEAD",
+                stream=verbose,
+            )
+        _setup_job_venv(backend, job_dir, worktree_path, verbose=verbose)
     else:
         console.print("Reusing existing worktree.")
 
-    backend.run(f"mkdir -p {worktree_path}/.claude", check=False)
-    worktree_settings = json.dumps(
-        {
-            "sandbox": {
-                "enabled": True,
-                "allowedDirectories": [
-                    job_dir,
-                    f"{workspace}/.venv",
-                    f"{workspace}/scripts",
-                ],
-            },
-            "env": {
-                "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
-            },
-        }
-    )
-    backend.run(
-        f"cat > {worktree_path}/.claude/settings.json << 'SETTINGS_EOF'\n{worktree_settings}\nSETTINGS_EOF"
-    )
+    with _timed("agent workspace setup"):
+        agent.setup_workspace(backend, worktree_path, job_dir, workspace)
 
     if is_adhoc:
         system_prompt = build_adhoc_prompt(message, job_id, workspace)
@@ -315,35 +349,23 @@ def launch_agent(
         agent_message = f"{DEFAULT_MESSAGE}\n\nAdditional context: {message}"
     else:
         agent_message = DEFAULT_MESSAGE
-    log_file = f"{job_dir}/claude-{run_number}.log"
-    escaped_message = agent_message.replace("'", "'\\''")
+
+    log_file = f"{job_dir}/{agent.log_filename(run_number)}"
     unbuffer = "stdbuf -oL " if isinstance(backend, RemoteBackend) else ""
-    claude_cmd = (
-        f"cd {worktree_path} && "
-        f"{unbuffer}"
-        f"claude -p '{escaped_message}' "
-        f"--model {model} "
-        f"--max-turns {max_turns} "
-        f"--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' "
-        f"--dangerously-skip-permissions "
-        f"--append-system-prompt-file {job_dir}/system_prompt.md "
-        f"--output-format stream-json "
-        f"--verbose"
+    ctx = RunContext(
+        worktree_path=worktree_path,
+        job_dir=job_dir,
+        message=agent_message,
+        model=model,
+        max_turns=max_turns,
+        system_prompt_file=f"{job_dir}/system_prompt.md",
+        unbuffer_prefix=unbuffer,
     )
+    agent_cmd = agent.build_cmd(ctx)
 
-    if not existing:
-        register_job(
-            job_id,
-            issue_number=issue_number,
-            machine=machine,
-            local=local,
-            workspace=workspace,
-            run_number=run_number,
-        )
-
-    console.print(f"Launching agent ({'local' if local else machine})...")
+    console.print(f"Launching {agent.name} agent ({'local' if local else machine})...")
     backend.run(f"touch {log_file}")
-    pid = backend.launch_background(claude_cmd, log_file)
+    pid = backend.launch_background(agent_cmd, log_file)
     save_pid(job_id, pid)
 
     if not follow:
@@ -356,8 +378,13 @@ def launch_agent(
 
     try:
         for line in tail.stdout:
-            if line.strip().startswith("{"):
-                _print_stream_event(line)
+            stripped = _clean(line.strip())
+            if stripped.startswith("{"):
+                try:
+                    for ev in agent.parse_stream_line(stripped):
+                        _render_event(ev)
+                except (json.JSONDecodeError, ValueError):
+                    pass
     except KeyboardInterrupt:
         tail.terminate()
         tail.wait()
