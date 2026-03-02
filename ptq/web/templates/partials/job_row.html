@@ -1,0 +1,17 @@
+<tr id="job-{{ job.id }}">
+  <td><span class="badge {{ job.status }}">{{ job.status }}</span></td>
+  <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
+  <td>{% if job.issue %}#{{ job.issue }}{% else %}<span class="muted">adhoc</span>{% endif %}</td>
+  <td>{{ job.agent }}</td>
+  <td>{{ job.runs }}</td>
+  <td>{{ job.target }}</td>
+  <td>
+    {% if job.status == "running" %}
+    <form method="post" action="/jobs/{{ job.id }}/kill" style="display:inline">
+      <button type="submit" class="secondary small outline" onclick="return confirm('Kill?')">Kill</button>
+    </form>
+    {% else %}
+    <button class="secondary small outline" hx-delete="/jobs/{{ job.id }}" hx-confirm="Remove this job?" hx-target="#job-{{ job.id }}" hx-swap="delete">Clean</button>
+    {% endif %}
+  </td>
+</tr>

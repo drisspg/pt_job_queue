@@ -61,8 +61,8 @@ def run(
     follow: Annotated[
         bool, typer.Option(help="Stream agent output to terminal.")
     ] = True,
-    model: Annotated[str, typer.Option(help="Model to use.")] = "opus",
-    max_turns: Annotated[int, typer.Option(help="Max agent turns.")] = 100,
+    model: Annotated[str | None, typer.Option(help="Model to use.")] = None,
+    max_turns: Annotated[int | None, typer.Option(help="Max agent turns.")] = None,
     agent: Annotated[
         str | None, typer.Option(help="Agent type: claude, codex, or cursor.")
     ] = None,
@@ -102,9 +102,11 @@ def run(
         message = input_file.read_text()
 
     from ptq.agent import launch_agent
+    from ptq.config import load_config
     from ptq.issue import fetch_issue
     from ptq.ssh import LocalBackend, RemoteBackend
 
+    cfg = load_config()
     resolved_job_id: str | None = None
     if job_id is not None:
         from ptq.job import get_job, resolve_job_id
@@ -116,13 +118,15 @@ def run(
         local = local or job.get("local", False)
         workspace = workspace or job.get("workspace")
         if agent is None:
-            agent = job.get("agent", "claude")
+            agent = job.get("agent", cfg.default_agent)
 
     if issue is None and message is None and job_id is None:
         raise typer.BadParameter("Provide --issue, --message, or a JOB_ID to re-run.")
     if not machine and not local:
         local = True
-    agent = agent or "claude"
+    agent = agent or cfg.default_agent
+    model = cfg.effective_model(agent, model)
+    max_turns = max_turns or cfg.default_max_turns
 
     if issue is not None:
         console.print(f"Fetching issue #{issue}...")
@@ -191,17 +195,26 @@ def apply(
 def _clean_single_job(job_id: str) -> None:
     """Kill agent, remove remote files, drop from DB."""
     from ptq.job import get_job
-    from ptq.ssh import backend_for_job, load_jobs_db, save_jobs_db
+    from ptq.ssh import backend_for_job
 
     job = get_job(job_id)
     backend = backend_for_job(job_id)
+    clean_job(job_id, job, backend)
+    issue_val = job.get("issue")
+    label = f"issue #{issue_val}" if issue_val is not None else "adhoc"
+    console.print(f"  removed {job_id} ({label})")
+
+
+def clean_job(job_id: str, job: dict, backend: object) -> None:
+    """Remove a job: kill agent, delete files, drop from DB."""
+    from ptq.ssh import load_jobs_db, save_jobs_db
+
     ws = backend.workspace
     job_dir = f"{ws}/jobs/{job_id}"
 
     pid = job.get("pid")
     if pid and backend.is_pid_alive(pid):
         backend.kill_pid(pid)
-        console.print(f"  killed agent (pid {pid})")
 
     backend.run(
         f"cd {ws}/pytorch && python tools/create_worktree.py remove pytorch "
@@ -214,9 +227,6 @@ def _clean_single_job(job_id: str) -> None:
     db = load_jobs_db()
     db.pop(job_id, None)
     save_jobs_db(db)
-    issue_val = job.get("issue")
-    label = f"issue #{issue_val}" if issue_val is not None else "adhoc"
-    console.print(f"  removed {job_id} ({label})")
 
 
 def _clean_machine(
@@ -508,6 +518,26 @@ def status(
     tail = backend.run(f"tail -1 {log_file}", check=False)
     if tail.stdout.strip():
         console.print(f"\n  last log: [dim]{tail.stdout.strip()[:120]}[/dim]")
+
+
+@app.command()
+def web(
+    port: Annotated[int, typer.Option(help="Port to listen on.")] = 8000,
+    host: Annotated[str, typer.Option(help="Host to bind to.")] = "127.0.0.1",
+    debug: Annotated[bool, typer.Option(help="Enable debug logging.")] = False,
+) -> None:
+    """Start the web dashboard."""
+    import uvicorn
+
+    from ptq.web.app import create_app
+
+    console.print(f"Starting ptq web at http://{host}:{port}")
+    uvicorn.run(
+        create_app(debug=debug),
+        host=host,
+        port=port,
+        log_level="debug" if debug else "info",
+    )
 
 
 @app.command()

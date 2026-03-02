@@ -246,7 +246,7 @@ def launch_agent(
 
     if existing_job_id:
         job_id = existing_job_id
-        run_number = increment_run(job_id)
+        run_number = increment_run(job_id, agent_type=agent_type)
         label = f"issue #{issue_number}" if issue_number else "adhoc"
         console.print(f"[bold]Job {job_id}[/bold] — {label} (run {run_number})")
         existing = job_id
@@ -259,7 +259,7 @@ def launch_agent(
         existing = find_existing_job(issue_number, machine=machine, local=local)
         if existing:
             job_id = existing
-            run_number = increment_run(job_id)
+            run_number = increment_run(job_id, agent_type=agent_type)
             console.print(
                 f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run {run_number})"
             )

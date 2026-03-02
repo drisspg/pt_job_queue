@@ -1,0 +1,285 @@
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 0.15em 0.55em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge.running {
+  background: #2e7d32;
+  color: #e8f5e9;
+}
+
+.badge.stopped {
+  background: #424242;
+  color: #9e9e9e;
+}
+
+/* Stat cards */
+.stat {
+  font-size: 2.5em;
+  font-weight: 700;
+  margin: 0;
+}
+
+.stat.running {
+  color: #4caf50;
+}
+
+/* Filter bar */
+.filter-bar {
+  display: flex;
+  gap: 0.5em;
+  margin-bottom: 1.5em;
+}
+
+.filter-bar a {
+  font-size: 0.9em;
+  padding: 0.4em 1em;
+}
+
+/* Log viewer */
+.log-viewer {
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.82em;
+  line-height: 1.5;
+  padding: 1em;
+  border-radius: 8px;
+  max-height: 72vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-viewer span {
+  display: block;
+}
+
+.log-text {
+  color: #e6edf3;
+  white-space: pre-wrap;
+}
+
+.log-tool {
+  color: #8b949e;
+  padding: 0.15em 0;
+}
+
+.log-tool-name {
+  color: #58a6ff;
+  font-weight: 600;
+}
+
+.log-tool-name.edit {
+  color: #d29922;
+}
+
+.log-tool-name.write {
+  color: #3fb950;
+}
+
+.log-result {
+  color: #6e7681;
+  padding-left: 1.5em;
+  border-left: 2px solid #21262d;
+  margin: 0.1em 0;
+  white-space: pre-wrap;
+}
+
+.log-error {
+  color: #f85149;
+  font-weight: 600;
+}
+
+/* Diff colors */
+.diff-add {
+  color: #3fb950;
+  background: rgba(46, 160, 67, 0.12);
+}
+
+.diff-del {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.12);
+}
+
+.diff-hunk {
+  color: #8b949e;
+}
+
+/* Tab navigation */
+.tab-nav {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--pico-muted-border-color, #333);
+  margin-bottom: 1.2em;
+}
+
+.tab-btn {
+  padding: 0.55em 1.2em;
+  border: none;
+  background: none;
+  color: var(--pico-muted-color, #888);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  font-size: 1em;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--pico-color, #fff);
+}
+
+.tab-btn.active {
+  color: var(--pico-color, #fff);
+  border-bottom-color: #4caf50;
+}
+
+/* Actions row */
+.actions {
+  display: flex;
+  gap: 0.5em;
+  margin: 1em 0;
+}
+
+.actions button,
+.actions form {
+  margin: 0;
+}
+
+/* Small buttons in tables */
+button.small {
+  padding: 0.25em 0.6em;
+  font-size: 0.82em;
+}
+
+/* Timeline */
+.timeline {
+  position: relative;
+  padding: 0.5em 0 0.5em 1.5em;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 0.55em;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--pico-muted-border-color, #333);
+}
+
+.timeline-item {
+  position: relative;
+  padding-left: 1.5em;
+  margin-bottom: 0.8em;
+}
+
+.timeline-dot {
+  position: absolute;
+  left: -1.5em;
+  top: 0.35em;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #555;
+}
+
+.timeline-item.running .timeline-dot {
+  background: #4caf50;
+  box-shadow: 0 0 6px #4caf50;
+}
+
+.timeline-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-content small {
+  color: var(--pico-muted-color, #888);
+}
+
+.timeline-item a {
+  text-decoration: none;
+  color: inherit;
+}
+
+.timeline-item a:hover .timeline-content strong {
+  text-decoration: underline;
+}
+
+/* Muted text */
+.muted {
+  color: var(--pico-muted-color, #888);
+}
+
+/* Rendered markdown */
+.rendered-md {
+  line-height: 1.7;
+}
+
+.rendered-md pre {
+  background: #0d1117;
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+/* Error banner */
+.error-banner {
+  background: rgba(248, 81, 73, 0.15);
+  border-left: 4px solid #f85149;
+  color: #f85149;
+  padding: 0.8em 1em;
+}
+
+/* Follow-up form */
+.rerun-form {
+  margin: 1.2em 0;
+}
+
+.rerun-form textarea {
+  width: 100%;
+  margin-bottom: 0.6em;
+  resize: vertical;
+}
+
+.rerun-controls {
+  display: flex;
+  gap: 0.6em;
+  align-items: center;
+}
+
+.rerun-agent,
+.rerun-model {
+  width: auto;
+  margin-bottom: 0;
+}
+
+.rerun-model {
+  max-width: 10em;
+}
+
+.rerun-controls button {
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+/* htmx loading indicator */
+.htmx-indicator {
+  opacity: 0;
+  transition: opacity 200ms ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  opacity: 1;
+}

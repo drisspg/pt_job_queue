@@ -50,12 +50,14 @@ def register_job(
     save_jobs_db(db)
 
 
-def increment_run(job_id: str) -> int:
+def increment_run(job_id: str, agent_type: str | None = None) -> int:
     db = load_jobs_db()
     entry = db[job_id]
     run_number = entry.get("runs", 0) + 1
     entry["runs"] = run_number
     entry.pop("pid", None)
+    if agent_type:
+        entry["agent"] = agent_type
     save_jobs_db(db)
     return run_number
 

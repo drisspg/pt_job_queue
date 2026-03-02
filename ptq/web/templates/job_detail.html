@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ job_id }} — ptq{% endblock %}
+{% block content %}
+<header>
+  <hgroup>
+    <h1>{{ job_id }}</h1>
+    <p>
+      {% if issue %}<a href="https://github.com/pytorch/pytorch/issues/{{ issue }}" target="_blank">#{{ issue }}</a>{% else %}adhoc{% endif %}
+      · {{ agent_name }}
+      · {{ target }}
+      · run {{ runs }}
+      · <span hx-get="/jobs/{{ job_id }}/status" hx-trigger="every 5s" hx-swap="innerHTML">
+          <span class="badge {{ status }}">{{ status }}</span>
+        </span>
+    </p>
+  </hgroup>
+</header>
+
+<div class="actions">
+  {% if status == "running" %}
+  <form method="post" action="/jobs/{{ job_id }}/kill" style="display:inline">
+    <button type="submit" class="secondary" onclick="return confirm('Kill this agent?')">Kill</button>
+  </form>
+  {% endif %}
+  <button class="secondary outline" hx-delete="/jobs/{{ job_id }}" hx-confirm="Remove this job and all its files?" hx-target="body" hx-swap="innerHTML">Clean</button>
+</div>
+
+{% if status != "running" %}
+<form method="post" action="/jobs/{{ job_id }}/rerun" class="rerun-form">
+  <textarea name="message" rows="3" placeholder="Steer the next run… e.g. 'try a different approach' or 'look at file X instead'"></textarea>
+  <div class="rerun-controls">
+    <select name="agent_type" class="rerun-agent">
+      {% for a in agents %}
+      <option value="{{ a }}" {{ 'selected' if a == agent_name else '' }}>{{ a }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="model" value="{{ default_model }}" class="rerun-model" placeholder="model">
+    <button type="submit" class="outline">Follow up</button>
+  </div>
+</form>
+{% endif %}
+
+<div class="tab-nav" role="tablist">
+  <button class="tab-btn active" onclick="switchTab(this, 'logs')">Logs</button>
+  <button class="tab-btn" onclick="switchTab(this, 'report')" hx-get="/jobs/{{ job_id }}/report" hx-target="#tab-content" hx-trigger="click once">Report</button>
+  <button class="tab-btn" onclick="switchTab(this, 'diff')" hx-get="/jobs/{{ job_id }}/diff" hx-target="#tab-content" hx-trigger="click once">Diff</button>
+  <button class="tab-btn" onclick="switchTab(this, 'worklog')" hx-get="/jobs/{{ job_id }}/worklog" hx-target="#tab-content" hx-trigger="click once">Worklog</button>
+</div>
+
+<div id="tab-content">
+  <div hx-ext="sse" sse-connect="/jobs/{{ job_id }}/logs/stream" sse-close="done">
+    <pre class="log-viewer" id="log-output" sse-swap="log" hx-swap="beforeend scroll:bottom"></pre>
+  </div>
+</div>
+
+<script>
+function switchTab(btn, name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (name === 'logs') {
+    document.getElementById('tab-content').innerHTML =
+      '<div hx-ext="sse" sse-connect="/jobs/{{ job_id }}/logs/stream" sse-close="done">' +
+      '<pre class="log-viewer" id="log-output" sse-swap="log" hx-swap="beforeend scroll:bottom"></pre></div>';
+    htmx.process(document.getElementById('tab-content'));
+  }
+}
+</script>
+{% endblock %}

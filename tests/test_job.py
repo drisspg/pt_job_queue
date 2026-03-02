@@ -85,6 +85,21 @@ class TestIncrementRun:
         assert jobs_db["j1"]["runs"] == 2
         assert "pid" not in jobs_db["j1"]
 
+    def test_updates_agent_type(self, jobs_db):
+        jobs_db["j1"] = {"issue": 1, "runs": 1, "agent": "claude"}
+        increment_run("j1", agent_type="codex")
+        assert jobs_db["j1"]["agent"] == "codex"
+
+    def test_preserves_agent_when_not_specified(self, jobs_db):
+        jobs_db["j1"] = {"issue": 1, "runs": 1, "agent": "claude"}
+        increment_run("j1")
+        assert jobs_db["j1"]["agent"] == "claude"
+
+    def test_preserves_agent_when_none(self, jobs_db):
+        jobs_db["j1"] = {"issue": 1, "runs": 1, "agent": "cursor"}
+        increment_run("j1", agent_type=None)
+        assert jobs_db["j1"]["agent"] == "cursor"
+
 
 class TestSavePid:
     def test_sets_pid(self, jobs_db):

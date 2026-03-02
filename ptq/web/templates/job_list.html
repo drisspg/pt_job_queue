@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Jobs — ptq{% endblock %}
+{% block content %}
+<h1>Jobs</h1>
+
+<div class="filter-bar">
+  <a href="/jobs?status_filter=all" role="button" class="{{ 'primary' if status_filter == 'all' else 'outline' }}">All</a>
+  <a href="/jobs?status_filter=running" role="button" class="{{ 'primary' if status_filter == 'running' else 'outline' }}">Running</a>
+  <a href="/jobs?status_filter=stopped" role="button" class="{{ 'primary' if status_filter == 'stopped' else 'outline' }}">Stopped</a>
+</div>
+
+{% if jobs %}
+<figure>
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Job ID</th>
+      <th>Issue</th>
+      <th>Agent</th>
+      <th>Runs</th>
+      <th>Target</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    {% include "partials/job_row.html" %}
+    {% endfor %}
+  </tbody>
+</table>
+</figure>
+{% else %}
+<p>No jobs match the filter.</p>
+{% endif %}
+{% endblock %}
