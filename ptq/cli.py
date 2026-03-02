@@ -64,8 +64,8 @@ def run(
     model: Annotated[str, typer.Option(help="Model to use.")] = "opus",
     max_turns: Annotated[int, typer.Option(help="Max agent turns.")] = 100,
     agent: Annotated[
-        str, typer.Option(help="Agent type: claude, codex, or cursor.")
-    ] = "claude",
+        str | None, typer.Option(help="Agent type: claude, codex, or cursor.")
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Stream build output and show timings."),
@@ -115,12 +115,14 @@ def run(
         machine = machine or job.get("machine")
         local = local or job.get("local", False)
         workspace = workspace or job.get("workspace")
-        agent = job.get("agent", agent)
+        if agent is None:
+            agent = job.get("agent", "claude")
 
     if issue is None and message is None and job_id is None:
         raise typer.BadParameter("Provide --issue, --message, or a JOB_ID to re-run.")
     if not machine and not local:
         local = True
+    agent = agent or "claude"
 
     if issue is not None:
         console.print(f"Fetching issue #{issue}...")
