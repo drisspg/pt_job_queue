@@ -82,7 +82,7 @@ def build_pytorch(backend: Backend) -> None:
 
     console.print("Running smoke test...")
     smoke = backend.run(
-        f'{workspace}/.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"',
+        f'cd /tmp && {workspace}/.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"',
     )
     console.print(f"[green]Smoke test: {smoke.stdout.strip()}[/green]")
     console.print("[bold green]Build complete.[/bold green]")
