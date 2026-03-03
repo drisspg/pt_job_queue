@@ -299,6 +299,30 @@ td a {
   margin: 0;
 }
 
+/* PR note form */
+.pr-note-form {
+  margin: 0.8em 0;
+  animation: slideDown 0.2s ease-out;
+}
+
+.pr-note-form fieldset { margin-bottom: 0; }
+.pr-note-form legend small { color: var(--muted); font-weight: normal; }
+.pr-note-form textarea { font-size: 13px; }
+
+.pr-note-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.5em;
+}
+
+.pr-note-actions label { font-size: 13px; margin-bottom: 0; }
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Small buttons in tables */
 button.small {
   padding: 2px 8px;

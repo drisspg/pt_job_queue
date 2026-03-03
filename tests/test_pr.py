@@ -12,21 +12,33 @@ from ptq.infrastructure.job_repository import JobRepository
 
 
 class TestBuildPrBody:
-    def test_with_report_only(self):
-        body = _build_pr_body("Report here", "", issue_number=42)
-        assert "Report here" in body
+    def test_human_note_at_top(self):
+        body = _build_pr_body("Report", "", issue_number=42, human_note="Trivial fix")
+        lines = body.splitlines()
+        assert lines[0] == "## Author's Note"
+        assert lines[1] == "Trivial fix"
         assert "Fixes #42" in body
 
+    def test_with_report(self):
+        body = _build_pr_body("Report here", "", issue_number=42, human_note="Note")
+        assert "Report here" in body
+        assert "Agent Report" in body
+
     def test_with_worklog(self):
-        body = _build_pr_body("Report", "log entries", issue_number=None)
+        body = _build_pr_body(
+            "Report", "log entries", issue_number=None, human_note="N"
+        )
         assert "<details>" in body
         assert "log entries" in body
+        assert "Agent Worklog" in body
 
-    def test_no_content(self):
-        assert "Automated fix from ptq" in _build_pr_body("", "", issue_number=None)
+    def test_no_agent_content(self):
+        body = _build_pr_body("", "", issue_number=None, human_note="Manual fix")
+        assert "Manual fix" in body
+        assert "Author's Note" in body
 
     def test_issue_reference(self):
-        body = _build_pr_body("R", "", issue_number=99)
+        body = _build_pr_body("R", "", issue_number=99, human_note="Fix")
         assert "Fixes #99" in body
 
 
@@ -81,14 +93,24 @@ class TestCreatePr:
     def test_creates_pr(self, tmp_path):
         repo, backend = self._setup(tmp_path)
         with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
-            result = create_pr(repo, "20260217-42")
+            result = create_pr(repo, "20260217-42", human_note="Trivial fix")
         assert result.url == "https://github.com/pytorch/pytorch/pull/99"
         assert result.branch == "ptq/42"
+
+    def test_empty_note_raises(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+        with (
+            patch("ptq.application.pr_service.backend_for_job", return_value=backend),
+            pytest.raises(PtqError, match="human note is required"),
+        ):
+            create_pr(repo, "20260217-42", human_note="")
 
     def test_custom_title(self, tmp_path):
         repo, backend = self._setup(tmp_path)
         with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
-            result = create_pr(repo, "20260217-42", title="Custom Title")
+            result = create_pr(
+                repo, "20260217-42", human_note="Note", title="Custom Title"
+            )
         assert result.branch == "ptq/42"
 
     def test_handles_existing_pr(self, tmp_path):
@@ -109,7 +131,7 @@ class TestCreatePr:
 
         backend.run = MagicMock(side_effect=run_side_effect)
         with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
-            result = create_pr(repo, "20260217-42")
+            result = create_pr(repo, "20260217-42", human_note="Fix")
         assert result.url == "https://github.com/pytorch/pytorch/pull/88"
 
     def test_failure_raises(self, tmp_path):
@@ -129,4 +151,4 @@ class TestCreatePr:
             patch("ptq.application.pr_service.backend_for_job", return_value=backend),
             pytest.raises(PtqError, match="gh pr create failed"),
         ):
-            create_pr(repo, "20260217-42")
+            create_pr(repo, "20260217-42", human_note="Fix")

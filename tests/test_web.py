@@ -263,11 +263,19 @@ class TestJobActions:
         ):
             resp = client.post(
                 "/jobs/20260217-100001/pr",
-                data={},
+                data={"human_note": "Trivial fix for meta device support"},
                 follow_redirects=False,
             )
         assert resp.status_code == 303
         assert "pr_url=" in resp.headers["location"]
+
+    def test_create_pr_requires_note(self, client, mock_backend):
+        resp = client.post(
+            "/jobs/20260217-100001/pr",
+            data={"human_note": ""},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 422
 
     def test_rerun_redirects(self, client, mock_backend):
         with patch(

@@ -563,10 +563,23 @@ def status(
 @app.command()
 def pr(
     job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+    note: Annotated[
+        str | None,
+        typer.Option(
+            "--note",
+            "-n",
+            help="Your description of the PR: what it does, why it's correct, "
+            "and how the reviewer should approach it. Opens $EDITOR if omitted.",
+        ),
+    ] = None,
     title: Annotated[str | None, typer.Option(help="PR title override.")] = None,
     draft: Annotated[bool, typer.Option(help="Create as draft PR.")] = False,
 ) -> None:
-    """Create a GitHub PR from a job's worktree changes."""
+    """Create a GitHub PR from a job's worktree changes.
+
+    Requires a human note describing the change. This is embedded at the top
+    of the PR body so reviewers see the author's own assessment first.
+    """
     from ptq.application.pr_service import create_pr
 
     repo = _repo()
@@ -575,11 +588,42 @@ def pr(
     except PtqError as e:
         _handle_error(e)
 
+    if not note:
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", prefix="ptq-pr-note-", delete=False
+        ) as f:
+            f.write(
+                "# Describe this PR for the reviewer\n"
+                "#\n"
+                "# What does this change do?\n"
+                "# Why do you believe it's correct?\n"
+                "# How should the reviewer approach it? (e.g. trivial fix, RFC, etc.)\n"
+                "#\n"
+                "# Lines starting with # will be stripped.\n"
+            )
+            note_path = f.name
+        editor = os.environ.get("EDITOR", "vim")
+        os.system(f"{editor} {note_path}")
+        with open(note_path) as f:
+            raw = f.read()
+        os.unlink(note_path)
+        note = "\n".join(
+            line for line in raw.splitlines() if not line.startswith("#")
+        ).strip()
+
+    if not note:
+        console.print("[red]No note provided — PR creation aborted.[/red]")
+        raise typer.Exit(1)
+
     console.print(f"[bold]Creating PR for {job_id}[/bold]")
     try:
         result = create_pr(
             repo,
             job_id,
+            human_note=note,
             title=title,
             draft=draft,
             log=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
