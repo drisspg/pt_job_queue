@@ -1,27 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from ptq.job import get_job
-from ptq.ssh import backend_for_job
+from ptq.domain.models import PRResult, PtqError
+from ptq.infrastructure.backends import backend_for_job
+from ptq.infrastructure.job_repository import JobRepository
+from ptq.ssh import Backend
 
-if TYPE_CHECKING:
-    from ptq.ssh import Backend
-
-
-@dataclass
-class PRResult:
-    url: str
-    branch: str
+_HTTPS_TO_SSH = {
+    "https://github.com/": "git@github.com:",
+}
 
 
 def _read_file(backend: Backend, path: str) -> str:
     result = backend.run(f"cat {path}", check=False)
-    if result.returncode == 0:
-        return result.stdout.strip()
-    return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _build_pr_body(report: str, worklog: str, issue_number: int | None) -> str:
@@ -35,11 +28,6 @@ def _build_pr_body(report: str, worklog: str, issue_number: int | None) -> str:
             f"\n\n<details>\n<summary>Worklog</summary>\n\n{worklog}\n\n</details>"
         )
     return "\n".join(parts) if parts else "Automated fix from ptq."
-
-
-_HTTPS_TO_SSH = {
-    "https://github.com/": "git@github.com:",
-}
 
 
 def _ensure_ssh_remote(
@@ -58,6 +46,7 @@ def _ensure_ssh_remote(
 
 
 def create_pr(
+    repo: JobRepository,
     job_id: str,
     *,
     title: str | None = None,
@@ -65,12 +54,12 @@ def create_pr(
     log: Callable[[str], None] | None = None,
 ) -> PRResult:
     _log = log or (lambda _: None)
-    job = get_job(job_id)
-    backend = backend_for_job(job_id)
+    job = repo.get(job_id)
+    backend = backend_for_job(job)
     ws = backend.workspace
     job_dir = f"{ws}/jobs/{job_id}"
     worktree = f"{job_dir}/pytorch"
-    issue_number = job.get("issue")
+    issue_number = job.issue
 
     branch = f"ptq/{issue_number}" if issue_number is not None else f"ptq/{job_id}"
     pr_title = title or (
@@ -84,10 +73,9 @@ def create_pr(
     worklog = _read_file(backend, f"{job_dir}/worklog.md")
     body = _build_pr_body(report, worklog, issue_number)
     _log(
-        f"PR body: report.md {'found' if report else 'missing'}, worklog.md {'found' if worklog else 'missing'}"
+        f"PR body: report.md {'found' if report else 'missing'}, "
+        f"worklog.md {'found' if worklog else 'missing'}"
     )
-
-    _SCRUB_PATHS = ".claude/ .cursorrules AGENTS.md"
 
     _log("Staging changes...")
     backend.run(f"cd {worktree} && git add -A")
@@ -100,7 +88,10 @@ def create_pr(
     backend.run(f"cd {worktree} && git checkout -B '{branch}'")
     if base:
         backend.run(f"cd {worktree} && git reset --soft {base}")
-    backend.run(f"cd {worktree} && git reset HEAD -- {_SCRUB_PATHS}", check=False)
+    backend.run(
+        f"cd {worktree} && git reset HEAD -- .claude/ .cursorrules AGENTS.md",
+        check=False,
+    )
     backend.run(
         f"cd {worktree} && git commit -m '{commit_msg}' --allow-empty",
         check=False,
@@ -135,6 +126,6 @@ def create_pr(
             url = list_result.stdout.strip()
             if url:
                 return PRResult(url=url, branch=branch)
-        raise SystemExit(f"gh pr create failed: {stderr or result.stdout}")
+        raise PtqError(f"gh pr create failed: {stderr or result.stdout}")
 
     return PRResult(url=url, branch=branch)

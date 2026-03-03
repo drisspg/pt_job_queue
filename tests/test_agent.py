@@ -10,8 +10,9 @@ from ptq.agent import (
     _truncate,
     build_adhoc_prompt,
     build_system_prompt,
-    launch_agent,
 )
+from ptq.application.run_service import launch
+from ptq.domain.models import RunRequest
 from ptq.ssh import LocalBackend, RemoteBackend
 
 
@@ -117,32 +118,30 @@ def _mock_backend(
     backend.tail_log = MagicMock()
 
 
-class TestLaunchAgentStdbuf:
-    @patch("ptq.agent.deploy_scripts")
-    def test_remote_backend_uses_stdbuf(self, _deploy, jobs_db, frozen_date):
+class TestLaunchStdbuf:
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_remote_backend_uses_stdbuf(self, _deploy, repo, frozen_date):
         backend = RemoteBackend(machine="gpu-box", workspace="/tmp/ws")
         _mock_backend(backend)
 
-        launch_agent(
+        launch(
+            repo,
             backend,
-            message="hello",
-            machine="gpu-box",
-            follow=False,
+            RunRequest(message="hello", machine="gpu-box", follow=False),
         )
 
         cmd = backend.launch_background.call_args[0][0]
         assert "stdbuf -oL" in cmd
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_local_backend_skips_stdbuf(self, _deploy, jobs_db, frozen_date):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_local_backend_skips_stdbuf(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        launch_agent(
+        launch(
+            repo,
             backend,
-            message="hello",
-            local=True,
-            follow=False,
+            RunRequest(message="hello", local=True, follow=False),
         )
 
         cmd = backend.launch_background.call_args[0][0]
@@ -150,10 +149,8 @@ class TestLaunchAgentStdbuf:
 
 
 class TestEarlyRegistration:
-    @patch("ptq.agent.deploy_scripts")
-    def test_job_registered_before_worktree_creation(
-        self, _deploy, jobs_db, frozen_date
-    ):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_job_registered_before_worktree_creation(self, _deploy, repo, frozen_date):
         """Job must be in DB before worktree/build so Ctrl-C leaves a cleanable entry."""
         backend = LocalBackend(workspace="/tmp/ws")
 
@@ -175,7 +172,11 @@ class TestEarlyRegistration:
         backend.launch_background = MagicMock(return_value=12345)
         backend.tail_log = MagicMock()
 
-        launch_agent(backend, message="hello", local=True, follow=False)
+        launch(
+            repo,
+            backend,
+            RunRequest(message="hello", local=True, follow=False),
+        )
 
         run_cmds = [cmd for _, cmd in call_order]
         mkdir_idx = next(i for i, c in enumerate(run_cmds) if "mkdir -p" in c)
@@ -183,78 +184,102 @@ class TestEarlyRegistration:
             i for i, c in enumerate(run_cmds) if "create_worktree.py" in c
         )
 
-        registered_ids = list(jobs_db.keys())
-        assert len(registered_ids) == 1
-
+        all_jobs = repo.list_all()
+        assert len(all_jobs) == 1
         assert mkdir_idx < worktree_idx
-        assert registered_ids[0] in jobs_db
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_job_in_db_even_if_build_not_started(self, _deploy, jobs_db, frozen_date):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_job_in_db_even_if_build_not_started(self, _deploy, repo, frozen_date):
         """Even before the agent launches, the job should be in the DB."""
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend, worktree_exists=True)
 
-        job_id = launch_agent(backend, message="hello", local=True, follow=False)
+        job_id = launch(
+            repo,
+            backend,
+            RunRequest(message="hello", local=True, follow=False),
+        )
 
-        assert job_id in jobs_db
-        assert jobs_db[job_id]["runs"] == 1
+        job = repo.get(job_id)
+        assert job.runs == 1
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_rerun_does_not_re_register(self, _deploy, jobs_db, frozen_date):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_rerun_does_not_re_register(self, _deploy, repo, frozen_date):
         """Re-running with existing_job_id should not create a duplicate DB entry."""
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend, worktree_exists=True)
 
-        first_id = launch_agent(backend, message="hello", local=True, follow=False)
-        assert jobs_db[first_id]["runs"] == 1
-
-        launch_agent(
+        first_id = launch(
+            repo,
             backend,
-            message="try again",
-            local=True,
-            follow=False,
-            existing_job_id=first_id,
+            RunRequest(message="hello", local=True, follow=False),
+        )
+        assert repo.get(first_id).runs == 1
+
+        _mock_backend(backend, worktree_exists=True)
+        launch(
+            repo,
+            backend,
+            RunRequest(
+                message="try again",
+                local=True,
+                follow=False,
+                existing_job_id=first_id,
+            ),
         )
 
-        assert len(jobs_db) == 1
-        assert jobs_db[first_id]["runs"] == 2
+        assert len(repo.list_all()) == 1
+        assert repo.get(first_id).runs == 2
 
 
-class TestLaunchAgentRerun:
-    @patch("ptq.agent.deploy_scripts")
-    def test_adhoc_rerun_reuses_job_id(self, _deploy, jobs_db, frozen_date):
-        """Re-running an adhoc job with existing_job_id should reuse the ID, not create a new one."""
+class TestLaunchRerun:
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_adhoc_rerun_reuses_job_id(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend, worktree_exists=True)
 
-        first_id = launch_agent(backend, message="hello", local=True, follow=False)
-
-        returned_id = launch_agent(
+        first_id = launch(
+            repo,
             backend,
-            message="different message",
-            local=True,
-            follow=False,
-            existing_job_id=first_id,
+            RunRequest(message="hello", local=True, follow=False),
+        )
+
+        _mock_backend(backend, worktree_exists=True)
+        returned_id = launch(
+            repo,
+            backend,
+            RunRequest(
+                message="different message",
+                local=True,
+                follow=False,
+                existing_job_id=first_id,
+            ),
         )
 
         assert returned_id == first_id
-        assert jobs_db[first_id]["runs"] == 2
+        assert repo.get(first_id).runs == 2
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_adhoc_rerun_loads_prior_context(self, _deploy, jobs_db, frozen_date):
-        """Re-running an existing job should attempt to load prior worklog/report."""
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_adhoc_rerun_loads_prior_context(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend, worktree_exists=True)
 
-        first_id = launch_agent(backend, message="hello", local=True, follow=False)
-
-        launch_agent(
+        first_id = launch(
+            repo,
             backend,
-            message="try again",
-            local=True,
-            follow=False,
-            existing_job_id=first_id,
+            RunRequest(message="hello", local=True, follow=False),
+        )
+
+        _mock_backend(backend, worktree_exists=True)
+        launch(
+            repo,
+            backend,
+            RunRequest(
+                message="try again",
+                local=True,
+                follow=False,
+                existing_job_id=first_id,
+            ),
         )
 
         run_cmds = [
@@ -265,24 +290,30 @@ class TestLaunchAgentRerun:
         cat_cmds = [c for c in run_cmds if "cat " in c and "worklog.md" in c]
         assert len(cat_cmds) >= 1
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_new_adhoc_gets_unique_id(self, _deploy, jobs_db, frozen_date):
-        """Two different adhoc messages should get different job IDs."""
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_new_adhoc_gets_unique_id(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        id1 = launch_agent(backend, message="task one", local=True, follow=False)
-        id2 = launch_agent(backend, message="task two", local=True, follow=False)
+        id1 = launch(
+            repo,
+            backend,
+            RunRequest(message="task one", local=True, follow=False),
+        )
+        _mock_backend(backend)
+        id2 = launch(
+            repo,
+            backend,
+            RunRequest(message="task two", local=True, follow=False),
+        )
 
         assert id1 != id2
 
 
 class TestLaunchAgentType:
-    @patch("ptq.agent.deploy_scripts")
-    def test_agent_type_in_command(self, _deploy, jobs_db, frozen_date):
-        """Each agent type should produce a distinct command binary."""
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_agent_type_in_command(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
-        _mock_backend(backend)
 
         for agent_type, expected_binary in [
             ("claude", "claude -p"),
@@ -290,62 +321,72 @@ class TestLaunchAgentType:
             ("cursor", "agent -p"),
         ]:
             _mock_backend(backend)
-            launch_agent(
+            launch(
+                repo,
                 backend,
-                message="hello",
-                local=True,
-                follow=False,
-                agent_type=agent_type,
+                RunRequest(
+                    message="hello",
+                    local=True,
+                    follow=False,
+                    agent_type=agent_type,
+                ),
             )
             cmd = backend.launch_background.call_args[0][0]
             assert expected_binary in cmd, (
                 f"{agent_type} cmd should contain {expected_binary!r}, got: {cmd}"
             )
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_agent_type_persisted_in_db(self, _deploy, jobs_db, frozen_date):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_agent_type_persisted_in_db(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        job_id = launch_agent(
+        job_id = launch(
+            repo,
             backend,
-            message="hello",
-            local=True,
-            follow=False,
-            agent_type="codex",
-        )
-
-        assert jobs_db[job_id]["agent"] == "codex"
-
-    @patch("ptq.agent.deploy_scripts")
-    def test_agent_log_filename(self, _deploy, jobs_db, frozen_date):
-        """Log file should use the agent name, not hardcoded 'claude'."""
-        backend = LocalBackend(workspace="/tmp/ws")
-        _mock_backend(backend)
-
-        for agent_type in ("claude", "codex", "cursor"):
-            _mock_backend(backend)
-            launch_agent(
-                backend,
+            RunRequest(
                 message="hello",
                 local=True,
                 follow=False,
-                agent_type=agent_type,
+                agent_type="codex",
+            ),
+        )
+
+        assert repo.get(job_id).agent == "codex"
+
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_agent_log_filename(self, _deploy, repo, frozen_date):
+        backend = LocalBackend(workspace="/tmp/ws")
+
+        for agent_type in ("claude", "codex", "cursor"):
+            _mock_backend(backend)
+            launch(
+                repo,
+                backend,
+                RunRequest(
+                    message="hello",
+                    local=True,
+                    follow=False,
+                    agent_type=agent_type,
+                ),
             )
             log_file = backend.launch_background.call_args[0][1]
             assert f"{agent_type}-1.log" in log_file
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_codex_setup_copies_agents_md(self, _deploy, jobs_db, frozen_date):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_codex_setup_copies_agents_md(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        launch_agent(
+        launch(
+            repo,
             backend,
-            message="hello",
-            local=True,
-            follow=False,
-            agent_type="codex",
+            RunRequest(
+                message="hello",
+                local=True,
+                follow=False,
+                agent_type="codex",
+            ),
         )
 
         run_cmds = [
@@ -355,17 +396,20 @@ class TestLaunchAgentType:
         ]
         assert any("AGENTS.md" in c for c in run_cmds)
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_cursor_setup_copies_cursorrules(self, _deploy, jobs_db, frozen_date):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_cursor_setup_copies_cursorrules(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        launch_agent(
+        launch(
+            repo,
             backend,
-            message="hello",
-            local=True,
-            follow=False,
-            agent_type="cursor",
+            RunRequest(
+                message="hello",
+                local=True,
+                follow=False,
+                agent_type="cursor",
+            ),
         )
 
         run_cmds = [
@@ -375,17 +419,20 @@ class TestLaunchAgentType:
         ]
         assert any(".cursorrules" in c for c in run_cmds)
 
-    @patch("ptq.agent.deploy_scripts")
-    def test_claude_setup_writes_settings_json(self, _deploy, jobs_db, frozen_date):
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_claude_setup_writes_settings_json(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        launch_agent(
+        launch(
+            repo,
             backend,
-            message="hello",
-            local=True,
-            follow=False,
-            agent_type="claude",
+            RunRequest(
+                message="hello",
+                local=True,
+                follow=False,
+                agent_type="claude",
+            ),
         )
 
         run_cmds = [

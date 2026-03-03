@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from ptq.config import AgentModels, Config
+from ptq.domain.models import JobRecord
+from ptq.infrastructure.job_repository import JobRepository
 from ptq.web.app import create_app
 
 TEST_CONFIG = Config(
@@ -19,23 +22,30 @@ TEST_CONFIG = Config(
     },
 )
 
-SAMPLE_DB = {
-    "20260217-100001": {
-        "issue": 100001,
-        "runs": 2,
-        "machine": "gpu-dev",
-        "workspace": "~/ptq_workspace",
-        "agent": "claude",
-        "pid": 12345,
-    },
-    "20260218-adhoc-abc123": {
-        "issue": None,
-        "runs": 1,
-        "local": True,
-        "workspace": "~/.ptq_workspace",
-        "agent": "codex",
-    },
-}
+SAMPLE_RECORDS = [
+    JobRecord(
+        job_id="20260217-100001",
+        issue=100001,
+        runs=2,
+        machine="gpu-dev",
+        workspace="~/ptq_workspace",
+        agent="claude",
+        pid=12345,
+    ),
+    JobRecord(
+        job_id="20260218-adhoc-abc123",
+        local=True,
+        workspace="~/.ptq_workspace",
+        agent="codex",
+    ),
+]
+
+
+def _make_repo(tmp_path: Path) -> JobRepository:
+    repo = JobRepository(tmp_path / "jobs.json")
+    for r in SAMPLE_RECORDS:
+        repo.save(r)
+    return repo
 
 
 @pytest.fixture()
@@ -47,15 +57,13 @@ def mock_backend():
 
 
 @pytest.fixture()
-def client(mock_backend):
+def client(tmp_path, mock_backend):
+    repo = _make_repo(tmp_path)
     with (
-        patch("ptq.web.routes.load_jobs_db", return_value=dict(SAMPLE_DB)),
+        patch("ptq.web.routes._repo", return_value=repo),
+        patch("ptq.web.deps.JobRepository", return_value=repo),
         patch("ptq.web.deps.backend_for_job", return_value=mock_backend),
         patch("ptq.web.routes.backend_for_job", return_value=mock_backend),
-        patch("ptq.ssh.load_jobs_db", return_value=dict(SAMPLE_DB)),
-        patch("ptq.ssh.save_jobs_db"),
-        patch("ptq.job.load_jobs_db", return_value=dict(SAMPLE_DB)),
-        patch("ptq.job.save_jobs_db"),
         patch("ptq.web.routes.load_config", return_value=TEST_CONFIG),
     ):
         yield TestClient(create_app())
@@ -68,7 +76,7 @@ class TestDashboard:
         assert "Dashboard" in resp.text
 
     def test_shows_job_count(self, client):
-        resp = client.get("/")
+        resp = client.get("/dashboard")
         assert "Total Jobs" in resp.text
 
     def test_shows_machine(self, client):
@@ -121,7 +129,9 @@ class TestNewJobForm:
         assert '<input type="text"' in resp.text
         assert 'value="opus"' in resp.text
 
-    def test_agent_models_api_returns_select_when_available(self):
+    def test_agent_models_api_returns_select_when_available(
+        self, tmp_path, mock_backend
+    ):
         cfg_with_list = Config(
             default_agent="claude",
             default_model="opus",
@@ -131,18 +141,14 @@ class TestNewJobForm:
                 "claude": AgentModels(available=["opus", "sonnet"], default="opus"),
             },
         )
+        repo = _make_repo(tmp_path)
         with (
-            patch("ptq.web.routes.load_jobs_db", return_value={}),
-            patch("ptq.web.deps.backend_for_job"),
-            patch("ptq.web.routes.backend_for_job"),
-            patch("ptq.ssh.load_jobs_db", return_value={}),
-            patch("ptq.ssh.save_jobs_db"),
-            patch("ptq.job.load_jobs_db", return_value={}),
-            patch("ptq.job.save_jobs_db"),
+            patch("ptq.web.routes._repo", return_value=repo),
+            patch("ptq.web.deps.JobRepository", return_value=repo),
+            patch("ptq.web.deps.backend_for_job", return_value=mock_backend),
+            patch("ptq.web.routes.backend_for_job", return_value=mock_backend),
             patch("ptq.web.routes.load_config", return_value=cfg_with_list),
         ):
-            from ptq.web.app import create_app
-
             client = TestClient(create_app())
             resp = client.get("/api/models/claude")
             assert "<select" in resp.text
@@ -233,14 +239,17 @@ class TestJobActions:
         assert resp.status_code == 303
 
     def test_delete_returns_empty(self, client, mock_backend):
-        resp = client.delete("/jobs/20260217-100001")
+        with patch(
+            "ptq.application.job_service.backend_for_job", return_value=mock_backend
+        ):
+            resp = client.delete("/jobs/20260217-100001")
         assert resp.status_code == 200
 
     def test_create_pr_redirects(self, client, mock_backend):
-        from ptq.pr import PRResult
+        from ptq.domain.models import PRResult
 
         with patch(
-            "ptq.pr.create_pr",
+            "ptq.application.pr_service.create_pr",
             return_value=PRResult(
                 url="https://github.com/pytorch/pytorch/pull/99", branch="ptq/100001"
             ),
@@ -254,7 +263,9 @@ class TestJobActions:
         assert "pr_url=" in resp.headers["location"]
 
     def test_rerun_redirects(self, client, mock_backend):
-        with patch("ptq.agent.launch_agent", return_value="20260217-100001"):
+        with patch(
+            "ptq.application.run_service.launch", return_value="20260217-100001"
+        ):
             resp = client.post(
                 "/jobs/20260217-100001/rerun",
                 data={"message": "try a different approach"},
@@ -264,7 +275,9 @@ class TestJobActions:
         assert "/jobs/20260217-100001" in resp.headers["location"]
 
     def test_rerun_without_message(self, client, mock_backend):
-        with patch("ptq.agent.launch_agent", return_value="20260217-100001"):
+        with patch(
+            "ptq.application.run_service.launch", return_value="20260217-100001"
+        ):
             resp = client.post(
                 "/jobs/20260217-100001/rerun",
                 data={"message": ""},
@@ -273,25 +286,31 @@ class TestJobActions:
         assert resp.status_code == 303
 
     def test_rerun_switches_agent(self, client, mock_backend):
-        with patch("ptq.agent.launch_agent", return_value="20260217-100001") as mock:
+        with patch(
+            "ptq.application.run_service.launch", return_value="20260217-100001"
+        ) as mock:
             resp = client.post(
                 "/jobs/20260217-100001/rerun",
                 data={"message": "try codex", "agent_type": "codex", "model": "o3"},
                 follow_redirects=False,
             )
         assert resp.status_code == 303
-        assert mock.call_args.kwargs["agent_type"] == "codex"
-        assert mock.call_args.kwargs["model"] == "o3"
+        request = mock.call_args.args[2]
+        assert request.agent_type == "codex"
+        assert request.model == "o3"
 
     def test_rerun_uses_default_model_when_empty(self, client, mock_backend):
-        with patch("ptq.agent.launch_agent", return_value="20260217-100001") as mock:
+        with patch(
+            "ptq.application.run_service.launch", return_value="20260217-100001"
+        ) as mock:
             resp = client.post(
                 "/jobs/20260217-100001/rerun",
                 data={"message": "", "agent_type": "claude", "model": ""},
                 follow_redirects=False,
             )
         assert resp.status_code == 303
-        assert mock.call_args.kwargs["model"] == "opus"
+        request = mock.call_args.args[2]
+        assert request.model == "opus"
 
 
 class TestPartials:

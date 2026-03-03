@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shlex
 import shutil
 import subprocess
@@ -131,28 +130,3 @@ class LocalBackend:
 
 
 Backend = RemoteBackend | LocalBackend
-
-
-def load_jobs_db() -> dict:
-    path = Path.home() / ".ptq" / "jobs.json"
-    if path.exists():
-        return json.loads(path.read_text())
-    return {}
-
-
-def save_jobs_db(db: dict) -> None:
-    path = Path.home() / ".ptq" / "jobs.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(db, indent=2))
-
-
-def backend_for_job(job_id: str) -> Backend:
-    db = load_jobs_db()
-    entry = db.get(job_id)
-    if not entry:
-        raise SystemExit(f"Unknown job: {job_id}")
-    if entry.get("local"):
-        return LocalBackend(workspace=entry.get("workspace", "~/.ptq_workspace"))
-    return RemoteBackend(
-        machine=entry["machine"], workspace=entry.get("workspace", "~/ptq_workspace")
-    )

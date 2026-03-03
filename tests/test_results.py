@@ -1,83 +1,68 @@
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ptq.results import fetch_results
+from ptq.application.artifact_service import fetch_results, read_artifact
+from ptq.domain.models import JobRecord
+from ptq.infrastructure.job_repository import JobRepository
 
 
-def _make_job_entry(*, local: bool = True) -> dict:
-    return {
-        "issue": None,
-        "runs": 1,
-        "local": local,
-        "workspace": "~/.ptq_workspace",
-    }
-
-
-class TestFetchResultsMissingArtifacts:
-    def test_handles_missing_file_local_backend(self, jobs_db, tmp_path):
-        jobs_db["j1"] = _make_job_entry()
-
+class TestFetchResults:
+    def test_fetches_artifacts(self, tmp_path):
+        repo = JobRepository(tmp_path / "jobs.json")
+        repo.save(
+            JobRecord(
+                job_id="j1",
+                issue=42,
+                machine="gpu-dev",
+                workspace="~/ws",
+                agent="claude",
+                runs=2,
+            )
+        )
         backend = MagicMock()
-        backend.workspace = str(tmp_path / "workspace")
+        backend.workspace = "~/ws"
+        backend.copy_from = MagicMock()
 
-        call_count = 0
+        output = tmp_path / "results"
+        with patch(
+            "ptq.application.artifact_service.backend_for_job",
+            return_value=backend,
+        ):
+            dest, fetched, missing = fetch_results(repo, "j1", output)
 
-        def copy_side_effect(remote_path: str, local_path: Path) -> None:
-            nonlocal call_count
-            call_count += 1
-            if "fix.diff" in remote_path:
-                raise FileNotFoundError(remote_path)
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            local_path.write_text("content")
+        assert dest == output
+        assert backend.copy_from.call_count == 4
 
-        backend.copy_from.side_effect = copy_side_effect
-
-        with patch("ptq.results.backend_for_job", return_value=backend):
-            dest = fetch_results("j1", output_dir=tmp_path / "out")
-
-        assert (dest / "report.md").exists()
-        assert (dest / "worklog.md").exists()
-        assert not (dest / "fix.diff").exists()
-
-    def test_handles_called_process_error_remote_backend(self, jobs_db, tmp_path):
-        import subprocess
-
-        jobs_db["j1"] = _make_job_entry()
-
+    def test_missing_artifacts_tracked(self, tmp_path):
+        repo = JobRepository(tmp_path / "jobs.json")
+        repo.save(JobRecord(job_id="j1", machine="gpu-dev", workspace="~/ws"))
         backend = MagicMock()
-        backend.workspace = str(tmp_path / "workspace")
+        backend.workspace = "~/ws"
+        backend.copy_from.side_effect = FileNotFoundError
 
-        def copy_side_effect(remote_path: str, local_path: Path) -> None:
-            if "fix.diff" in remote_path:
-                raise subprocess.CalledProcessError(1, "scp")
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            local_path.write_text("content")
+        with patch(
+            "ptq.application.artifact_service.backend_for_job",
+            return_value=backend,
+        ):
+            _, fetched, missing = fetch_results(repo, "j1", tmp_path / "out")
 
-        backend.copy_from.side_effect = copy_side_effect
+        assert len(fetched) == 0
+        assert len(missing) == 4
 
-        with patch("ptq.results.backend_for_job", return_value=backend):
-            dest = fetch_results("j1", output_dir=tmp_path / "out")
 
-        assert not (dest / "fix.diff").exists()
-
-    def test_all_artifacts_fetched(self, jobs_db, tmp_path):
-        jobs_db["j1"] = _make_job_entry()
-
+class TestReadArtifact:
+    def test_returns_content(self):
         backend = MagicMock()
-        backend.workspace = str(tmp_path / "workspace")
+        backend.run.return_value = MagicMock(returncode=0, stdout="hello\n")
+        assert read_artifact(backend, "/path") == "hello\n"
 
-        def copy_side_effect(remote_path: str, local_path: Path) -> None:
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            local_path.write_text("content")
+    def test_returns_none_on_failure(self):
+        backend = MagicMock()
+        backend.run.return_value = MagicMock(returncode=1, stdout="")
+        assert read_artifact(backend, "/path") is None
 
-        backend.copy_from.side_effect = copy_side_effect
-
-        with patch("ptq.results.backend_for_job", return_value=backend):
-            dest = fetch_results("j1", output_dir=tmp_path / "out")
-
-        assert (dest / "report.md").exists()
-        assert (dest / "fix.diff").exists()
-        assert (dest / "worklog.md").exists()
-        assert (dest / "claude-1.log").exists()
+    def test_returns_none_on_empty(self):
+        backend = MagicMock()
+        backend.run.return_value = MagicMock(returncode=0, stdout="   \n")
+        assert read_artifact(backend, "/path") is None

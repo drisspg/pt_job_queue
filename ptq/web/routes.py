@@ -13,15 +13,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sse_starlette.sse import EventSourceResponse
 
 from ptq.agents import AGENTS, get_agent
+from ptq.application.artifact_service import read_artifact
 from ptq.config import discover_models, discover_ssh_hosts, load_config
-from ptq.job import get_job, resolve_job_id, save_pid
-from ptq.ssh import (
-    LocalBackend,
-    RemoteBackend,
-    backend_for_job,
-    load_jobs_db,
-)
-from ptq.web.deps import get_job_status, read_artifact, templates
+from ptq.domain.models import PtqError, RunRequest
+from ptq.infrastructure.backends import backend_for_job
+from ptq.infrastructure.job_repository import JobRepository
+from ptq.web.deps import get_job_status_with_finalize, templates
 
 log = logging.getLogger("ptq.web")
 
@@ -35,20 +32,19 @@ def _render_md(text: str) -> str:
     return md_lib.markdown(text, extensions=["fenced_code", "tables", "nl2br"])
 
 
+def _repo() -> JobRepository:
+    return JobRepository()
+
+
 router = APIRouter()
 
 
 @contextmanager
-def _catch_exit():
+def _catch_error():
     try:
         yield
-    except SystemExit as e:
+    except PtqError as e:
         raise HTTPException(status_code=404, detail=str(e)) from None
-
-
-# ---------------------------------------------------------------------------
-# Dashboard
-# ---------------------------------------------------------------------------
 
 
 @router.get("/", response_class=RedirectResponse)
@@ -58,33 +54,33 @@ async def root():
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    db = load_jobs_db()
+    repo = _repo()
+    all_jobs = repo.list_all()
     jobs: list[dict] = []
     running_count = 0
     stopped_count = 0
     machines: dict[str, dict] = {}
 
-    for job_id, entry in sorted(db.items()):
-        status = get_job_status(job_id, entry)
-        if status == "running" or status == "initializing":
+    for job_id, job in sorted(all_jobs.items()):
+        status = get_job_status_with_finalize(job_id, job)
+        if status in ("running", "initializing"):
             running_count += 1
         else:
             stopped_count += 1
 
-        target = entry.get("machine") or "local"
-        machines.setdefault(target, {"running": 0, "stopped": 0, "total": 0})
-        machines[target][
+        machines.setdefault(job.target, {"running": 0, "stopped": 0, "total": 0})
+        machines[job.target][
             "running" if status in ("running", "initializing") else "stopped"
         ] += 1
-        machines[target]["total"] += 1
+        machines[job.target]["total"] += 1
 
         jobs.append(
             {
                 "id": job_id,
-                "issue": entry.get("issue"),
-                "agent": entry.get("agent", "claude"),
-                "target": target,
-                "runs": entry.get("runs", 1),
+                "issue": job.issue,
+                "agent": job.agent,
+                "target": job.target,
+                "runs": job.runs,
                 "status": status,
             }
         )
@@ -94,7 +90,7 @@ async def dashboard(request: Request):
         "dashboard.html",
         {
             "jobs": jobs,
-            "total": len(db),
+            "total": len(all_jobs),
             "running": running_count,
             "stopped": stopped_count,
             "machines": machines,
@@ -102,27 +98,23 @@ async def dashboard(request: Request):
     )
 
 
-# ---------------------------------------------------------------------------
-# Job list
-# ---------------------------------------------------------------------------
-
-
 @router.get("/jobs", response_class=HTMLResponse)
 async def job_list(request: Request, status_filter: str = "all"):
-    db = load_jobs_db()
+    repo = _repo()
+    all_jobs = repo.list_all()
     jobs: list[dict] = []
 
-    for job_id, entry in sorted(db.items()):
-        status = get_job_status(job_id, entry)
+    for job_id, job in sorted(all_jobs.items()):
+        status = get_job_status_with_finalize(job_id, job)
         if status_filter != "all" and status != status_filter:
             continue
         jobs.append(
             {
                 "id": job_id,
-                "issue": entry.get("issue"),
-                "agent": entry.get("agent", "claude"),
-                "target": entry.get("machine") or "local",
-                "runs": entry.get("runs", 1),
+                "issue": job.issue,
+                "agent": job.agent,
+                "target": job.target,
+                "runs": job.runs,
                 "status": status,
             }
         )
@@ -132,11 +124,6 @@ async def job_list(request: Request, status_filter: str = "all"):
         "job_list.html",
         {"jobs": jobs, "status_filter": status_filter},
     )
-
-
-# ---------------------------------------------------------------------------
-# New job form
-# ---------------------------------------------------------------------------
 
 
 def _form_context(error: str | None = None) -> dict:
@@ -258,12 +245,15 @@ async def job_launch_progress(launch_id: str):
         progress_queue.put_nowait(msg)
 
     async def run_launch():
+        from ptq.application import run_service
+        from ptq.infrastructure.backends import create_backend
+
         is_local = params["target_type"] == "local"
         machine_name = params["machine"] or None
         issue_number = int(params["issue"]) if params["issue"] else None
         message_text = params["message"] or None
 
-        backend = LocalBackend() if is_local else RemoteBackend(machine=machine_name)
+        backend = create_backend(machine=machine_name, local=is_local)
 
         issue_data = None
         if issue_number is not None:
@@ -271,7 +261,17 @@ async def job_launch_progress(launch_id: str):
 
             issue_data = await asyncio.to_thread(fetch_issue, issue_number)
 
-        from ptq.agent import launch_agent
+        request = RunRequest(
+            issue_data=issue_data,
+            issue_number=issue_number,
+            message=message_text,
+            machine=machine_name,
+            local=is_local,
+            follow=False,
+            model=params["model"],
+            max_turns=params["max_turns"],
+            agent_type=params["agent"],
+        )
 
         log.info(
             "creating job: agent=%s model=%s target=%s",
@@ -280,17 +280,10 @@ async def job_launch_progress(launch_id: str):
             "local" if is_local else machine_name,
         )
         return await asyncio.to_thread(
-            launch_agent,
+            run_service.launch,
+            _repo(),
             backend,
-            issue_data=issue_data,
-            issue_number=issue_number,
-            machine=machine_name,
-            local=is_local,
-            follow=False,
-            model=params["model"],
-            max_turns=params["max_turns"],
-            message=message_text,
-            agent_type=params["agent"],
+            request,
             on_progress=on_progress,
         )
 
@@ -317,49 +310,36 @@ async def job_launch_progress(launch_id: str):
     return EventSourceResponse(event_generator())
 
 
-# ---------------------------------------------------------------------------
-# Job detail
-# ---------------------------------------------------------------------------
-
-
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_detail(request: Request, job_id: str, pr_url: str | None = None):
-    with _catch_exit():
-        job_id = resolve_job_id(job_id)
-        job = get_job(job_id)
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
+        job = repo.get(job_id)
 
-    status = get_job_status(job_id, job)
-    target = job.get("machine") or "local"
-    issue_val = job.get("issue")
-
+    status = get_job_status_with_finalize(job_id, job)
     cfg = load_config()
-    agent_name = job.get("agent", "claude")
-    default_model = job.get("model") or cfg.effective_model(agent_name)
-    am = cfg.models_for(agent_name)
-    available_models = am.available or discover_models(agent_name)
+    default_model = job.model or cfg.effective_model(job.agent)
+    am = cfg.models_for(job.agent)
+    available_models = am.available or discover_models(job.agent)
 
     return templates.TemplateResponse(
         request,
         "job_detail.html",
         {
             "job_id": job_id,
-            "job": job,
+            "job": job.to_dict(),
             "status": status,
-            "target": target,
-            "issue": issue_val,
-            "agent_name": agent_name,
+            "target": job.target,
+            "issue": job.issue,
+            "agent_name": job.agent,
             "default_model": default_model,
             "available_models": available_models,
-            "runs": job.get("runs", 1),
+            "runs": job.runs,
             "agents": list(AGENTS.keys()),
             "pr_url": pr_url,
         },
     )
-
-
-# ---------------------------------------------------------------------------
-# Actions
-# ---------------------------------------------------------------------------
 
 
 @router.post("/jobs/{job_id}/rerun", response_class=HTMLResponse)
@@ -370,17 +350,17 @@ async def job_rerun(
     agent_type: str = Form(""),
     model: str = Form(""),
 ):
-    with _catch_exit():
-        job_id = resolve_job_id(job_id)
-        job = get_job(job_id)
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
+        job = repo.get(job_id)
 
-    from ptq.agent import launch_agent
+    from ptq.application import run_service
 
     cfg = load_config()
-    backend = backend_for_job(job_id)
-    agent_type = agent_type.strip() or job.get("agent", cfg.default_agent)
+    backend = backend_for_job(job)
+    agent_type = agent_type.strip() or job.agent
     model = model.strip() or cfg.effective_model(agent_type)
-    issue_number = job.get("issue")
 
     log.info(
         "follow-up on %s: agent=%s model=%s message=%r",
@@ -391,25 +371,25 @@ async def job_rerun(
     )
 
     issue_data = None
-    if issue_number is not None:
+    if job.issue is not None:
         from ptq.issue import fetch_issue
 
-        issue_data = await asyncio.to_thread(fetch_issue, issue_number)
+        issue_data = await asyncio.to_thread(fetch_issue, job.issue)
 
-    await asyncio.to_thread(
-        launch_agent,
-        backend,
+    run_request = RunRequest(
         issue_data=issue_data,
-        issue_number=issue_number,
-        machine=job.get("machine"),
-        local=job.get("local", False),
+        issue_number=job.issue,
+        message=message.strip() or None,
+        machine=job.machine,
+        local=job.local,
         follow=False,
         model=model,
         max_turns=cfg.default_max_turns,
-        message=message.strip() or None,
         agent_type=agent_type,
         existing_job_id=job_id,
     )
+
+    await asyncio.to_thread(run_service.launch, repo, backend, run_request)
 
     log.info("follow-up launched for %s", job_id)
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
@@ -417,58 +397,50 @@ async def job_rerun(
 
 @router.post("/jobs/{job_id}/pr", response_class=HTMLResponse)
 async def job_create_pr(request: Request, job_id: str, draft: str = Form("")):
-    with _catch_exit():
-        job_id = resolve_job_id(job_id)
-        get_job(job_id)
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
 
-    from ptq.pr import create_pr
+    from ptq.application.pr_service import create_pr
 
     log.info("creating PR for %s", job_id)
-    result = await asyncio.to_thread(create_pr, job_id, draft=bool(draft))
+    result = await asyncio.to_thread(create_pr, repo, job_id, draft=bool(draft))
     log.info("PR created for %s: %s", job_id, result.url)
     return RedirectResponse(url=f"/jobs/{job_id}?pr_url={result.url}", status_code=303)
 
 
 @router.post("/jobs/{job_id}/kill", response_class=HTMLResponse)
 async def job_kill(request: Request, job_id: str):
-    with _catch_exit():
-        job_id = resolve_job_id(job_id)
-        job = get_job(job_id)
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
 
-    backend = backend_for_job(job_id)
-    pid = job.get("pid")
-    if pid and backend.is_pid_alive(pid):
-        backend.kill_pid(pid)
-        save_pid(job_id, None)
-        log.info("killed %s (pid %s)", job_id, pid)
+    from ptq.application.job_service import kill_job
 
+    kill_job(repo, job_id)
+    log.info("killed %s", job_id)
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
 
 @router.delete("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_delete(job_id: str):
-    with _catch_exit():
-        job_id = resolve_job_id(job_id)
-        job = get_job(job_id)
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
 
-    from ptq.cli import clean_job
+    from ptq.application.job_service import clean_single_job
 
     log.info("cleaning %s", job_id)
-    backend = backend_for_job(job_id)
-    await asyncio.to_thread(clean_job, job_id, job, backend)
+    await asyncio.to_thread(clean_single_job, repo, job_id)
     return HTMLResponse("")
-
-
-# ---------------------------------------------------------------------------
-# Partials (htmx targets)
-# ---------------------------------------------------------------------------
 
 
 @router.get("/jobs/{job_id}/status", response_class=HTMLResponse)
 async def job_status_badge(request: Request, job_id: str):
-    with _catch_exit():
-        job = get_job(job_id)
-    status = get_job_status(job_id, job)
+    repo = _repo()
+    with _catch_error():
+        job = repo.get(job_id)
+    status = get_job_status_with_finalize(job_id, job)
     return templates.TemplateResponse(
         request,
         "partials/status_badge.html",
@@ -478,11 +450,11 @@ async def job_status_badge(request: Request, job_id: str):
 
 @router.get("/jobs/{job_id}/report", response_class=HTMLResponse)
 async def job_report(job_id: str):
-    with _catch_exit():
-        get_job(job_id)
-    backend = backend_for_job(job_id)
-    ws = backend.workspace
-    content = read_artifact(backend, f"{ws}/jobs/{job_id}/report.md")
+    repo = _repo()
+    with _catch_error():
+        job = repo.get(job_id)
+    backend = backend_for_job(job)
+    content = read_artifact(backend, f"{backend.workspace}/jobs/{job_id}/report.md")
     return HTMLResponse(
         f'<div class="rendered-md">{_render_md(content)}</div>'
         if content
@@ -492,11 +464,11 @@ async def job_report(job_id: str):
 
 @router.get("/jobs/{job_id}/diff", response_class=HTMLResponse)
 async def job_diff(job_id: str):
-    with _catch_exit():
-        get_job(job_id)
-    backend = backend_for_job(job_id)
-    ws = backend.workspace
-    content = read_artifact(backend, f"{ws}/jobs/{job_id}/fix.diff")
+    repo = _repo()
+    with _catch_error():
+        job = repo.get(job_id)
+    backend = backend_for_job(job)
+    content = read_artifact(backend, f"{backend.workspace}/jobs/{job_id}/fix.diff")
     if not content:
         return HTMLResponse('<p class="muted">No diff yet.</p>')
     escaped = html.escape(content)
@@ -515,21 +487,17 @@ async def job_diff(job_id: str):
 
 @router.get("/jobs/{job_id}/worklog", response_class=HTMLResponse)
 async def job_worklog(job_id: str):
-    with _catch_exit():
-        get_job(job_id)
-    backend = backend_for_job(job_id)
-    ws = backend.workspace
-    content = read_artifact(backend, f"{ws}/jobs/{job_id}/worklog.md")
+    repo = _repo()
+    with _catch_error():
+        job = repo.get(job_id)
+    backend = backend_for_job(job)
+    content = read_artifact(backend, f"{backend.workspace}/jobs/{job_id}/worklog.md")
     return HTMLResponse(
         f'<div class="rendered-md">{_render_md(content)}</div>'
         if content
         else '<p class="muted">No worklog yet.</p>'
     )
 
-
-# ---------------------------------------------------------------------------
-# SSE log streaming
-# ---------------------------------------------------------------------------
 
 _TOOL_DISPLAY = {
     "Bash": ("$", "command", ""),
@@ -589,19 +557,22 @@ def _format_log_line(line: str, agent_parser) -> str:
 
 @router.get("/jobs/{job_id}/logs/stream")
 async def stream_logs(job_id: str):
-    with _catch_exit():
-        job_id = resolve_job_id(job_id)
-        job = get_job(job_id)
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
+        job = repo.get(job_id)
 
-    backend = backend_for_job(job_id)
+    backend = backend_for_job(job)
     ws = backend.workspace
-    runs = job.get("runs", 1)
-    agent = get_agent(job.get("agent", "claude"))
-    log_file = f"{ws}/jobs/{job_id}/{agent.log_filename(runs)}"
-    pid = job.get("pid")
-    is_alive = pid is not None and backend.is_pid_alive(pid)
+    agent = get_agent(job.agent)
+    log_file = f"{ws}/jobs/{job_id}/{agent.log_filename(job.runs)}"
+    is_alive = job.pid is not None and backend.is_pid_alive(job.pid)
     log.debug(
-        "stream_logs %s: log_file=%s pid=%s alive=%s", job_id, log_file, pid, is_alive
+        "stream_logs %s: log_file=%s pid=%s alive=%s",
+        job_id,
+        log_file,
+        job.pid,
+        is_alive,
     )
 
     async def _file_exists() -> bool:

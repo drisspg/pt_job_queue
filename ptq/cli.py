@@ -1,15 +1,100 @@
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
 
+from ptq.agent import _clean, _indent, _truncate
+from ptq.agents import StreamEvent, get_agent
+from ptq.domain.models import JobStatus, PtqError, RunRequest
+
 app = typer.Typer(
     name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix PyTorch issues."
 )
 console = Console()
+
+
+def _handle_error(e: PtqError) -> None:
+    console.print(f"[red]{e}[/red]")
+    raise typer.Exit(1)
+
+
+def _render_event(ev: StreamEvent) -> None:
+    match ev.kind:
+        case "text":
+            console.print(_clean(ev.text), end="", highlight=False)
+        case "tool_use":
+            console.print()
+            inp = ev.tool_input
+            match ev.tool_name:
+                case "Bash":
+                    console.print(
+                        f"  [bold cyan]$[/bold cyan] [dim]{inp.get('command', '')}[/dim]"
+                    )
+                case "Read":
+                    console.print(
+                        f"  [cyan]read[/cyan] [dim]{inp.get('file_path', '') or inp.get('path', '')}[/dim]"
+                    )
+                case "Edit":
+                    console.print(
+                        f"  [yellow]edit[/yellow] [dim]{inp.get('file_path', '') or inp.get('path', '')}[/dim]"
+                    )
+                case "Write":
+                    console.print(
+                        f"  [green]write[/green] [dim]{inp.get('file_path', '') or inp.get('path', '')}[/dim]"
+                    )
+                case "Grep":
+                    console.print(
+                        f"  [cyan]grep[/cyan] [dim]{inp.get('pattern', '')}[/dim]"
+                    )
+                case "Glob":
+                    console.print(
+                        f"  [cyan]glob[/cyan] [dim]{inp.get('pattern', '')}[/dim]"
+                    )
+                case _:
+                    console.print(f"  [dim]{ev.tool_name}[/dim]")
+        case "tool_result":
+            if ev.text.strip():
+                console.print(f"[dim]{_indent(_truncate(_clean(ev.text)))}[/dim]")
+            console.print()
+        case "error":
+            console.print(f"[red]{_indent(_truncate(_clean(ev.text)))}[/red]")
+            console.print()
+
+
+def _follow_logs(backend, log_file: str, agent, job_id: str) -> None:
+    time.sleep(2)
+    tail = backend.tail_log(log_file)
+    try:
+        for line in tail.stdout:
+            stripped = _clean(line.strip())
+            if stripped.startswith("{"):
+                try:
+                    for ev in agent.parse_stream_line(stripped):
+                        _render_event(ev)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+    except KeyboardInterrupt:
+        tail.terminate()
+        tail.wait()
+        console.print(
+            "\n[bold yellow]Detached. Agent still running on remote.[/bold yellow]"
+        )
+        console.print(f"  ptq results {job_id}")
+        return
+    tail.wait()
+    console.print("\n[bold]Agent finished.[/bold]")
+    console.print(f"  ptq results {job_id}")
+
+
+def _repo():
+    from ptq.infrastructure.job_repository import JobRepository
+
+    return JobRepository()
 
 
 @app.command()
@@ -35,20 +120,13 @@ def setup(
         raise typer.BadParameter("Provide a machine name or use --local.")
 
     from ptq.config import load_config
-    from ptq.ssh import LocalBackend, RemoteBackend
+    from ptq.infrastructure.backends import create_backend
     from ptq.workspace import setup_workspace
 
-    cfg = load_config()
-
-    if local:
-        backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
-    else:
-        assert machine is not None
-        backend = RemoteBackend(
-            machine=machine, workspace=workspace or "~/ptq_workspace"
-        )
-
-    setup_workspace(backend, build=build, build_env_prefix=cfg.build_env_prefix())
+    backend = create_backend(machine=machine, local=local, workspace=workspace)
+    setup_workspace(
+        backend, build=build, build_env_prefix=load_config().build_env_prefix()
+    )
 
 
 @app.command()
@@ -104,24 +182,27 @@ def run(
             raise typer.BadParameter(f"File not found: {input_file}")
         message = input_file.read_text()
 
-    from ptq.agent import launch_agent
+    from ptq.application import run_service
     from ptq.config import load_config
+    from ptq.infrastructure.backends import create_backend
     from ptq.issue import fetch_issue
-    from ptq.ssh import LocalBackend, RemoteBackend
 
     cfg = load_config()
+    repo = _repo()
+
     resolved_job_id: str | None = None
     if job_id is not None:
-        from ptq.job import get_job, resolve_job_id
-
-        resolved_job_id = resolve_job_id(job_id)
-        job = get_job(resolved_job_id)
-        issue = issue or job["issue"]
-        machine = machine or job.get("machine")
-        local = local or job.get("local", False)
-        workspace = workspace or job.get("workspace")
+        try:
+            resolved_job_id = repo.resolve_id(job_id)
+        except PtqError as e:
+            _handle_error(e)
+        job = repo.get(resolved_job_id)
+        issue = issue or job.issue
+        machine = machine or job.machine
+        local = local or job.local
+        workspace = workspace or job.workspace
         if agent is None:
-            agent = job.get("agent", cfg.default_agent)
+            agent = job.agent
 
     if issue is None and message is None and job_id is None:
         raise typer.BadParameter("Provide --issue, --message, or a JOB_ID to re-run.")
@@ -131,35 +212,39 @@ def run(
     model = cfg.effective_model(agent, model)
     max_turns = max_turns or cfg.default_max_turns
 
+    issue_data = None
     if issue is not None:
         console.print(f"Fetching issue #{issue}...")
         issue_data = fetch_issue(issue)
         console.print(f"[bold]{issue_data['title']}[/bold]")
-    else:
-        issue_data = None
 
-    if local:
-        backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
-    else:
-        assert machine is not None
-        backend = RemoteBackend(
-            machine=machine, workspace=workspace or "~/ptq_workspace"
-        )
-
-    launch_agent(
-        backend,
+    backend = create_backend(machine=machine, local=local, workspace=workspace)
+    request = RunRequest(
         issue_data=issue_data,
         issue_number=issue,
+        message=message,
         machine=machine,
         local=local,
         follow=follow,
         model=model,
         max_turns=max_turns,
-        message=message,
         agent_type=agent,
         existing_job_id=resolved_job_id,
         verbose=verbose,
     )
+
+    try:
+        launched_id = run_service.launch(
+            repo, backend, request, on_progress=lambda msg: console.print(msg)
+        )
+    except PtqError as e:
+        _handle_error(e)
+
+    if follow:
+        job = repo.get(launched_id)
+        agent_impl = get_agent(job.agent)
+        log_file = f"{backend.workspace}/jobs/{launched_id}/{agent_impl.log_filename(job.runs)}"
+        _follow_logs(backend, log_file, agent_impl, launched_id)
 
 
 @app.command()
@@ -170,13 +255,42 @@ def results(
     ] = None,
 ) -> None:
     """Fetch and display results from a completed job."""
-    from ptq.job import resolve_job_id
-    from ptq.results import display_results, fetch_results
+    from rich.markdown import Markdown
 
-    job_id = resolve_job_id(job_id)
+    from ptq.application.artifact_service import fetch_results
+
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+
     console.print(f"Fetching results for {job_id}...")
-    results_dir = fetch_results(job_id, output_dir)
-    display_results(results_dir)
+    results_dir, fetched, missing = fetch_results(repo, job_id, output_dir)
+    for name in fetched:
+        console.print(f"  fetched {name}")
+    for name in missing:
+        console.print(f"  {name} not found")
+
+    for name, label in [("worklog.md", "Worklog"), ("report.md", "Report")]:
+        path = results_dir / name
+        if path.exists():
+            console.print()
+            console.print(f"[bold]{label}[/bold]")
+            console.print(Markdown(path.read_text()))
+
+    diff_path = results_dir / "fix.diff"
+    if diff_path.exists():
+        diff_text = diff_path.read_text()
+        if diff_text.strip():
+            console.print()
+            console.print("[bold]Diff[/bold]")
+            console.print(diff_text)
+        else:
+            console.print("[yellow]fix.diff is empty — no changes made.[/yellow]")
+    else:
+        console.print("[yellow]No fix.diff found.[/yellow]")
+
     console.print(f"\nArtifacts saved to: {results_dir}")
 
 
@@ -188,118 +302,19 @@ def apply(
     ] = Path("~/meta/pytorch"),
 ) -> None:
     """Apply a job's diff to a local PyTorch checkout."""
-    from ptq.apply import apply_diff
-    from ptq.job import resolve_job_id
+    from ptq.application.artifact_service import apply_diff
 
-    job_id = resolve_job_id(job_id)
-    apply_diff(job_id, pytorch_path.expanduser())
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+        branch = apply_diff(repo, job_id, pytorch_path.expanduser())
+    except PtqError as e:
+        _handle_error(e)
 
-
-def _clean_single_job(job_id: str) -> None:
-    """Kill agent, remove remote files, drop from DB."""
-    from ptq.job import get_job
-    from ptq.ssh import backend_for_job
-
-    job = get_job(job_id)
-    backend = backend_for_job(job_id)
-    clean_job(job_id, job, backend)
-    issue_val = job.get("issue")
-    label = f"issue #{issue_val}" if issue_val is not None else "adhoc"
-    console.print(f"  removed {job_id} ({label})")
-
-
-def clean_job(job_id: str, job: dict, backend: object) -> None:
-    """Remove a job: kill agent, delete files, drop from DB."""
-    from ptq.ssh import load_jobs_db, save_jobs_db
-
-    ws = backend.workspace
-    job_dir = f"{ws}/jobs/{job_id}"
-
-    pid = job.get("pid")
-    if pid and backend.is_pid_alive(pid):
-        backend.kill_pid(pid)
-
-    backend.run(
-        f"cd {ws}/pytorch && python tools/create_worktree.py remove pytorch "
-        f"--parent-dir {job_dir}",
-        check=False,
+    console.print(
+        f"\n[bold green]Diff applied to {pytorch_path} on branch {branch}[/bold green]"
     )
-    backend.run(f"rm -rf {job_dir}", check=False)
-    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
-
-    db = load_jobs_db()
-    db.pop(job_id, None)
-    save_jobs_db(db)
-
-
-def _clean_machine(
-    machine: str | None,
-    local: bool,
-    workspace: str | None,
-    keep: int,
-    include_running: bool,
-) -> None:
-    """Bulk clean jobs on a machine."""
-    from ptq.ssh import LocalBackend, RemoteBackend, load_jobs_db, save_jobs_db
-
-    if local:
-        backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
-    else:
-        assert machine is not None
-        backend = RemoteBackend(
-            machine=machine, workspace=workspace or "~/ptq_workspace"
-        )
-
-    db = load_jobs_db()
-    matching = [
-        (jid, entry)
-        for jid, entry in sorted(db.items())
-        if (local and entry.get("local"))
-        or (machine and entry.get("machine") == machine)
-    ]
-
-    if not include_running:
-        running = []
-        stopped = []
-        for jid, entry in matching:
-            pid = entry.get("pid")
-            if pid and backend.is_pid_alive(pid):
-                running.append((jid, entry))
-            else:
-                stopped.append((jid, entry))
-        if running:
-            console.print(
-                f"Skipping {len(running)} running job(s). Use --all to include them."
-            )
-        matching = stopped
-
-    to_remove = matching[:-keep] if keep and len(matching) > keep else matching
-    if not to_remove:
-        console.print("Nothing to clean.")
-        return
-
-    ws = backend.workspace
-    console.print(f"Removing {len(to_remove)} job(s) (keeping {keep})...")
-    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
-
-    for jid, entry in to_remove:
-        pid = entry.get("pid")
-        if pid and backend.is_pid_alive(pid):
-            backend.kill_pid(pid)
-
-        job_dir = f"{ws}/jobs/{jid}"
-        backend.run(
-            f"cd {ws}/pytorch && python tools/create_worktree.py remove pytorch "
-            f"--parent-dir {job_dir}",
-            check=False,
-        )
-        backend.run(f"rm -rf {job_dir}")
-        db.pop(jid, None)
-        console.print(f"  removed {jid}")
-
-    save_jobs_db(db)
-    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
-    console.print("[bold green]Clean complete.[/bold green]")
+    console.print(f"\nTo create a PR, run: [bold]ptq pr {job_id}[/bold]")
 
 
 @app.command()
@@ -329,29 +344,48 @@ def clean(
         ptq clean aws-gpu-dev --keep 2     # keep 2 most recent
         ptq clean aws-gpu-dev --all        # include running jobs
     """
-    from ptq.job import resolve_job_id
-    from ptq.ssh import load_jobs_db
+    from ptq.application.job_service import clean_machine, clean_single_job
+    from ptq.infrastructure.backends import create_backend
+
+    repo = _repo()
 
     if target is not None:
-        db = load_jobs_db()
-        is_job = target in db or (
-            target.isdigit() and any(v.get("issue") == int(target) for v in db.values())
+        all_jobs_db = repo.list_all()
+        is_job = target in all_jobs_db or (
+            target.isdigit()
+            and any(j.issue == int(target) for j in all_jobs_db.values())
         )
         if is_job:
-            resolved = resolve_job_id(target)
-            _clean_single_job(resolved)
+            try:
+                resolved = repo.resolve_id(target)
+                job = clean_single_job(repo, resolved)
+            except PtqError as e:
+                _handle_error(e)
+            label = f"issue #{job.issue}" if job.issue is not None else "adhoc"
+            console.print(f"  removed {resolved} ({label})")
             return
 
     if not target and not local:
         raise typer.BadParameter("Provide a job ID, machine name, or --local.")
 
-    _clean_machine(
+    backend = create_backend(machine=target, local=local, workspace=workspace)
+    removed, skipped = clean_machine(
+        repo,
+        backend,
         machine=target,
         local=local,
-        workspace=workspace,
         keep=keep,
         include_running=all_jobs,
     )
+    if skipped:
+        console.print(f"Skipping {skipped} running job(s). Use --all to include them.")
+    if not removed:
+        console.print("Nothing to clean.")
+        return
+    console.print(f"Removing {len(removed)} job(s) (keeping {keep})...")
+    for jid in removed:
+        console.print(f"  removed {jid}")
+    console.print("[bold green]Clean complete.[/bold green]")
 
 
 @app.command(name="list")
@@ -359,10 +393,12 @@ def list_jobs() -> None:
     """List all tracked jobs."""
     from rich.table import Table
 
-    from ptq.ssh import backend_for_job, load_jobs_db
+    from ptq.application.job_service import get_status
+    from ptq.infrastructure.backends import backend_for_job
 
-    db = load_jobs_db()
-    if not db:
+    repo = _repo()
+    all_jobs = repo.list_all()
+    if not all_jobs:
         console.print("No jobs.")
         return
 
@@ -376,20 +412,18 @@ def list_jobs() -> None:
     table.add_column("Runs", justify="right")
     table.add_column("Target")
 
-    for job_id, entry in sorted(db.items()):
-        issue_val = entry.get("issue")
-        issue_display = f"#{issue_val}" if issue_val is not None else "[dim]adhoc[/dim]"
-        runs = str(entry.get("runs", 1))
-        target = entry.get("machine") or "local"
-        agent_name = entry.get("agent", "claude")
-        pid = entry.get("pid")
-        if pid:
-            backend = backend_for_job(job_id)
-            alive = backend.is_pid_alive(pid)
-        else:
-            alive = False
-        status = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
-        table.add_row(status, job_id, issue_display, agent_name, runs, target)
+    for job_id, job in sorted(all_jobs.items()):
+        issue_display = f"#{job.issue}" if job.issue is not None else "[dim]adhoc[/dim]"
+        backend = backend_for_job(job)
+        status = get_status(job, backend)
+        status_str = (
+            "[bold green]running[/bold green]"
+            if status == JobStatus.RUNNING
+            else "[dim]stopped[/dim]"
+        )
+        table.add_row(
+            status_str, job_id, issue_display, job.agent, str(job.runs), job.target
+        )
 
     console.print(table)
     console.print()
@@ -429,26 +463,29 @@ def peek(
     ] = 0,
 ) -> None:
     """Peek at an agent's progress (worklog + optional log tail)."""
-    import json
-
     from rich.markdown import Markdown
 
-    from ptq.job import get_job, resolve_job_id
-    from ptq.ssh import backend_for_job
+    from ptq.application.job_service import get_status
+    from ptq.infrastructure.backends import backend_for_job
 
-    job_id = resolve_job_id(job_id)
-    job = get_job(job_id)
-    backend = backend_for_job(job_id)
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+    job = repo.get(job_id)
+    backend = backend_for_job(job)
     ws = backend.workspace
-    runs = job.get("runs", 1)
-    pid = job.get("pid")
-    target = job.get("machine") or "local"
-
-    alive = pid is not None and backend.is_pid_alive(pid)
-    status_str = "[bold green]running[/bold green]" if alive else "[dim]stopped[/dim]"
-    issue_val = job.get("issue")
-    issue_label = f"issue #{issue_val}" if issue_val is not None else "adhoc"
-    console.print(f"{status_str}  {job_id}  {issue_label}  (run {runs}, {target})")
+    status = get_status(job, backend)
+    status_str = (
+        "[bold green]running[/bold green]"
+        if status == JobStatus.RUNNING
+        else "[dim]stopped[/dim]"
+    )
+    issue_label = f"issue #{job.issue}" if job.issue is not None else "adhoc"
+    console.print(
+        f"{status_str}  {job_id}  {issue_label}  (run {job.runs}, {job.target})"
+    )
     console.print()
 
     worklog_path = f"{ws}/jobs/{job_id}/worklog.md"
@@ -460,10 +497,8 @@ def peek(
         console.print("[yellow]No worklog yet.[/yellow]")
 
     if log_lines > 0:
-        from ptq.agents import get_agent
-
-        agent = get_agent(job.get("agent", "claude"))
-        log_file = f"{ws}/jobs/{job_id}/{agent.log_filename(runs)}"
+        agent_impl = get_agent(job.agent)
+        log_file = f"{ws}/jobs/{job_id}/{agent_impl.log_filename(job.runs)}"
         tail_result = backend.run(f"tail -{log_lines} {log_file}", check=False)
         if tail_result.stdout.strip():
             console.print()
@@ -473,7 +508,7 @@ def peek(
                 if not line:
                     continue
                 try:
-                    for ev in agent.parse_stream_line(line):
+                    for ev in agent_impl.parse_stream_line(line):
                         match ev.kind:
                             case "text":
                                 console.print(f"  [dim]{ev.text[:200]}[/dim]")
@@ -490,40 +525,36 @@ def status(
     job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
 ) -> None:
     """Check if an agent is still running for a job."""
-    from ptq.job import get_job, resolve_job_id
-    from ptq.ssh import backend_for_job
+    from ptq.application.job_service import get_status as _get_status
+    from ptq.infrastructure.backends import backend_for_job
 
-    job_id = resolve_job_id(job_id)
-    job = get_job(job_id)
-    backend = backend_for_job(job_id)
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+    job = repo.get(job_id)
+    backend = backend_for_job(job)
     ws = backend.workspace
 
-    pid = job.get("pid")
-    runs = job.get("runs", 1)
-    target = job.get("machine") or "local"
-
-    alive = pid is not None and backend.is_pid_alive(pid)
-
-    issue_val = job.get("issue")
-
-    if alive:
+    if _get_status(job, backend) == JobStatus.RUNNING:
         console.print(
-            f"[bold green]running[/bold green]  {job_id}  (run {runs}, {target}, pid {pid})"
+            f"[bold green]running[/bold green]  {job_id}  (run {job.runs}, {job.target}, pid {job.pid})"
         )
-        if issue_val is not None:
+        if job.issue is not None:
             console.print(
-                f"  ptq run --issue {issue_val} --machine {target}  # to reattach"
+                f"  ptq run --issue {job.issue} --machine {job.target}  # to reattach"
             )
         else:
             console.print(f"  ptq run {job_id}  # to reattach")
     else:
-        console.print(f"[bold dim]stopped[/bold dim]  {job_id}  (run {runs}, {target})")
+        console.print(
+            f"[bold dim]stopped[/bold dim]  {job_id}  (run {job.runs}, {job.target})"
+        )
         console.print(f"  ptq results {job_id}")
 
-    from ptq.agents import get_agent as _get_agent
-
-    _agent = _get_agent(job.get("agent", "claude"))
-    log_file = f"{ws}/jobs/{job_id}/{_agent.log_filename(runs)}"
+    agent_impl = get_agent(job.agent)
+    log_file = f"{ws}/jobs/{job_id}/{agent_impl.log_filename(job.runs)}"
     tail = backend.run(f"tail -1 {log_file}", check=False)
     if tail.stdout.strip():
         console.print(f"\n  last log: [dim]{tail.stdout.strip()[:120]}[/dim]")
@@ -536,17 +567,25 @@ def pr(
     draft: Annotated[bool, typer.Option(help="Create as draft PR.")] = False,
 ) -> None:
     """Create a GitHub PR from a job's worktree changes."""
-    from ptq.job import resolve_job_id
-    from ptq.pr import create_pr
+    from ptq.application.pr_service import create_pr
 
-    job_id = resolve_job_id(job_id)
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+
     console.print(f"[bold]Creating PR for {job_id}[/bold]")
-    result = create_pr(
-        job_id,
-        title=title,
-        draft=draft,
-        log=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
-    )
+    try:
+        result = create_pr(
+            repo,
+            job_id,
+            title=title,
+            draft=draft,
+            log=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+        )
+    except PtqError as e:
+        _handle_error(e)
     console.print(f"\n[bold green]PR created:[/bold green] {result.url}")
 
 
@@ -581,24 +620,19 @@ def kill(
     job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
 ) -> None:
     """Kill a running agent for a job."""
-    from ptq.job import get_job, resolve_job_id, save_pid
-    from ptq.ssh import backend_for_job
+    from ptq.application.job_service import kill_job
 
-    job_id = resolve_job_id(job_id)
-    job = get_job(job_id)
-    backend = backend_for_job(job_id)
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
 
-    pid = job.get("pid")
-    if not pid:
-        console.print(f"[dim]No PID tracked for {job_id}[/dim]")
-        return
-
-    if backend.is_pid_alive(pid):
-        backend.kill_pid(pid)
-        save_pid(job_id, None)
-        console.print(f"[bold]Killed agent for {job_id} (pid {pid})[/bold]")
+    job = repo.get(job_id)
+    killed = kill_job(repo, job_id)
+    if killed:
+        console.print(f"[bold]Killed agent for {job_id} (pid {job.pid})[/bold]")
     else:
-        save_pid(job_id, None)
         console.print(f"[dim]Agent already stopped for {job_id}[/dim]")
 
 

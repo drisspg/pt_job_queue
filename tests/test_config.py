@@ -1,79 +1,114 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
+import textwrap
 
-from ptq.config import Config, load_config
-
-
-class TestLoadConfig:
-    def test_creates_default_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.toml"
-            cfg = load_config(path)
-            assert path.exists()
-            assert cfg.default_agent == "claude"
-            assert cfg.default_max_turns == 100
-            assert cfg.agent_models["claude"].default == "opus"
-            assert cfg.agent_models["claude"].available == []
-
-    def test_reads_existing_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.toml"
-            path.write_text(
-                '[defaults]\nagent = "codex"\nmodel = "o3"\nmax_turns = 50\n'
-                "[machines]\nnames = ['gpu-dev']\n"
-                '[models.codex]\navailable = ["o3", "o4-mini"]\ndefault = "o3"\n'
-            )
-            cfg = load_config(path)
-            assert cfg.default_agent == "codex"
-            assert cfg.default_model == "o3"
-            assert cfg.default_max_turns == 50
-            assert cfg.machines == ["gpu-dev"]
-            assert cfg.agent_models["codex"].available == ["o3", "o4-mini"]
-
-    def test_missing_sections_use_defaults(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.toml"
-            path.write_text("")
-            cfg = load_config(path)
-            assert cfg.default_agent == "claude"
-            assert cfg.machines == []
-            assert cfg.agent_models == {}
+from ptq.config import Config, _parse, load_config
 
 
-class TestEffectiveModel:
-    def test_explicit_model_wins(self):
-        cfg = Config()
-        assert cfg.effective_model("claude", "haiku") == "haiku"
+class TestParse:
+    def test_defaults(self):
+        cfg = _parse({})
+        assert cfg.default_agent == "claude"
+        assert cfg.default_max_turns == 100
 
-    def test_agent_default(self):
-        from ptq.config import AgentModels
+    def test_custom_agent(self):
+        cfg = _parse({"defaults": {"agent": "codex"}})
+        assert cfg.default_agent == "codex"
 
-        cfg = Config(
-            agent_models={
-                "codex": AgentModels(available=["o3", "o4-mini"], default="o3")
+    def test_machines(self):
+        cfg = _parse({"machines": {"names": ["gpu-dev", "gpu-prod"]}})
+        assert cfg.machines == ["gpu-dev", "gpu-prod"]
+
+    def test_models(self):
+        cfg = _parse(
+            {
+                "models": {
+                    "claude": {"default": "opus", "available": ["opus", "sonnet"]},
+                    "codex": {"default": "o3"},
+                }
             }
         )
-        assert cfg.effective_model("codex", None) == "o3"
+        assert cfg.agent_models["claude"].default == "opus"
+        assert cfg.agent_models["claude"].available == ["opus", "sonnet"]
+        assert cfg.agent_models["codex"].default == "o3"
+        assert cfg.agent_models["codex"].available == []
 
-    def test_falls_back_to_global(self):
-        cfg = Config(default_model="sonnet")
-        assert cfg.effective_model("unknown", None) == "sonnet"
+    def test_build_env(self):
+        cfg = _parse({"build": {"env": {"USE_NINJA": "1", "USE_NNPACK": "0"}}})
+        assert cfg.build_env == {"USE_NINJA": "1", "USE_NNPACK": "0"}
+
+    def test_build_env_defaults(self):
+        cfg = _parse({})
+        assert cfg.build_env == {"USE_NINJA": "1"}
 
 
-class TestModelsFor:
-    def test_known_agent(self):
+class TestConfig:
+    def test_effective_model_with_override(self):
+        cfg = Config()
+        assert cfg.effective_model("claude", "sonnet") == "sonnet"
+
+    def test_effective_model_default(self):
+        from ptq.config import AgentModels
+
+        cfg = Config(agent_models={"claude": AgentModels(available=[], default="opus")})
+        assert cfg.effective_model("claude") == "opus"
+
+    def test_effective_model_fallback(self):
+        cfg = Config(default_model="haiku")
+        assert cfg.effective_model("unknown") == "haiku"
+
+    def test_build_env_prefix(self):
+        cfg = Config(build_env={"USE_NINJA": "1", "USE_NNPACK": "0"})
+        prefix = cfg.build_env_prefix()
+        assert "USE_NINJA=1" in prefix
+        assert "USE_NNPACK=0" in prefix
+        assert prefix.endswith(" ")
+
+    def test_build_env_prefix_empty(self):
+        cfg = Config(build_env={})
+        assert cfg.build_env_prefix() == ""
+
+    def test_models_for_known(self):
         from ptq.config import AgentModels
 
         cfg = Config(
-            agent_models={"claude": AgentModels(available=["opus"], default="opus")}
+            agent_models={"claude": AgentModels(available=["a", "b"], default="a")}
         )
         am = cfg.models_for("claude")
-        assert am.available == ["opus"]
+        assert am.available == ["a", "b"]
+        assert am.default == "a"
 
-    def test_unknown_agent(self):
+    def test_models_for_unknown(self):
         cfg = Config()
         am = cfg.models_for("unknown")
         assert am.available == []
         assert am.default == ""
+
+
+class TestLoadConfig:
+    def test_creates_default_if_missing(self, tmp_path):
+        path = tmp_path / "config.toml"
+        cfg = load_config(path)
+        assert path.exists()
+        assert cfg.default_agent == "claude"
+
+    def test_roundtrip(self, tmp_path):
+        path = tmp_path / "config.toml"
+        path.write_text(
+            textwrap.dedent("""\
+            [defaults]
+            agent = "codex"
+            max_turns = 50
+
+            [machines]
+            names = ["box-a"]
+
+            [models.codex]
+            default = "o3"
+            """)
+        )
+        cfg = load_config(path)
+        assert cfg.default_agent == "codex"
+        assert cfg.default_max_turns == 50
+        assert cfg.machines == ["box-a"]
+        assert cfg.agent_models["codex"].default == "o3"

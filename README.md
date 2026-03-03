@@ -138,18 +138,33 @@ Removes job directories and prunes git worktrees.
 pt_job_queue/
 ├── pyproject.toml
 ├── ptq/
-│   ├── cli.py              # Typer CLI
-│   ├── ssh.py              # SSH/SCP + local subprocess backends
-│   ├── issue.py            # GitHub issue fetching via gh
-│   ├── job.py              # Job ID generation + local state
-│   ├── workspace.py        # Remote workspace setup
-│   ├── agent.py            # Agent prompt construction + launch
-│   ├── results.py          # Fetch + display results
-│   └── apply.py            # Apply diff to local pytorch checkout
+│   ├── cli.py                          # Thin Typer CLI adapter
+│   ├── ssh.py                          # SSH/SCP + local subprocess backends
+│   ├── issue.py                        # GitHub issue fetching via gh
+│   ├── agent.py                        # Prompt construction + text utilities
+│   ├── agents.py                       # Agent protocol + claude/codex/cursor
+│   ├── config.py                       # Config loading (~/.ptq/config.toml)
+│   ├── workspace.py                    # Remote workspace setup
+│   ├── domain/
+│   │   ├── models.py                   # JobRecord, RunRequest, JobStatus, errors
+│   │   └── policies.py                 # Job ID generation
+│   ├── infrastructure/
+│   │   ├── job_repository.py           # JSON persistence (~/.ptq/jobs.json)
+│   │   └── backends.py                 # Backend factory functions
+│   ├── application/
+│   │   ├── run_service.py              # Launch/rerun orchestration
+│   │   ├── job_service.py              # Status/kill/clean/list
+│   │   ├── artifact_service.py         # Results fetching + diff apply
+│   │   └── pr_service.py              # PR creation workflow
+│   └── web/
+│       ├── app.py                      # FastAPI app factory
+│       ├── deps.py                     # Template + status helpers
+│       └── routes.py                   # Thin web route adapter
 ├── prompts/
-│   └── investigate.md      # Agent system prompt template
+│   ├── investigate.md                  # Issue investigation prompt
+│   └── adhoc.md                        # Freeform task prompt
 └── scripts/
-    └── apply_to_site_pkgs.sh
+    └── rebuild.sh
 ```
 
 ## Workspace layout (on remote/local)
