@@ -19,11 +19,9 @@
       </label>
     </div>
 
-    <div id="message-field" hidden>
-      <label for="message">Message
-        <textarea id="message" name="message" rows="4" placeholder="Describe the task..."></textarea>
-      </label>
-    </div>
+    <label for="message">Message <small>(optional for issues)</small>
+      <textarea id="message" name="message" rows="4" placeholder="Describe the task or add context..."></textarea>
+    </label>
   </fieldset>
 
   <fieldset>
@@ -91,7 +89,6 @@
 <script>
 function toggleTask(el) {
   document.getElementById('issue-field').hidden = el.value !== 'issue';
-  document.getElementById('message-field').hidden = el.value !== 'adhoc';
 }
 function toggleTarget(el) {
   document.getElementById('machine-field').hidden = el.value !== 'machine';

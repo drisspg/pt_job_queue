@@ -208,7 +208,7 @@ async def job_create(
         return templates.TemplateResponse(
             request,
             "job_new.html",
-            _form_context("Message is required for adhoc tasks."),
+            _form_context("Message is required for ad-hoc tasks (or select an issue)."),
             status_code=422,
         )
     if target_type == "machine" and not machine.strip():
