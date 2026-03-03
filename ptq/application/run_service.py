@@ -208,7 +208,7 @@ def launch(
         progress("Creating worktree with submodules...")
         with _timed("worktree creation", progress):
             backend.run(
-                f"cd {workspace}/pytorch && python tools/create_worktree.py create pytorch "
+                f"cd {workspace}/pytorch && {workspace}/.venv/bin/python tools/create_worktree.py create pytorch "
                 f"--parent-dir {job_dir} --commit HEAD",
                 stream=request.verbose,
             )

@@ -38,7 +38,7 @@ def clean_single_job(repo: JobRepository, job_id: str) -> JobRecord:
         backend.kill_pid(job.pid)
 
     backend.run(
-        f"cd {ws}/pytorch && python tools/create_worktree.py remove pytorch "
+        f"cd {ws}/pytorch && {ws}/.venv/bin/python tools/create_worktree.py remove pytorch "
         f"--parent-dir {job_dir}",
         check=False,
     )
@@ -88,7 +88,7 @@ def clean_machine(
             backend.kill_pid(job.pid)
         job_dir = f"{ws}/jobs/{jid}"
         backend.run(
-            f"cd {ws}/pytorch && python tools/create_worktree.py remove pytorch "
+            f"cd {ws}/pytorch && {ws}/.venv/bin/python tools/create_worktree.py remove pytorch "
             f"--parent-dir {job_dir}",
             check=False,
         )
