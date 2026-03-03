@@ -554,9 +554,15 @@ def web(
     debug: Annotated[bool, typer.Option(help="Enable debug logging.")] = False,
 ) -> None:
     """Start the web dashboard."""
-    import uvicorn
+    try:
+        import uvicorn
 
-    from ptq.web.app import create_app
+        from ptq.web.app import create_app
+    except ModuleNotFoundError:
+        console.print(
+            '[red]Missing web dependencies.[/red] Install with: [bold]pip install -e ".\\[web]"[/bold]'
+        )
+        raise typer.Exit(1)  # noqa: B904
 
     console.print(f"Starting ptq web at http://{host}:{port}")
     uvicorn.run(
