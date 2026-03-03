@@ -35,6 +35,10 @@ default = "o3"
 
 [models.cursor]
 default = "auto"
+
+[build.env]
+USE_NINJA = "1"
+USE_NNPACK = "0"
 """
 
 
@@ -51,6 +55,7 @@ class Config:
     default_max_turns: int = 100
     machines: list[str] = field(default_factory=list)
     agent_models: dict[str, AgentModels] = field(default_factory=dict)
+    build_env: dict[str, str] = field(default_factory=lambda: {"USE_NINJA": "1"})
 
     def models_for(self, agent: str) -> AgentModels:
         return self.agent_models.get(agent, AgentModels(available=[], default=""))
@@ -62,6 +67,11 @@ class Config:
         if am:
             return am.default
         return self.default_model
+
+    def build_env_prefix(self) -> str:
+        if not self.build_env:
+            return ""
+        return " ".join(f"{k}={v}" for k, v in self.build_env.items()) + " "
 
 
 def _parse(data: dict) -> Config:
@@ -76,12 +86,18 @@ def _parse(data: dict) -> Config:
             default=model_data.get("default", ""),
         )
 
+    build_section = data.get("build", {})
+    build_env = {
+        str(k): str(v) for k, v in build_section.get("env", {"USE_NINJA": "1"}).items()
+    }
+
     return Config(
         default_agent=defaults.get("agent", "claude"),
         default_model=defaults.get("model", "opus"),
         default_max_turns=defaults.get("max_turns", 100),
         machines=machines_section.get("names", []),
         agent_models=agent_models,
+        build_env=build_env,
     )
 
 

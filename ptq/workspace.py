@@ -38,7 +38,9 @@ def detect_cuda_version(backend: Backend) -> str:
 console = Console()
 
 
-def setup_workspace(backend: Backend, *, build: bool = False) -> None:
+def setup_workspace(
+    backend: Backend, *, build: bool = False, build_env_prefix: str = "USE_NINJA=1 "
+) -> None:
     workspace = backend.workspace
 
     console.print(f"[bold]Setting up workspace at {workspace}[/bold]")
@@ -69,7 +71,7 @@ def setup_workspace(backend: Backend, *, build: bool = False) -> None:
         raise SystemExit("Installing build dependencies failed.")
 
     if build:
-        build_pytorch(backend)
+        build_pytorch(backend, build_env_prefix=build_env_prefix)
 
     console.print("Deploying helper scripts...")
     deploy_scripts(backend)
@@ -80,8 +82,11 @@ def setup_workspace(backend: Backend, *, build: bool = False) -> None:
 def _clone_pytorch(backend: Backend, workspace: str) -> None:
     existing = backend.run(f"test -d {workspace}/pytorch/.git", check=False)
     if existing.returncode == 0:
-        console.print("PyTorch checkout already exists, pulling latest...")
-        backend.run(f"cd {workspace}/pytorch && git pull", stream=True)
+        console.print("PyTorch checkout already exists, resetting to latest...")
+        backend.run(
+            f"cd {workspace}/pytorch && git fetch origin && git reset --hard origin/main",
+            stream=True,
+        )
         backend.run(
             f"cd {workspace}/pytorch && git submodule sync && git submodule update --init --recursive --progress",
             stream=True,
@@ -99,13 +104,13 @@ def _clone_pytorch(backend: Backend, workspace: str) -> None:
     )
 
 
-def build_pytorch(backend: Backend) -> None:
+def build_pytorch(backend: Backend, *, build_env_prefix: str = "USE_NINJA=1 ") -> None:
     workspace = backend.workspace
     console.print(
         "[bold]Building PyTorch from source (this may take a while)...[/bold]"
     )
     result = backend.run(
-        f"cd {workspace}/pytorch && USE_NINJA=1 {workspace}/.venv/bin/pip install -v -e .",
+        f"cd {workspace}/pytorch && {build_env_prefix}{workspace}/.venv/bin/pip install -v -e .",
         check=False,
         stream=True,
     )

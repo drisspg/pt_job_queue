@@ -232,6 +232,7 @@ def _setup_job_venv(
     *,
     verbose: bool = False,
     progress: ProgressCallback = _default_progress,
+    build_env_prefix: str = "USE_NINJA=1 ",
 ) -> None:
     with _timed("venv creation"):
         backend.run(f"cd {job_dir} && uv venv --python 3.12")
@@ -248,7 +249,7 @@ def _setup_job_venv(
     progress("Editable install (pytorch)... this takes a few minutes")
     with _timed("editable install"):
         result = backend.run(
-            f"cd {worktree_path} && CCACHE_NOHASHDIR=true USE_NINJA=1 "
+            f"cd {worktree_path} && {build_env_prefix}"
             f"uv pip install --python {job_python} --no-build-isolation{pip_verbose} -e .",
             check=False,
             stream=verbose,
@@ -370,8 +371,15 @@ def launch_agent(
                 stream=verbose,
             )
         progress("Creating per-job venv...")
+        from ptq.config import load_config
+
         _setup_job_venv(
-            backend, job_dir, worktree_path, verbose=verbose, progress=progress
+            backend,
+            job_dir,
+            worktree_path,
+            verbose=verbose,
+            progress=progress,
+            build_env_prefix=load_config().build_env_prefix(),
         )
     else:
         progress("Reusing existing worktree.")

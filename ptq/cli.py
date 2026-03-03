@@ -34,8 +34,11 @@ def setup(
     if not machine and not local:
         raise typer.BadParameter("Provide a machine name or use --local.")
 
+    from ptq.config import load_config
     from ptq.ssh import LocalBackend, RemoteBackend
     from ptq.workspace import setup_workspace
+
+    cfg = load_config()
 
     if local:
         backend = LocalBackend(workspace=workspace or "~/.ptq_workspace")
@@ -45,7 +48,7 @@ def setup(
             machine=machine, workspace=workspace or "~/ptq_workspace"
         )
 
-    setup_workspace(backend, build=build)
+    setup_workspace(backend, build=build, build_env_prefix=cfg.build_env_prefix())
 
 
 @app.command()

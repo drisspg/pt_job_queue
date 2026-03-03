@@ -5,3 +5,4 @@ dist/
 .claude/
 .cursorrules
 AGENTS.md
+uv.lock
