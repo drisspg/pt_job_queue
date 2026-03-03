@@ -23,12 +23,38 @@
   --pico-primary: var(--accent);
   --pico-primary-hover: #5BA8D9;
   --pico-font-family: var(--font);
+
+  --pico-form-element-background-color: var(--surface);
+  --pico-form-element-border-color: var(--border);
+  --pico-form-element-color: var(--text);
+  --pico-form-element-placeholder-color: var(--text-muted);
+  --pico-form-element-focus-color: var(--text);
+
+  --pico-contrast: rgba(255, 255, 255, 0.85);
+  --pico-contrast-hover: rgba(255, 255, 255, 1);
+  --pico-contrast-background: rgba(255, 255, 255, 0.12);
+  --pico-contrast-border: rgba(255, 255, 255, 0.25);
+
+  --pico-secondary: rgba(255, 255, 255, 0.6);
+  --pico-secondary-hover: rgba(255, 255, 255, 0.8);
+  --pico-secondary-background: rgba(255, 255, 255, 0.08);
+  --pico-secondary-border: rgba(255, 255, 255, 0.15);
+
+  --pico-button-contrast-background: rgba(255, 255, 255, 0.12);
+  --pico-button-contrast-border: rgba(255, 255, 255, 0.25);
+  --pico-button-contrast-color: rgba(255, 255, 255, 0.85);
+  --pico-button-contrast-hover-background: rgba(255, 255, 255, 0.2);
+
+  --pico-code-background-color: var(--surface);
+  --pico-code-color: var(--text);
 }
 
 [data-theme="dark"] {
   --pico-background-color: var(--bg);
   --pico-color: var(--text);
 }
+
+[hidden] { display: none !important; }
 
 body {
   background: var(--bg);

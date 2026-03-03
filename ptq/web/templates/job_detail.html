@@ -9,8 +9,8 @@
       · {{ agent_name }}
       · {{ target }}
       · run {{ runs }}
-      · <span hx-get="/jobs/{{ job_id }}/status" hx-trigger="every 5s" hx-swap="innerHTML">
-          <span class="badge {{ status }}">{{ status }}</span>
+      · <span id="status-poll" hx-get="/jobs/{{ job_id }}/status" hx-trigger="every 5s" hx-swap="innerHTML">
+          <span class="badge {{ status }}" data-status="{{ status }}">{{ status }}</span>
         </span>
     </p>
   </hgroup>
@@ -178,6 +178,19 @@ function refreshModels(agent) {
   document.getElementById('refresh-btn').addEventListener('click', function() {
     delete cache[activeTab];
     loadTab(activeTab);
+  });
+})();
+
+(function() {
+  var lastStatus = '{{ status }}';
+  document.getElementById('status-poll').addEventListener('htmx:afterSwap', function() {
+    var badge = this.querySelector('[data-status]');
+    if (!badge) return;
+    var newStatus = badge.dataset.status;
+    if (newStatus !== lastStatus) {
+      lastStatus = newStatus;
+      window.location.reload();
+    }
   });
 })();
 </script>
