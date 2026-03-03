@@ -123,11 +123,18 @@ class TestNewJobForm:
         assert "gpu-dev" in resp.text
         assert "opus" in resp.text
 
-    def test_agent_models_api_returns_text_input_when_no_available(self, client):
+    def test_agent_models_api_returns_fallback_for_claude(self, client):
         resp = client.get("/api/models/claude")
         assert resp.status_code == 200
+        assert "<select" in resp.text
+        assert "opus" in resp.text
+        assert "sonnet" in resp.text
+        assert "haiku" in resp.text
+
+    def test_agent_models_api_returns_text_input_when_no_available(self, client):
+        resp = client.get("/api/models/unknown_agent")
+        assert resp.status_code == 200
         assert '<input type="text"' in resp.text
-        assert 'value="opus"' in resp.text
 
     def test_agent_models_api_returns_select_when_available(
         self, tmp_path, mock_backend
@@ -155,8 +162,8 @@ class TestNewJobForm:
             assert "opus" in resp.text
             assert "sonnet" in resp.text
 
-    def test_agent_models_api_uses_discovery(self, client):
-        with patch("ptq.web.routes.discover_models", return_value=["o3", "o4-mini"]):
+    def test_agent_models_api_uses_cache(self, client):
+        with patch("ptq.web.routes.cached_models", return_value=["o3", "o4-mini"]):
             resp = client.get("/api/models/codex")
         assert resp.status_code == 200
         assert "<select" in resp.text
@@ -164,12 +171,12 @@ class TestNewJobForm:
         assert "o4-mini" in resp.text
 
     def test_agent_models_api_different_per_agent(self, client):
-        def fake_discover(agent):
+        def fake_cache(agent):
             return {"cursor": ["opus-4.6", "sonnet-4.6"], "codex": ["o3"]}.get(
                 agent, []
             )
 
-        with patch("ptq.web.routes.discover_models", side_effect=fake_discover):
+        with patch("ptq.web.routes.cached_models", side_effect=fake_cache):
             cursor_resp = client.get("/api/models/cursor")
             codex_resp = client.get("/api/models/codex")
         assert "opus-4.6" in cursor_resp.text

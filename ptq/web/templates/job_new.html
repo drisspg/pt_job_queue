@@ -63,15 +63,19 @@
       <label for="model">Model
         <div id="model-container">
           {% set da = defaults.agent %}
-          {% if agent_models.get(da) and agent_models[da].available %}
+          {% set da_models = agent_models.get(da) %}
+          <span class="model-picker-row">
+          {% if da_models and da_models.available %}
           <select id="model" name="model">
-            {% for m in agent_models[da].available %}
-            <option value="{{ m }}" {{ 'selected' if m == agent_models[da].default else '' }}>{{ m }}</option>
+            {% for m in da_models.available %}
+            <option value="{{ m }}" {{ 'selected' if m == da_models.default else '' }}>{{ m }}</option>
             {% endfor %}
           </select>
           {% else %}
-          <input type="text" id="model" name="model" value="{{ agent_models[da].default if agent_models.get(da) else defaults.model }}" placeholder="e.g. opus">
+          <input type="text" id="model" name="model" value="{{ da_models.default if da_models else defaults.model }}" placeholder="e.g. opus">
           {% endif %}
+          <button type="button" class="refresh-models" title="Refresh models" onclick="refreshModels('{{ da }}')">&#10227;</button>
+          </span>
         </div>
       </label>
 
@@ -96,9 +100,15 @@ function toggleTarget(el) {
 document.getElementById('agent').addEventListener('change', function() {
   fetch('/api/models/' + this.value)
     .then(r => r.text())
-    .then(function(html) {
-      document.getElementById('model-container').innerHTML = html;
-    });
+    .then(function(h) { document.getElementById('model-container').innerHTML = h; });
 });
+
+function refreshModels(agent) {
+  var btn = document.querySelector('.refresh-models');
+  if (btn) btn.classList.add('spinning');
+  fetch('/api/models/' + agent + '/refresh', {method: 'POST'})
+    .then(r => r.text())
+    .then(function(h) { document.getElementById('model-container').innerHTML = h; });
+}
 </script>
 {% endblock %}

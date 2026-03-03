@@ -122,22 +122,39 @@ def load_config(path: Path | None = None) -> Config:
 
 
 _DISCOVER_CMDS: dict[str, list[str]] = {
-    "claude": ["claude", "-p", "x", "--model", "__invalid__", "--max-turns", "0"],
     "codex": ["codex", "exec", "x", "--model", "__invalid__"],
     "cursor": ["agent", "-p", "x", "--model", "__invalid__", "--force"],
 }
 
 _AVAILABLE_RE = re.compile(r"Available models?:\s*(.+)", re.IGNORECASE)
 
-_MODEL_CACHE_FILES: dict[str, tuple[Path, str]] = {
+_FALLBACK_MODELS: dict[str, list[str]] = {
+    "claude": ["opus", "sonnet", "haiku"],
+}
+
+_EXTERNAL_CACHE_FILES: dict[str, tuple[Path, str]] = {
     "codex": (Path.home() / ".codex" / "models_cache.json", "slug"),
 }
 
-_discovered_cache: dict[str, list[str]] = {}
+_DISK_CACHE_PATH = Path.home() / ".ptq" / "discovered_models.json"
 
 
-def _read_cache_file(agent_name: str) -> list[str]:
-    entry = _MODEL_CACHE_FILES.get(agent_name)
+def _load_disk_cache() -> dict[str, list[str]]:
+    if _DISK_CACHE_PATH.exists():
+        try:
+            return json.loads(_DISK_CACHE_PATH.read_text())
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return {}
+
+
+def _save_disk_cache(cache: dict[str, list[str]]) -> None:
+    _DISK_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _DISK_CACHE_PATH.write_text(json.dumps(cache, indent=2))
+
+
+def _read_external_cache(agent_name: str) -> list[str]:
+    entry = _EXTERNAL_CACHE_FILES.get(agent_name)
     if not entry:
         return []
     path, key = entry
@@ -152,16 +169,19 @@ def _read_cache_file(agent_name: str) -> list[str]:
         return []
 
 
-def discover_models(agent_name: str) -> list[str]:
-    if agent_name in _discovered_cache:
-        return _discovered_cache[agent_name]
+def cached_models(agent_name: str) -> list[str]:
+    return _load_disk_cache().get(agent_name, []) or _FALLBACK_MODELS.get(
+        agent_name, []
+    )
 
+
+def discover_models(agent_name: str) -> list[str]:
     models: list[str] = []
 
     cmd = _DISCOVER_CMDS.get(agent_name)
     if cmd:
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             match = _AVAILABLE_RE.search(result.stdout + result.stderr)
             if match:
                 models = [m.strip() for m in match.group(1).split(",") if m.strip()]
@@ -169,9 +189,15 @@ def discover_models(agent_name: str) -> list[str]:
             pass
 
     if not models:
-        models = _read_cache_file(agent_name)
+        models = _read_external_cache(agent_name)
 
-    _discovered_cache[agent_name] = models
+    if not models:
+        models = _FALLBACK_MODELS.get(agent_name, [])
+
+    cache = _load_disk_cache()
+    cache[agent_name] = models
+    _save_disk_cache(cache)
+
     if models:
         log.debug("discovered %d models for %s", len(models), agent_name)
     return models

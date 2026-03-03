@@ -44,6 +44,7 @@
       {% endfor %}
     </select>
     <div id="model-container" class="rerun-model">
+      <span class="model-picker-row">
       {% if available_models %}
       <select name="model" id="model">
         {% for m in available_models %}
@@ -53,6 +54,8 @@
       {% else %}
       <input type="text" name="model" id="model" value="{{ default_model }}" placeholder="model">
       {% endif %}
+      <button type="button" class="refresh-models" title="Refresh models" onclick="refreshModels('{{ agent_name }}')">&#10227;</button>
+      </span>
     </div>
     <button type="submit" class="outline">Follow up</button>
   </div>
@@ -64,6 +67,14 @@ document.querySelector('.rerun-agent').addEventListener('change', function() {
     .then(r => r.text())
     .then(function(h) { document.getElementById('model-container').innerHTML = h; });
 });
+
+function refreshModels(agent) {
+  var btn = document.querySelector('.refresh-models');
+  if (btn) btn.classList.add('spinning');
+  fetch('/api/models/' + agent + '/refresh', {method: 'POST'})
+    .then(r => r.text())
+    .then(function(h) { document.getElementById('model-container').innerHTML = h; });
+}
 </script>
 {% endif %}
 

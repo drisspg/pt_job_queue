@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from ptq.agents import AGENTS, get_agent
 from ptq.application.artifact_service import read_artifact
-from ptq.config import discover_models, discover_ssh_hosts, load_config
+from ptq.config import cached_models, discover_models, discover_ssh_hosts, load_config
 from ptq.domain.models import PtqError, RunRequest
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
@@ -130,7 +130,7 @@ def _form_context(error: str | None = None) -> dict:
     cfg = load_config()
     agent_models = {}
     for name, am in cfg.agent_models.items():
-        available = am.available or discover_models(name)
+        available = am.available or cached_models(name)
         agent_models[name] = {"available": available, "default": am.default}
     machines = list(dict.fromkeys(cfg.machines + discover_ssh_hosts()))
     return {
@@ -151,12 +151,20 @@ async def job_new(request: Request):
     return templates.TemplateResponse(request, "job_new.html", _form_context())
 
 
-def _model_select_html(models: list[str], default: str) -> str:
-    options = "".join(
-        f'<option value="{m}" {"selected" if m == default else ""}>{m}</option>'
-        for m in models
+def _model_picker_html(models: list[str], default: str, agent_name: str) -> str:
+    if models:
+        options = "".join(
+            f'<option value="{m}" {"selected" if m == default else ""}>{m}</option>'
+            for m in models
+        )
+        select = f'<select id="model" name="model">{options}</select>'
+    else:
+        select = f'<input type="text" id="model" name="model" value="{default}" placeholder="e.g. opus">'
+    refresh = (
+        f'<button type="button" class="refresh-models" title="Refresh models" '
+        f"onclick=\"refreshModels('{agent_name}')\">\u27f3</button>"
     )
-    return f'<select id="model" name="model">{options}</select>'
+    return f'<span class="model-picker-row">{select}{refresh}</span>'
 
 
 @router.get("/api/models/{agent_name}", response_class=HTMLResponse)
@@ -164,12 +172,17 @@ async def agent_models_options(agent_name: str):
     cfg = load_config()
     am = cfg.models_for(agent_name)
     default_val = am.default or cfg.default_model
+    models = am.available or cached_models(agent_name)
+    return HTMLResponse(_model_picker_html(models, default_val, agent_name))
+
+
+@router.post("/api/models/{agent_name}/refresh", response_class=HTMLResponse)
+async def agent_models_refresh(agent_name: str):
+    cfg = load_config()
+    am = cfg.models_for(agent_name)
+    default_val = am.default or cfg.default_model
     models = am.available or await asyncio.to_thread(discover_models, agent_name)
-    if models:
-        return HTMLResponse(_model_select_html(models, default_val))
-    return HTMLResponse(
-        f'<input type="text" id="model" name="model" value="{default_val}" placeholder="e.g. opus">'
-    )
+    return HTMLResponse(_model_picker_html(models, default_val, agent_name))
 
 
 @router.post("/jobs", response_class=HTMLResponse)
@@ -321,7 +334,7 @@ async def job_detail(request: Request, job_id: str, pr_url: str | None = None):
     cfg = load_config()
     default_model = job.model or cfg.effective_model(job.agent)
     am = cfg.models_for(job.agent)
-    available_models = am.available or discover_models(job.agent)
+    available_models = am.available or cached_models(job.agent)
 
     return templates.TemplateResponse(
         request,
