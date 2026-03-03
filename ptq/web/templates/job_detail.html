@@ -29,7 +29,12 @@
   {% if status != "running" %}
   <button type="button" class="contrast" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Create PR</button>
   {% endif %}
+  <button type="button" class="secondary outline" onclick="document.getElementById('takeover-cmd').hidden = !document.getElementById('takeover-cmd').hidden">Take Over</button>
   <button class="secondary outline" hx-delete="/jobs/{{ job_id }}" hx-confirm="Remove this job and all its files?" hx-target="body" hx-swap="innerHTML">Clean</button>
+</div>
+
+<div id="takeover-cmd" class="takeover-box" hidden>
+  <pre><code id="takeover-text">{% if is_local %}cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate{% else %}ssh -t {{ target }} 'cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate && exec $SHELL'{% endif %}</code><button type="button" class="copy-icon" onclick="navigator.clipboard.writeText(document.getElementById('takeover-text').textContent).then(function(){var b=event.target;b.textContent='✓';b.classList.add('copied');setTimeout(function(){b.textContent='⧉';b.classList.remove('copied')},1500)})">⧉</button></pre>
 </div>
 
 {% if status != "running" %}

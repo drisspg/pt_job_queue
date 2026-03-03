@@ -351,6 +351,8 @@ async def job_detail(request: Request, job_id: str, pr_url: str | None = None):
             "runs": job.runs,
             "agents": list(AGENTS.keys()),
             "pr_url": pr_url,
+            "workspace": job.workspace,
+            "is_local": job.local,
         },
     )
 

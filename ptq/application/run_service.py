@@ -54,11 +54,11 @@ def _setup_job_venv(
         backend.run(f"cd {job_dir} && uv venv --python 3.12")
 
     job_python = f"{job_dir}/.venv/bin/python"
-    progress("Installing build deps...")
-    with _timed("build deps", progress):
+    progress("Installing dev deps (build + test)...")
+    with _timed("dev deps", progress):
         backend.run(
             f"cd {worktree_path} && "
-            f"uv pip install --python {job_python} -r requirements-build.txt",
+            f"uv pip install --python {job_python} -r requirements.txt",
             stream=verbose,
         )
     pip_verbose = " -v" if verbose else ""
