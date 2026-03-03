@@ -85,6 +85,17 @@ nav a:hover {
   color: var(--green);
 }
 
+.badge.initializing {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  animation: pulse-badge 2s ease-in-out infinite;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .badge.stopped {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-muted);

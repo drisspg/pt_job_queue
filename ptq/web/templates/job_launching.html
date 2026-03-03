@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Launching — ptq{% endblock %}
+{% block content %}
+<h1>Launching Agent</h1>
+
+<article id="progress-area">
+  <div id="progress-log" class="log-viewer" style="min-height: 120px; font-size: 13px;">
+    <span class="log-text">Preparing launch...</span>
+  </div>
+  <progress id="progress-bar"></progress>
+</article>
+
+<div id="error-area" hidden>
+  <article class="error-banner" id="error-msg"></article>
+  <a href="/jobs/new" role="button" class="outline">Back to New Job</a>
+</div>
+
+<script>
+(function() {
+  var logEl = document.getElementById('progress-log');
+  var progressBar = document.getElementById('progress-bar');
+  var errorArea = document.getElementById('error-area');
+  var errorMsg = document.getElementById('error-msg');
+
+  var source = new EventSource('/jobs/launching/{{ launch_id }}/progress');
+
+  source.addEventListener('progress', function(e) {
+    var line = document.createElement('div');
+    line.innerHTML = '<span class="log-text">' + e.data + '</span>';
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  });
+
+  source.addEventListener('done', function(e) {
+    source.close();
+    progressBar.value = 1;
+    progressBar.max = 1;
+    window.location.href = e.data;
+  });
+
+  source.addEventListener('error', function(e) {
+    source.close();
+    progressBar.hidden = true;
+    if (e.data) {
+      errorMsg.textContent = e.data;
+    } else {
+      errorMsg.textContent = 'Connection lost during launch.';
+    }
+    errorArea.hidden = false;
+  });
+})();
+</script>
+{% endblock %}

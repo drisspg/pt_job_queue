@@ -52,6 +52,7 @@ def register_job(
     else:
         entry["machine"] = machine
         entry["workspace"] = workspace or "~/ptq_workspace"
+    entry["initializing"] = True
     db[job_id] = entry
     save_jobs_db(db)
 
@@ -64,6 +65,7 @@ def increment_run(
     run_number = entry.get("runs", 0) + 1
     entry["runs"] = run_number
     entry.pop("pid", None)
+    entry["initializing"] = True
     if agent_type:
         entry["agent"] = agent_type
     if model:
@@ -78,6 +80,7 @@ def save_pid(job_id: str, pid: int | None) -> None:
         return
     if pid is not None:
         db[job_id]["pid"] = pid
+        db[job_id].pop("initializing", None)
     else:
         db[job_id].pop("pid", None)
     save_jobs_db(db)

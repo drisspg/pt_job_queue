@@ -37,6 +37,7 @@ class Agent(Protocol):
     def setup_workspace(
         self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
     ) -> None: ...
+    def extract_summary(self, log_content: str) -> str | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,23 @@ class ClaudeAgent:
                             StreamEvent(kind="tool_result", text=stdout or content)
                         )
         return events
+
+    def extract_summary(self, log_content: str) -> str | None:
+        last_text = None
+        for line in log_content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if event.get("type") != "assistant":
+                continue
+            for block in event.get("message", {}).get("content", []):
+                if block.get("type") == "text" and block.get("text"):
+                    last_text = block["text"]
+        return last_text
 
     def log_filename(self, run_number: int) -> str:
         return f"claude-{run_number}.log"
@@ -168,6 +186,23 @@ class CodexAgent:
                 events.append(StreamEvent(kind="error", text=event.get("message", "")))
         return events
 
+    def extract_summary(self, log_content: str) -> str | None:
+        last_text = None
+        for line in log_content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if event.get("type") != "item.completed":
+                continue
+            item = event.get("item", {})
+            if item.get("type") == "agent_message" and item.get("text"):
+                last_text = item["text"]
+        return last_text
+
     def log_filename(self, run_number: int) -> str:
         return f"codex-{run_number}.log"
 
@@ -237,13 +272,34 @@ class CursorAgent:
                     if content:
                         events.append(StreamEvent(kind="tool_result", text=content))
             case "result":
+                text = event.get("result", "")
                 if event.get("is_error"):
                     events.append(
-                        StreamEvent(
-                            kind="error", text=event.get("result", "unknown error")
-                        )
+                        StreamEvent(kind="error", text=text or "unknown error")
                     )
+                elif text:
+                    events.append(StreamEvent(kind="text", text=text))
         return events
+
+    def extract_summary(self, log_content: str) -> str | None:
+        result_text = None
+        last_assistant = None
+        for line in log_content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            match event.get("type"):
+                case "result" if not event.get("is_error") and event.get("result"):
+                    result_text = event["result"]
+                case "assistant":
+                    for block in event.get("message", {}).get("content", []):
+                        if block.get("type") == "text" and block.get("text"):
+                            last_assistant = block["text"]
+        return result_text or last_assistant
 
     def log_filename(self, run_number: int) -> str:
         return f"cursor-{run_number}.log"

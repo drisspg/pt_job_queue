@@ -4,6 +4,7 @@ import json
 import re
 import tempfile
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -139,6 +140,50 @@ DEFAULT_MESSAGE = (
 )
 
 
+def finalize_run(backend: Backend, job_id: str, entry: dict) -> None:
+    """Extract agent summary from log and append to worklog if the agent didn't."""
+    ws = backend.workspace
+    job_dir = f"{ws}/jobs/{job_id}"
+    run_number = entry.get("runs", 1)
+    agent = get_agent(entry.get("agent", "claude"))
+    log_file = f"{job_dir}/{agent.log_filename(run_number)}"
+
+    worklog_result = backend.run(f"cat {job_dir}/worklog.md", check=False)
+    if worklog_result.returncode != 0:
+        return
+
+    run_header = f"## Run {run_number}"
+    worklog_text = worklog_result.stdout
+    header_pos = worklog_text.rfind(run_header)
+    if header_pos == -1:
+        return
+
+    next_header = worklog_text.find("\n## Run ", header_pos + len(run_header))
+    section = (
+        worklog_text[header_pos:next_header]
+        if next_header != -1
+        else worklog_text[header_pos:]
+    )
+
+    for line in section.splitlines()[1:]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("> **User:**"):
+            return
+
+    log_result = backend.run(f"cat {log_file}", check=False)
+    if log_result.returncode != 0 or not log_result.stdout.strip():
+        return
+
+    summary = agent.extract_summary(log_result.stdout)
+    if not summary:
+        return
+
+    entry_text = f"\n### Agent Summary (auto-extracted)\n{summary}\n"
+    backend.run(
+        f"cat >> {job_dir}/worklog.md << 'WORKLOG_AUTO_EOF'\n{entry_text}\nWORKLOG_AUTO_EOF"
+    )
+
+
 def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str:
     worklog = backend.run(f"cat {job_dir}/worklog.md", check=False)
     report = backend.run(f"cat {job_dir}/report.md", check=False)
@@ -173,15 +218,26 @@ def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str
     return "\n".join(sections)
 
 
+ProgressCallback = Callable[[str], None]
+
+
+def _default_progress(msg: str) -> None:
+    console.print(msg)
+
+
 def _setup_job_venv(
-    backend: Backend, job_dir: str, worktree_path: str, *, verbose: bool = False
+    backend: Backend,
+    job_dir: str,
+    worktree_path: str,
+    *,
+    verbose: bool = False,
+    progress: ProgressCallback = _default_progress,
 ) -> None:
-    console.print("Creating per-job venv...")
     with _timed("venv creation"):
         backend.run(f"cd {job_dir} && uv venv --python 3.12")
 
     job_python = f"{job_dir}/.venv/bin/python"
-    console.print("Installing build deps...")
+    progress("Installing build deps...")
     with _timed("build deps"):
         backend.run(
             f"cd {worktree_path} && "
@@ -189,7 +245,7 @@ def _setup_job_venv(
             stream=verbose,
         )
     pip_verbose = " -v" if verbose else ""
-    console.print("Editable install (pytorch)...")
+    progress("Editable install (pytorch)... this takes a few minutes")
     with _timed("editable install"):
         result = backend.run(
             f"cd {worktree_path} && CCACHE_NOHASHDIR=true USE_NINJA=1 "
@@ -198,10 +254,9 @@ def _setup_job_venv(
             stream=verbose,
         )
     if result.returncode != 0:
-        console.print(f"[red]Editable install failed:[/red]\n{result.stderr}")
-        console.print("[yellow]Agent will need to build manually.[/yellow]")
+        progress("Editable install failed — agent will need to build manually.")
     else:
-        console.print("[green]Editable install complete.[/green]")
+        progress("Editable install complete.")
 
 
 def _validate_workspace(backend: Backend, workspace: str) -> None:
@@ -252,7 +307,9 @@ def launch_agent(
     agent_type: str = "claude",
     existing_job_id: str | None = None,
     verbose: bool = False,
+    on_progress: ProgressCallback | None = None,
 ) -> str:
+    progress = on_progress or _default_progress
     agent = get_agent(agent_type)
     workspace = backend.workspace
     is_adhoc = issue_number is None
@@ -261,25 +318,23 @@ def launch_agent(
         job_id = existing_job_id
         run_number = increment_run(job_id, agent_type=agent_type, model=model)
         label = f"issue #{issue_number}" if issue_number else "adhoc"
-        console.print(f"[bold]Job {job_id}[/bold] — {label} (run {run_number})")
+        progress(f"Job {job_id} — {label} (run {run_number})")
         existing = job_id
     elif is_adhoc:
         existing = None
         job_id = make_job_id(message=message)
         run_number = 1
-        console.print(f"[bold]Job {job_id}[/bold] — adhoc (run 1)")
+        progress(f"Job {job_id} — adhoc (run 1)")
     else:
         existing = find_existing_job(issue_number, machine=machine, local=local)
         if existing:
             job_id = existing
             run_number = increment_run(job_id, agent_type=agent_type, model=model)
-            console.print(
-                f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run {run_number})"
-            )
+            progress(f"Job {job_id} — issue #{issue_number} (run {run_number})")
         else:
             job_id = make_job_id(issue_number)
             run_number = 1
-            console.print(f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run 1)")
+            progress(f"Job {job_id} — issue #{issue_number} (run 1)")
 
     job_dir = f"{workspace}/jobs/{job_id}"
     worktree_path = f"{job_dir}/pytorch"
@@ -307,20 +362,23 @@ def launch_agent(
         f"test -d {worktree_path}/.git || test -f {worktree_path}/.git", check=False
     )
     if worktree_exists.returncode != 0:
-        console.print("Creating worktree with submodules...")
+        progress("Creating worktree with submodules...")
         with _timed("worktree creation"):
             backend.run(
                 f"cd {workspace}/pytorch && python tools/create_worktree.py create pytorch "
                 f"--parent-dir {job_dir} --commit HEAD",
                 stream=verbose,
             )
-        _setup_job_venv(backend, job_dir, worktree_path, verbose=verbose)
+        progress("Creating per-job venv...")
+        _setup_job_venv(
+            backend, job_dir, worktree_path, verbose=verbose, progress=progress
+        )
     else:
-        console.print("Reusing existing worktree.")
+        progress("Reusing existing worktree.")
 
     _exclude_agent_configs(backend, worktree_path)
-    with _timed("agent workspace setup"):
-        agent.setup_workspace(backend, worktree_path, job_dir, workspace)
+    progress("Configuring agent workspace...")
+    agent.setup_workspace(backend, worktree_path, job_dir, workspace)
 
     if is_adhoc:
         system_prompt = build_adhoc_prompt(message, job_id, workspace)
@@ -331,7 +389,7 @@ def launch_agent(
         prior_context = _build_prior_context(backend, job_dir, run_number)
         if prior_context:
             system_prompt += prior_context
-            console.print("Loaded prior run context (worklog/report).")
+            progress("Loaded prior run context (worklog/report).")
 
     _stamp_worklog_header(backend, job_dir, run_number, message)
 
@@ -350,11 +408,9 @@ def launch_agent(
                 repro_tmp = Path(f.name)
             backend.copy_to(repro_tmp, f"{job_dir}/repro.py")
             repro_tmp.unlink()
-            console.print("Extracted and uploaded repro script.")
+            progress("Extracted and uploaded repro script.")
         else:
-            console.print(
-                "[yellow]No repro script found in issue — agent will write one.[/yellow]"
-            )
+            progress("No repro script found in issue — agent will write one.")
 
     if is_adhoc:
         agent_message = message
@@ -378,14 +434,13 @@ def launch_agent(
     )
     agent_cmd = agent.build_cmd(ctx)
 
-    console.print(f"Launching {agent.name} agent ({'local' if local else machine})...")
+    progress(f"Launching {agent.name} agent ({'local' if local else machine})...")
     backend.run(f"touch {log_file}")
     pid = backend.launch_background(agent_cmd, log_file)
     save_pid(job_id, pid)
 
     if not follow:
-        console.print("[bold]Agent launched in background.[/bold]")
-        console.print(f"  ptq results {job_id}")
+        progress("Agent launched in background.")
         return job_id
 
     time.sleep(2)

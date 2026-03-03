@@ -4,6 +4,7 @@ import asyncio
 import html
 import logging
 import re
+import uuid
 from contextlib import contextmanager
 
 import markdown as md_lib
@@ -23,6 +24,8 @@ from ptq.ssh import (
 from ptq.web.deps import get_job_status, read_artifact, templates
 
 log = logging.getLogger("ptq.web")
+
+_pending_launches: dict[str, dict] = {}
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\r")
 MAX_RESULT_LINES = 20
@@ -48,7 +51,12 @@ def _catch_exit():
 # ---------------------------------------------------------------------------
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/", response_class=RedirectResponse)
+async def root():
+    return RedirectResponse(url="/jobs", status_code=302)
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     db = load_jobs_db()
     jobs: list[dict] = []
@@ -58,14 +66,16 @@ async def dashboard(request: Request):
 
     for job_id, entry in sorted(db.items()):
         status = get_job_status(job_id, entry)
-        if status == "running":
+        if status == "running" or status == "initializing":
             running_count += 1
         else:
             stopped_count += 1
 
         target = entry.get("machine") or "local"
         machines.setdefault(target, {"running": 0, "stopped": 0, "total": 0})
-        machines[target][status] += 1
+        machines[target][
+            "running" if status in ("running", "initializing") else "stopped"
+        ] += 1
         machines[target]["total"] += 1
 
         jobs.append(
@@ -209,42 +219,102 @@ async def job_create(
             status_code=422,
         )
 
-    issue_number = int(issue) if issue.strip() else None
-    message_text = message.strip() or None
-    is_local = target_type == "local"
-    machine_name = machine.strip() or None
+    launch_id = uuid.uuid4().hex[:12]
+    _pending_launches[launch_id] = {
+        "task_type": task_type,
+        "issue": issue.strip(),
+        "message": message.strip(),
+        "target_type": target_type,
+        "machine": machine.strip(),
+        "agent": agent,
+        "model": model,
+        "max_turns": max_turns,
+    }
+    return RedirectResponse(url=f"/jobs/launching/{launch_id}", status_code=303)
 
-    backend = LocalBackend() if is_local else RemoteBackend(machine=machine_name)
 
-    issue_data = None
-    if issue_number is not None:
-        from ptq.issue import fetch_issue
-
-        issue_data = await asyncio.to_thread(fetch_issue, issue_number)
-
-    from ptq.agent import launch_agent
-
-    log.info(
-        "creating job: agent=%s model=%s target=%s",
-        agent,
-        model,
-        "local" if is_local else machine_name,
-    )
-    job_id = await asyncio.to_thread(
-        launch_agent,
-        backend,
-        issue_data=issue_data,
-        issue_number=issue_number,
-        machine=machine_name,
-        local=is_local,
-        follow=False,
-        model=model,
-        max_turns=max_turns,
-        message=message_text,
-        agent_type=agent,
+@router.get("/jobs/launching/{launch_id}", response_class=HTMLResponse)
+async def job_launching(request: Request, launch_id: str):
+    if launch_id not in _pending_launches:
+        raise HTTPException(status_code=404, detail="Launch not found")
+    return templates.TemplateResponse(
+        request, "job_launching.html", {"launch_id": launch_id}
     )
 
-    return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+
+@router.get("/jobs/launching/{launch_id}/progress")
+async def job_launch_progress(launch_id: str):
+    params = _pending_launches.pop(launch_id, None)
+    if params is None:
+
+        async def _not_found():
+            yield {"event": "error", "data": "Launch not found."}
+
+        return EventSourceResponse(_not_found())
+
+    progress_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    def on_progress(msg: str):
+        progress_queue.put_nowait(msg)
+
+    async def run_launch():
+        is_local = params["target_type"] == "local"
+        machine_name = params["machine"] or None
+        issue_number = int(params["issue"]) if params["issue"] else None
+        message_text = params["message"] or None
+
+        backend = LocalBackend() if is_local else RemoteBackend(machine=machine_name)
+
+        issue_data = None
+        if issue_number is not None:
+            from ptq.issue import fetch_issue
+
+            issue_data = await asyncio.to_thread(fetch_issue, issue_number)
+
+        from ptq.agent import launch_agent
+
+        log.info(
+            "creating job: agent=%s model=%s target=%s",
+            params["agent"],
+            params["model"],
+            "local" if is_local else machine_name,
+        )
+        return await asyncio.to_thread(
+            launch_agent,
+            backend,
+            issue_data=issue_data,
+            issue_number=issue_number,
+            machine=machine_name,
+            local=is_local,
+            follow=False,
+            model=params["model"],
+            max_turns=params["max_turns"],
+            message=message_text,
+            agent_type=params["agent"],
+            on_progress=on_progress,
+        )
+
+    async def event_generator():
+        task = asyncio.create_task(run_launch())
+        while not task.done():
+            try:
+                msg = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+                yield {"event": "progress", "data": html.escape(msg)}
+            except asyncio.TimeoutError:
+                continue
+        while not progress_queue.empty():
+            msg = progress_queue.get_nowait()
+            yield {"event": "progress", "data": html.escape(msg)}
+
+        exc = task.exception()
+        if exc:
+            log.exception("launch failed: %s", exc)
+            yield {"event": "error", "data": html.escape(str(exc))}
+        else:
+            job_id = task.result()
+            yield {"event": "done", "data": f"/jobs/{job_id}"}
+
+    return EventSourceResponse(event_generator())
 
 
 # ---------------------------------------------------------------------------
