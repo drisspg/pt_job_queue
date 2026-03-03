@@ -149,6 +149,27 @@ class TestNewJobForm:
             assert "opus" in resp.text
             assert "sonnet" in resp.text
 
+    def test_agent_models_api_uses_discovery(self, client):
+        with patch("ptq.web.routes.discover_models", return_value=["o3", "o4-mini"]):
+            resp = client.get("/api/models/codex")
+        assert resp.status_code == 200
+        assert "<select" in resp.text
+        assert "o3" in resp.text
+        assert "o4-mini" in resp.text
+
+    def test_agent_models_api_different_per_agent(self, client):
+        def fake_discover(agent):
+            return {"cursor": ["opus-4.6", "sonnet-4.6"], "codex": ["o3"]}.get(
+                agent, []
+            )
+
+        with patch("ptq.web.routes.discover_models", side_effect=fake_discover):
+            cursor_resp = client.get("/api/models/cursor")
+            codex_resp = client.get("/api/models/codex")
+        assert "opus-4.6" in cursor_resp.text
+        assert "opus-4.6" not in codex_resp.text
+        assert "o3" in codex_resp.text
+
     def test_agent_models_api_unknown(self, client):
         resp = client.get("/api/models/unknown")
         assert resp.status_code == 200
@@ -214,6 +235,23 @@ class TestJobActions:
     def test_delete_returns_empty(self, client, mock_backend):
         resp = client.delete("/jobs/20260217-100001")
         assert resp.status_code == 200
+
+    def test_create_pr_redirects(self, client, mock_backend):
+        from ptq.pr import PRResult
+
+        with patch(
+            "ptq.pr.create_pr",
+            return_value=PRResult(
+                url="https://github.com/pytorch/pytorch/pull/99", branch="ptq/100001"
+            ),
+        ):
+            resp = client.post(
+                "/jobs/20260217-100001/pr",
+                data={},
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        assert "pr_url=" in resp.headers["location"]
 
     def test_rerun_redirects(self, client, mock_backend):
         with patch("ptq.agent.launch_agent", return_value="20260217-100001"):

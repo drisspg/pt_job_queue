@@ -141,6 +141,12 @@
   border-bottom-color: #4caf50;
 }
 
+.refresh-btn {
+  margin-left: auto;
+  font-size: 1.2em;
+  border-bottom: none;
+}
+
 /* Actions row */
 .actions {
   display: flex;
@@ -233,12 +239,48 @@ button.small {
   overflow-x: auto;
 }
 
+/* PR banner */
+.pr-banner {
+  background: rgba(46, 160, 67, 0.15);
+  border-left: 4px solid #3fb950;
+  color: #3fb950;
+  padding: 0.8em 1em;
+  margin-bottom: 1em;
+}
+
+.pr-banner a {
+  color: #58a6ff;
+}
+
 /* Error banner */
 .error-banner {
   background: rgba(248, 81, 73, 0.15);
   border-left: 4px solid #f85149;
   color: #f85149;
   padding: 0.8em 1em;
+}
+
+/* Config grid (new job form) */
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.8em;
+  align-items: end;
+}
+
+.config-grid label {
+  margin-bottom: 0;
+}
+
+.config-grid select,
+.config-grid input {
+  margin-bottom: 0;
+}
+
+#model-container select,
+#model-container input {
+  margin-bottom: 0;
+  width: 100%;
 }
 
 /* Follow-up form */
@@ -255,21 +297,32 @@ button.small {
 .rerun-controls {
   display: flex;
   gap: 0.6em;
-  align-items: center;
+  align-items: stretch;
 }
 
-.rerun-agent,
-.rerun-model {
-  width: auto;
+.rerun-controls select,
+.rerun-controls input,
+.rerun-controls button {
   margin-bottom: 0;
+  height: 2.8em;
+}
+
+.rerun-agent {
+  width: auto;
 }
 
 .rerun-model {
-  max-width: 10em;
+  flex: 1;
+}
+
+.rerun-model select,
+.rerun-model input {
+  width: 100%;
+  margin-bottom: 0;
+  height: 2.8em;
 }
 
 .rerun-controls button {
-  margin-bottom: 0;
   white-space: nowrap;
 }
 

@@ -85,17 +85,4 @@ def apply_diff(job_id: str, pytorch_path: Path) -> None:
     console.print(
         f"\n[bold green]Diff applied to {pytorch_path} on branch {branch_name}[/bold green]"
     )
-    console.print("\n[bold]Copy & paste:[/bold]\n")
-    if issue_number is not None:
-        console.print(
-            f"cd {pytorch_path} && git add -p && "
-            f"git commit -m 'Fix #{issue_number}' && "
-            f"gh pr create --title 'Fix #{issue_number}' "
-            f"--body 'Fixes #{issue_number}'"
-        )
-    else:
-        console.print(
-            f"cd {pytorch_path} && git add -p && "
-            f"git commit -m 'Fix from {job_id}' && "
-            f"gh pr create --title 'Fix from {job_id}'"
-        )
+    console.print(f"\nTo create a PR, run: [bold]ptq pr {job_id}[/bold]")

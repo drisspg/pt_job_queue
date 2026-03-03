@@ -37,9 +37,15 @@ def register_job(
     workspace: str | None = None,
     run_number: int = 1,
     agent_type: str = "claude",
+    model: str = "opus",
 ) -> None:
     db = load_jobs_db()
-    entry: dict = {"issue": issue_number, "runs": run_number, "agent": agent_type}
+    entry: dict = {
+        "issue": issue_number,
+        "runs": run_number,
+        "agent": agent_type,
+        "model": model,
+    }
     if local:
         entry["local"] = True
         entry["workspace"] = workspace or "~/.ptq_workspace"
@@ -50,7 +56,9 @@ def register_job(
     save_jobs_db(db)
 
 
-def increment_run(job_id: str, agent_type: str | None = None) -> int:
+def increment_run(
+    job_id: str, agent_type: str | None = None, model: str | None = None
+) -> int:
     db = load_jobs_db()
     entry = db[job_id]
     run_number = entry.get("runs", 0) + 1
@@ -58,6 +66,8 @@ def increment_run(job_id: str, agent_type: str | None = None) -> int:
     entry.pop("pid", None)
     if agent_type:
         entry["agent"] = agent_type
+    if model:
+        entry["model"] = model
     save_jobs_db(db)
     return run_number
 

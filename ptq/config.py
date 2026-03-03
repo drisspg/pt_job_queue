@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
+import logging
+import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import tomllib
+
+log = logging.getLogger("ptq.config")
 
 CONFIG_PATH = Path.home() / ".ptq" / "config.toml"
 
@@ -79,9 +85,77 @@ def _parse(data: dict) -> Config:
     )
 
 
+def discover_ssh_hosts() -> list[str]:
+    ssh_config = Path.home() / ".ssh" / "config"
+    if not ssh_config.exists():
+        return []
+    hosts: list[str] = []
+    for line in ssh_config.read_text().splitlines():
+        line = line.strip()
+        if line.lower().startswith("host ") and "*" not in line:
+            hosts.extend(line.split()[1:])
+    return hosts
+
+
 def load_config(path: Path | None = None) -> Config:
     path = path or CONFIG_PATH
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_DEFAULT_TOML)
     return _parse(tomllib.loads(path.read_text()))
+
+
+_DISCOVER_CMDS: dict[str, list[str]] = {
+    "claude": ["claude", "-p", "x", "--model", "__invalid__", "--max-turns", "0"],
+    "codex": ["codex", "exec", "x", "--model", "__invalid__"],
+    "cursor": ["agent", "-p", "x", "--model", "__invalid__", "--force"],
+}
+
+_AVAILABLE_RE = re.compile(r"Available models?:\s*(.+)", re.IGNORECASE)
+
+_MODEL_CACHE_FILES: dict[str, tuple[Path, str]] = {
+    "codex": (Path.home() / ".codex" / "models_cache.json", "slug"),
+}
+
+_discovered_cache: dict[str, list[str]] = {}
+
+
+def _read_cache_file(agent_name: str) -> list[str]:
+    entry = _MODEL_CACHE_FILES.get(agent_name)
+    if not entry:
+        return []
+    path, key = entry
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        return [
+            m[key] for m in data.get("models", []) if isinstance(m, dict) and key in m
+        ]
+    except (json.JSONDecodeError, KeyError):
+        return []
+
+
+def discover_models(agent_name: str) -> list[str]:
+    if agent_name in _discovered_cache:
+        return _discovered_cache[agent_name]
+
+    models: list[str] = []
+
+    cmd = _DISCOVER_CMDS.get(agent_name)
+    if cmd:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            match = _AVAILABLE_RE.search(result.stdout + result.stderr)
+            if match:
+                models = [m.strip() for m in match.group(1).split(",") if m.strip()]
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    if not models:
+        models = _read_cache_file(agent_name)
+
+    _discovered_cache[agent_name] = models
+    if models:
+        log.debug("discovered %d models for %s", len(models), agent_name)
+    return models

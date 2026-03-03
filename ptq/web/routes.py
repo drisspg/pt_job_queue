@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sse_starlette.sse import EventSourceResponse
 
 from ptq.agents import AGENTS, get_agent
-from ptq.config import load_config
+from ptq.config import discover_models, discover_ssh_hosts, load_config
 from ptq.job import get_job, resolve_job_id, save_pid
 from ptq.ssh import (
     LocalBackend,
@@ -131,13 +131,15 @@ async def job_list(request: Request, status_filter: str = "all"):
 
 def _form_context(error: str | None = None) -> dict:
     cfg = load_config()
+    agent_models = {}
+    for name, am in cfg.agent_models.items():
+        available = am.available or discover_models(name)
+        agent_models[name] = {"available": available, "default": am.default}
+    machines = list(dict.fromkeys(cfg.machines + discover_ssh_hosts()))
     return {
         "agents": list(AGENTS.keys()),
-        "machines": cfg.machines,
-        "agent_models": {
-            name: {"available": am.available, "default": am.default}
-            for name, am in cfg.agent_models.items()
-        },
+        "machines": machines,
+        "agent_models": agent_models,
         "defaults": {
             "agent": cfg.default_agent,
             "model": cfg.default_model,
@@ -152,17 +154,22 @@ async def job_new(request: Request):
     return templates.TemplateResponse(request, "job_new.html", _form_context())
 
 
+def _model_select_html(models: list[str], default: str) -> str:
+    options = "".join(
+        f'<option value="{m}" {"selected" if m == default else ""}>{m}</option>'
+        for m in models
+    )
+    return f'<select id="model" name="model">{options}</select>'
+
+
 @router.get("/api/models/{agent_name}", response_class=HTMLResponse)
 async def agent_models_options(agent_name: str):
     cfg = load_config()
     am = cfg.models_for(agent_name)
-    if am.available:
-        options = "".join(
-            f'<option value="{m}" {"selected" if m == am.default else ""}>{m}</option>'
-            for m in am.available
-        )
-        return HTMLResponse(f'<select id="model" name="model">{options}</select>')
     default_val = am.default or cfg.default_model
+    models = am.available or await asyncio.to_thread(discover_models, agent_name)
+    if models:
+        return HTMLResponse(_model_select_html(models, default_val))
     return HTMLResponse(
         f'<input type="text" id="model" name="model" value="{default_val}" placeholder="e.g. opus">'
     )
@@ -246,7 +253,7 @@ async def job_create(
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
-async def job_detail(request: Request, job_id: str):
+async def job_detail(request: Request, job_id: str, pr_url: str | None = None):
     with _catch_exit():
         job_id = resolve_job_id(job_id)
         job = get_job(job_id)
@@ -257,7 +264,9 @@ async def job_detail(request: Request, job_id: str):
 
     cfg = load_config()
     agent_name = job.get("agent", "claude")
-    default_model = cfg.effective_model(agent_name)
+    default_model = job.get("model") or cfg.effective_model(agent_name)
+    am = cfg.models_for(agent_name)
+    available_models = am.available or discover_models(agent_name)
 
     return templates.TemplateResponse(
         request,
@@ -270,8 +279,10 @@ async def job_detail(request: Request, job_id: str):
             "issue": issue_val,
             "agent_name": agent_name,
             "default_model": default_model,
+            "available_models": available_models,
             "runs": job.get("runs", 1),
             "agents": list(AGENTS.keys()),
+            "pr_url": pr_url,
         },
     )
 
@@ -332,6 +343,20 @@ async def job_rerun(
 
     log.info("follow-up launched for %s", job_id)
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
+
+
+@router.post("/jobs/{job_id}/pr", response_class=HTMLResponse)
+async def job_create_pr(request: Request, job_id: str, draft: str = Form("")):
+    with _catch_exit():
+        job_id = resolve_job_id(job_id)
+        get_job(job_id)
+
+    from ptq.pr import create_pr
+
+    log.info("creating PR for %s", job_id)
+    result = await asyncio.to_thread(create_pr, job_id, draft=bool(draft))
+    log.info("PR created for %s: %s", job_id, result.url)
+    return RedirectResponse(url=f"/jobs/{job_id}?pr_url={result.url}", status_code=303)
 
 
 @router.post("/jobs/{job_id}/kill", response_class=HTMLResponse)
@@ -405,9 +430,8 @@ async def job_diff(job_id: str):
     if not content:
         return HTMLResponse('<p class="muted">No diff yet.</p>')
     escaped = html.escape(content)
-    lines = escaped.splitlines()
     styled: list[str] = []
-    for line in lines:
+    for line in escaped.splitlines():
         if line.startswith("+"):
             styled.append(f'<span class="diff-add">{line}</span>')
         elif line.startswith("-"):

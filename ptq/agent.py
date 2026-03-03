@@ -225,6 +225,19 @@ def _stamp_worklog_header(
     )
 
 
+_AGENT_CONFIG_EXCLUDES = [".cursorrules", "AGENTS.md", ".claude/"]
+
+
+def _exclude_agent_configs(backend: Backend, worktree_path: str) -> None:
+    exclude_file = f"{worktree_path}/.git/info/exclude"
+    backend.run(f"mkdir -p $(dirname {exclude_file})", check=False)
+    for pattern in _AGENT_CONFIG_EXCLUDES:
+        backend.run(
+            f"grep -qxF '{pattern}' {exclude_file} 2>/dev/null || echo '{pattern}' >> {exclude_file}",
+            check=False,
+        )
+
+
 def launch_agent(
     backend: Backend,
     *,
@@ -246,7 +259,7 @@ def launch_agent(
 
     if existing_job_id:
         job_id = existing_job_id
-        run_number = increment_run(job_id, agent_type=agent_type)
+        run_number = increment_run(job_id, agent_type=agent_type, model=model)
         label = f"issue #{issue_number}" if issue_number else "adhoc"
         console.print(f"[bold]Job {job_id}[/bold] — {label} (run {run_number})")
         existing = job_id
@@ -259,7 +272,7 @@ def launch_agent(
         existing = find_existing_job(issue_number, machine=machine, local=local)
         if existing:
             job_id = existing
-            run_number = increment_run(job_id, agent_type=agent_type)
+            run_number = increment_run(job_id, agent_type=agent_type, model=model)
             console.print(
                 f"[bold]Job {job_id}[/bold] — issue #{issue_number} (run {run_number})"
             )
@@ -285,6 +298,7 @@ def launch_agent(
             workspace=workspace,
             run_number=run_number,
             agent_type=agent_type,
+            model=model,
         )
 
     deploy_scripts(backend)
@@ -304,6 +318,7 @@ def launch_agent(
     else:
         console.print("Reusing existing worktree.")
 
+    _exclude_agent_configs(backend, worktree_path)
     with _timed("agent workspace setup"):
         agent.setup_workspace(backend, worktree_path, job_dir, workspace)
 

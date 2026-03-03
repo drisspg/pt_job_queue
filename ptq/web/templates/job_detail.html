@@ -16,10 +16,19 @@
   </hgroup>
 </header>
 
+{% if pr_url %}
+<article class="pr-banner">PR created: <a href="{{ pr_url }}" target="_blank">{{ pr_url }}</a></article>
+{% endif %}
+
 <div class="actions">
   {% if status == "running" %}
   <form method="post" action="/jobs/{{ job_id }}/kill" style="display:inline">
     <button type="submit" class="secondary" onclick="return confirm('Kill this agent?')">Kill</button>
+  </form>
+  {% endif %}
+  {% if status != "running" %}
+  <form method="post" action="/jobs/{{ job_id }}/pr" style="display:inline">
+    <button type="submit" class="contrast" onclick="return confirm('Commit, push, and create a PR from this job?')">Create PR</button>
   </form>
   {% endif %}
   <button class="secondary outline" hx-delete="/jobs/{{ job_id }}" hx-confirm="Remove this job and all its files?" hx-target="body" hx-swap="innerHTML">Clean</button>
@@ -34,35 +43,115 @@
       <option value="{{ a }}" {{ 'selected' if a == agent_name else '' }}>{{ a }}</option>
       {% endfor %}
     </select>
-    <input type="text" name="model" value="{{ default_model }}" class="rerun-model" placeholder="model">
+    <div id="model-container" class="rerun-model">
+      {% if available_models %}
+      <select name="model" id="model">
+        {% for m in available_models %}
+        <option value="{{ m }}" {{ 'selected' if m == default_model else '' }}>{{ m }}</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <input type="text" name="model" id="model" value="{{ default_model }}" placeholder="model">
+      {% endif %}
+    </div>
     <button type="submit" class="outline">Follow up</button>
   </div>
 </form>
+
+<script>
+document.querySelector('.rerun-agent').addEventListener('change', function() {
+  fetch('/api/models/' + this.value)
+    .then(r => r.text())
+    .then(function(h) { document.getElementById('model-container').innerHTML = h; });
+});
+</script>
 {% endif %}
 
 <div class="tab-nav" role="tablist">
-  <button class="tab-btn active" onclick="switchTab(this, 'logs')">Logs</button>
-  <button class="tab-btn" onclick="switchTab(this, 'report')" hx-get="/jobs/{{ job_id }}/report" hx-target="#tab-content" hx-trigger="click once">Report</button>
-  <button class="tab-btn" onclick="switchTab(this, 'diff')" hx-get="/jobs/{{ job_id }}/diff" hx-target="#tab-content" hx-trigger="click once">Diff</button>
-  <button class="tab-btn" onclick="switchTab(this, 'worklog')" hx-get="/jobs/{{ job_id }}/worklog" hx-target="#tab-content" hx-trigger="click once">Worklog</button>
+  <button class="tab-btn active" data-tab="logs">Logs</button>
+  <button class="tab-btn" data-tab="report">Report</button>
+  <button class="tab-btn" data-tab="diff">Diff</button>
+  <button class="tab-btn" data-tab="worklog">Worklog</button>
+  <button class="refresh-btn" id="refresh-btn" title="Refresh current tab">&#8635;</button>
 </div>
 
 <div id="tab-content">
-  <div hx-ext="sse" sse-connect="/jobs/{{ job_id }}/logs/stream" sse-close="done">
-    <pre class="log-viewer" id="log-output" sse-swap="log" hx-swap="beforeend scroll:bottom"></pre>
+  <div id="sse-container" hx-ext="sse" sse-connect="/jobs/{{ job_id }}/logs/stream" sse-close="done">
+    <pre class="log-viewer" sse-swap="log" hx-swap="beforeend scroll:bottom"></pre>
   </div>
 </div>
 
 <script>
-function switchTab(btn, name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  if (name === 'logs') {
-    document.getElementById('tab-content').innerHTML =
-      '<div hx-ext="sse" sse-connect="/jobs/{{ job_id }}/logs/stream" sse-close="done">' +
-      '<pre class="log-viewer" id="log-output" sse-swap="log" hx-swap="beforeend scroll:bottom"></pre></div>';
-    htmx.process(document.getElementById('tab-content'));
+(function() {
+  var activeTab = 'logs';
+  var cache = {};
+  var jobId = '{{ job_id }}';
+  var tabUrls = {
+    report: '/jobs/' + jobId + '/report',
+    diff: '/jobs/' + jobId + '/diff',
+    worklog: '/jobs/' + jobId + '/worklog'
+  };
+
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var tab = this.dataset.tab;
+      if (tab === activeTab) return;
+
+      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      this.classList.add('active');
+      activeTab = tab;
+
+      var content = document.getElementById('tab-content');
+
+      if (tab === 'logs') {
+        content.innerHTML =
+          '<div id="sse-container" hx-ext="sse" sse-connect="/jobs/' + jobId + '/logs/stream" sse-close="done">' +
+          '<pre class="log-viewer" sse-swap="log" hx-swap="beforeend scroll:bottom"></pre></div>';
+        htmx.process(content);
+        return;
+      }
+
+      if (cache[tab]) {
+        content.innerHTML = cache[tab];
+        return;
+      }
+
+      content.innerHTML = '<p class="muted">Loading...</p>';
+      fetch(tabUrls[tab])
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+          cache[tab] = html;
+          if (activeTab === tab) {
+            content.innerHTML = html;
+          }
+        });
+    });
+  });
+
+  function loadTab(tab) {
+    var content = document.getElementById('tab-content');
+    if (tab === 'logs') {
+      content.innerHTML =
+        '<div id="sse-container" hx-ext="sse" sse-connect="/jobs/' + jobId + '/logs/stream" sse-close="done">' +
+        '<pre class="log-viewer" sse-swap="log" hx-swap="beforeend scroll:bottom"></pre></div>';
+      htmx.process(content);
+      return;
+    }
+    content.innerHTML = '<p class="muted">Loading...</p>';
+    fetch(tabUrls[tab])
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        cache[tab] = html;
+        if (activeTab === tab) {
+          content.innerHTML = html;
+        }
+      });
   }
-}
+
+  document.getElementById('refresh-btn').addEventListener('click', function() {
+    delete cache[activeTab];
+    loadTab(activeTab);
+  });
+})();
 </script>
 {% endblock %}

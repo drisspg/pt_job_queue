@@ -403,12 +403,18 @@ def list_jobs() -> None:
     )
     console.print("[dim]  ptq peek JOB_ID                       # check progress[/dim]")
     console.print("[dim]  ptq results JOB_ID                    # fetch results[/dim]")
+    console.print(
+        "[dim]  ptq pr JOB_ID                         # create GitHub PR[/dim]"
+    )
     console.print("[dim]  ptq kill JOB_ID                       # stop agent[/dim]")
     console.print(
         "[dim]  ptq clean JOB_ID                      # remove job entirely[/dim]"
     )
     console.print(
         "[dim]  ptq clean MACHINE                     # bulk clean stopped jobs[/dim]"
+    )
+    console.print(
+        "[dim]  ptq web                               # start web dashboard[/dim]"
     )
 
 
@@ -518,6 +524,27 @@ def status(
     tail = backend.run(f"tail -1 {log_file}", check=False)
     if tail.stdout.strip():
         console.print(f"\n  last log: [dim]{tail.stdout.strip()[:120]}[/dim]")
+
+
+@app.command()
+def pr(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+    title: Annotated[str | None, typer.Option(help="PR title override.")] = None,
+    draft: Annotated[bool, typer.Option(help="Create as draft PR.")] = False,
+) -> None:
+    """Create a GitHub PR from a job's worktree changes."""
+    from ptq.job import resolve_job_id
+    from ptq.pr import create_pr
+
+    job_id = resolve_job_id(job_id)
+    console.print(f"[bold]Creating PR for {job_id}[/bold]")
+    result = create_pr(
+        job_id,
+        title=title,
+        draft=draft,
+        log=lambda msg: console.print(f"  [dim]{msg}[/dim]"),
+    )
+    console.print(f"\n[bold green]PR created:[/bold green] {result.url}")
 
 
 @app.command()
