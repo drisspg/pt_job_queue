@@ -101,15 +101,32 @@ def _parse(data: dict) -> Config:
     )
 
 
+def _extract_hosts(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    hosts: list[str] = []
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("host ") and "*" not in stripped:
+            hosts.extend(stripped.split()[1:])
+    return hosts
+
+
 def discover_ssh_hosts() -> list[str]:
     ssh_config = Path.home() / ".ssh" / "config"
     if not ssh_config.exists():
         return []
     hosts: list[str] = []
     for line in ssh_config.read_text().splitlines():
-        line = line.strip()
-        if line.lower().startswith("host ") and "*" not in line:
-            hosts.extend(line.split()[1:])
+        stripped = line.strip()
+        if stripped.lower().startswith("include "):
+            pattern = stripped.split(None, 1)[1]
+            if pattern.startswith("~"):
+                pattern = str(Path.home()) + pattern[1:]
+            for included in sorted(Path("/").glob(pattern.lstrip("/"))):
+                hosts.extend(_extract_hosts(included))
+        elif stripped.lower().startswith("host ") and "*" not in stripped:
+            hosts.extend(stripped.split()[1:])
     return hosts
 
 
