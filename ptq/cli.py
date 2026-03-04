@@ -10,7 +10,7 @@ from rich.console import Console
 
 from ptq.agent import _clean, _indent, _truncate
 from ptq.agents import StreamEvent, get_agent
-from ptq.domain.models import JobStatus, PtqError, RunRequest
+from ptq.domain.models import JobStatus, PtqError, RebaseState, RunRequest
 
 app = typer.Typer(
     name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix PyTorch issues."
@@ -95,6 +95,37 @@ def _repo():
     from ptq.infrastructure.job_repository import JobRepository
 
     return JobRepository()
+
+
+def _rebase_list_label(state: RebaseState) -> str:
+    match state:
+        case RebaseState.IDLE:
+            return "[dim]-[/dim]"
+        case RebaseState.RUNNING:
+            return "[blue]run[/blue]"
+        case RebaseState.SUCCEEDED:
+            return "[green]ok[/green]"
+        case RebaseState.NEEDS_HUMAN:
+            return "[yellow]human[/yellow]"
+        case RebaseState.FAILED:
+            return "[red]fail[/red]"
+
+
+def _pr_list_label(pr_url: str | None, backend) -> str:
+    from ptq.application.pr_service import get_pr_state
+
+    if not pr_url:
+        return "[dim]-[/dim]"
+
+    match get_pr_state(backend, pr_url):
+        case "open":
+            return "[green]open[/green]"
+        case "closed":
+            return "[yellow]closed[/yellow]"
+        case "merged":
+            return "[cyan]merged[/cyan]"
+        case _:
+            return "[dim]saved[/dim]"
 
 
 @app.command()
@@ -410,6 +441,8 @@ def list_jobs() -> None:
     table.add_column("Issue", style="cyan")
     table.add_column("Agent", width=7)
     table.add_column("Runs", justify="right")
+    table.add_column("PR", width=7)
+    table.add_column("Rebase", width=8)
     table.add_column("Target")
 
     for job_id, job in sorted(all_jobs.items()):
@@ -421,8 +454,17 @@ def list_jobs() -> None:
             if status == JobStatus.RUNNING
             else "[dim]stopped[/dim]"
         )
+        pr_display = _pr_list_label(job.pr_url, backend)
+        rebase_display = _rebase_list_label(job.rebase_info.state)
         table.add_row(
-            status_str, job_id, issue_display, job.agent, str(job.runs), job.target
+            status_str,
+            job_id,
+            issue_display,
+            job.agent,
+            str(job.runs),
+            pr_display,
+            rebase_display,
+            job.target,
         )
 
     console.print(table)
@@ -678,6 +720,73 @@ def kill(
         console.print(f"[bold]Killed agent for {job_id} (pid {job.pid})[/bold]")
     else:
         console.print(f"[dim]Agent already stopped for {job_id}[/dim]")
+
+
+@app.command()
+def rebase(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+    onto: Annotated[
+        str, typer.Option("--onto", help="Target ref to rebase onto.")
+    ] = "origin/main",
+    agent: Annotated[str | None, typer.Option(help="Agent type override.")] = None,
+    model: Annotated[str | None, typer.Option(help="Model override.")] = None,
+    max_attempts: Annotated[
+        int, typer.Option(help="Max conflict resolution attempts.")
+    ] = 3,
+) -> None:
+    """Rebase a job's worktree onto a newer commit (default: origin/main).
+
+    If conflicts arise, an agent is launched to resolve them automatically.
+    Escalates to human takeover if conflicts remain after max attempts.
+
+    Examples:
+        ptq rebase 174923
+        ptq rebase 20260214-174923 --onto origin/main
+        ptq rebase 174923 --agent codex --model o3 --max-attempts 2
+    """
+    from ptq.application.rebase_service import rebase as do_rebase
+
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+
+    console.print(f"[bold]Rebasing {job_id} onto {onto}[/bold]")
+    try:
+        result = do_rebase(
+            repo,
+            job_id,
+            target_ref=onto,
+            agent_name=agent,
+            model=model,
+            max_attempts=max_attempts,
+            on_progress=lambda msg: console.print(f"  {msg}"),
+        )
+    except PtqError as e:
+        _handle_error(e)
+
+    match result.state:
+        case RebaseState.SUCCEEDED:
+            console.print(
+                f"\n[bold green]Rebase complete.[/bold green] "
+                f"{result.before_sha[:10]} → {result.after_sha[:10]}"
+            )
+        case RebaseState.NEEDS_HUMAN:
+            console.print("\n[bold yellow]Needs human intervention.[/bold yellow]")
+            console.print(f"  {result.error}")
+            job = repo.get(job_id)
+            if job.local:
+                console.print(
+                    f"\n  cd {job.workspace}/jobs/{job_id}/pytorch && source ../.venv/bin/activate"
+                )
+            else:
+                console.print(
+                    f"\n  ssh -t {job.target} 'cd {job.workspace}/jobs/{job_id}/pytorch "
+                    f"&& source ../.venv/bin/activate && exec $SHELL'"
+                )
+        case _:
+            console.print(f"\n[red]Rebase failed: {result.error}[/red]")
 
 
 if __name__ == "__main__":

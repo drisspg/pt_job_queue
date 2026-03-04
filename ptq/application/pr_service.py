@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 
 from ptq.domain.models import PRResult, PtqError
@@ -11,10 +12,53 @@ _HTTPS_TO_SSH = {
     "https://github.com/": "git@github.com:",
 }
 
+_PR_STATE_TTL_SECONDS = 45.0
+_pr_state_cache: dict[str, tuple[float, str]] = {}
+
 
 def _read_file(backend: Backend, path: str) -> str:
     result = backend.run(f"cat {path}", check=False)
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _normalize_pr_state(raw_state: str, merged_at: str) -> str:
+    match raw_state.upper():
+        case "OPEN":
+            return "open"
+        case "MERGED":
+            return "merged"
+        case "CLOSED":
+            return "merged" if merged_at else "closed"
+        case _:
+            return "unknown"
+
+
+def get_pr_state(
+    backend: Backend,
+    pr_url: str,
+    *,
+    force_refresh: bool = False,
+    ttl_seconds: float = _PR_STATE_TTL_SECONDS,
+) -> str:
+    if not pr_url:
+        return "unknown"
+
+    now = time.monotonic()
+    cached = _pr_state_cache.get(pr_url)
+    if not force_refresh and cached and now - cached[0] < ttl_seconds:
+        return cached[1]
+
+    result = backend.run(
+        f"gh pr view '{pr_url}' --json state,mergedAt --jq '[.state, (.mergedAt // \"\")] | @tsv'",
+        check=False,
+    )
+    if result.returncode != 0:
+        state = "unknown"
+    else:
+        raw_state, _, merged_at = result.stdout.strip().partition("\t")
+        state = _normalize_pr_state(raw_state.strip(), merged_at.strip())
+    _pr_state_cache[pr_url] = (now, state)
+    return state
 
 
 def _build_pr_body(
@@ -77,6 +121,18 @@ def create_pr(
     backend = backend_for_job(job)
     job_dir = f"{backend.workspace}/jobs/{job_id}"
     worktree = f"{job_dir}/pytorch"
+    existing_open_pr_url = ""
+
+    if job.pr_url:
+        pr_state = get_pr_state(backend, job.pr_url, force_refresh=True)
+        match pr_state:
+            case "open":
+                existing_open_pr_url = job.pr_url
+                _log(f"Existing PR is open: {existing_open_pr_url}")
+            case "closed" | "merged":
+                _log(f"Stored PR is {pr_state}. Creating a new PR from current branch.")
+            case _:
+                _log("Stored PR state is unknown. Proceeding with create-or-find flow.")
 
     branch = f"ptq/{job.issue}" if job.issue is not None else f"ptq/{job_id}"
     pr_title = title or (
@@ -132,29 +188,44 @@ def create_pr(
         stderr = push_result.stderr.strip() if push_result.stderr else ""
         stdout = push_result.stdout.strip() if push_result.stdout else ""
         raise PtqError(f"git push failed: {stderr or stdout or 'unknown error'}")
-    _log("Creating PR...")
     body_escaped = body.replace("'", "'\\''")
-    result = backend.run(
-        f"cd {worktree} && "
-        f"gh pr create "
-        f"--title '{commit_msg}' "
-        f"--body '{body_escaped}' "
-        f"--head '{branch}'"
-        f"{' --draft' if draft else ''}",
-        check=False,
-    )
-
     url = ""
-    for line in result.stdout.strip().splitlines():
-        if line.startswith("http"):
-            url = line.strip()
-            break
+    if existing_open_pr_url:
+        _log("Updating existing PR...")
+        edit_result = backend.run(
+            f"cd {worktree} && "
+            f"gh pr edit '{existing_open_pr_url}' "
+            f"--title '{commit_msg}' "
+            f"--body '{body_escaped}'",
+            check=False,
+        )
+        if edit_result.returncode == 0:
+            url = existing_open_pr_url
+        else:
+            _log("Could not update existing PR, falling back to create-or-find flow.")
 
-    if not url and result.returncode != 0:
+    result = None
+    if not url:
+        _log("Creating PR...")
+        result = backend.run(
+            f"cd {worktree} && "
+            f"gh pr create "
+            f"--title '{commit_msg}' "
+            f"--body '{body_escaped}' "
+            f"--head '{branch}'"
+            f"{' --draft' if draft else ''}",
+            check=False,
+        )
+        for line in result.stdout.strip().splitlines():
+            if line.startswith("http"):
+                url = line.strip()
+                break
+
+    if not url and result and result.returncode != 0:
         stderr = result.stderr.strip() if result.stderr else ""
         if "already exists" in stderr:
             url = backend.run(
-                f"cd {worktree} && gh pr list --head '{branch}' --json url --jq '.[0].url'",
+                f"cd {worktree} && gh pr list --head '{branch}' --state open --json url --jq '.[0].url'",
                 check=False,
             ).stdout.strip()
             if url:

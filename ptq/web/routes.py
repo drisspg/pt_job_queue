@@ -17,7 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from ptq.agents import AGENTS, get_agent
 from ptq.application.artifact_service import read_artifact
 from ptq.config import cached_models, discover_models, discover_ssh_hosts, load_config
-from ptq.domain.models import PtqError, RunRequest
+from ptq.domain.models import PtqError, RebaseState, RunRequest
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.web.deps import get_job_status_with_finalize, templates
@@ -133,6 +133,80 @@ async def _run_pending_launch(launch: PendingLaunch) -> None:
     launch.finished_at = time.monotonic()
     _touch_launch(launch)
     _prune_pending_launches()
+
+
+@dataclass
+class PendingRebase:
+    job_id: str
+    target_ref: str
+    agent_name: str | None = None
+    model: str | None = None
+    max_attempts: int = 3
+    progress: list[str] = field(default_factory=list)
+    done_url: str | None = None
+    error: str | None = None
+    task: asyncio.Task | None = None
+    finished_at: float | None = None
+    wake_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+_pending_rebases: dict[str, PendingRebase] = {}
+
+
+def _touch_rebase(op: PendingRebase) -> None:
+    op.wake_event.set()
+
+
+def _prune_pending_rebases() -> None:
+    now = time.monotonic()
+    expired = [
+        op_id
+        for op_id, op in _pending_rebases.items()
+        if op.finished_at is not None
+        and now - op.finished_at > _PENDING_LAUNCH_TTL_SECONDS
+    ]
+    for op_id in expired:
+        _pending_rebases.pop(op_id, None)
+
+
+async def _run_pending_rebase(op: PendingRebase) -> None:
+    from ptq.application.rebase_service import rebase as do_rebase
+
+    loop = asyncio.get_running_loop()
+
+    def on_progress(msg: str) -> None:
+        loop.call_soon_threadsafe(_append_rebase_progress, msg)
+
+    def _append_rebase_progress(msg: str) -> None:
+        op.progress.append(msg)
+        _touch_rebase(op)
+
+    try:
+        result = await asyncio.to_thread(
+            do_rebase,
+            _repo(),
+            op.job_id,
+            target_ref=op.target_ref,
+            agent_name=op.agent_name,
+            model=op.model,
+            max_attempts=op.max_attempts,
+            on_progress=on_progress,
+        )
+    except Exception as exc:
+        log.exception("rebase failed: %s", exc)
+        op.error = str(exc)
+        op.finished_at = time.monotonic()
+        _touch_rebase(op)
+        return
+
+    from ptq.domain.models import RebaseState
+
+    if result.state == RebaseState.NEEDS_HUMAN:
+        op.error = result.error
+    op.done_url = f"/jobs/{op.job_id}"
+    op.finished_at = time.monotonic()
+    _touch_rebase(op)
+    _prune_pending_rebases()
 
 
 router = APIRouter()
@@ -397,7 +471,15 @@ async def job_detail(request: Request, job_id: str):
     default_model = job.model or cfg.effective_model(job.agent)
     am = cfg.models_for(job.agent)
     available_models = am.available or cached_models(job.agent)
+    pr_state = "unknown"
+    if job.pr_url:
+        from ptq.application.pr_service import get_pr_state
 
+        pr_state = await asyncio.to_thread(get_pr_state, backend_for_job(job), job.pr_url)
+
+    rb = job.rebase_info
+    if rb.state == RebaseState.SUCCEEDED:
+        repo.save_rebase(job_id, {})
     return templates.TemplateResponse(
         request,
         "job_detail.html",
@@ -413,9 +495,16 @@ async def job_detail(request: Request, job_id: str):
             "runs": job.runs,
             "agents": list(AGENTS.keys()),
             "pr_url": job.pr_url,
+            "pr_state": pr_state,
             "human_note": job.human_note or "",
             "workspace": job.workspace,
             "is_local": job.local,
+            "rebase_state": rb.state.value,
+            "rebase_target": rb.target_ref,
+            "rebase_before": rb.before_sha,
+            "rebase_after": rb.after_sha,
+            "rebase_attempts": rb.attempts,
+            "rebase_error": rb.error,
         },
     )
 
@@ -537,6 +626,84 @@ async def job_clean(job_id: str):
     log.info("cleaning %s", job_id)
     await asyncio.to_thread(clean_single_job, repo, job_id)
     return RedirectResponse(url="/jobs", status_code=303)
+
+
+@router.post("/jobs/{job_id}/rebase", response_class=HTMLResponse)
+async def job_rebase(
+    job_id: str,
+    target_ref: str = Form("origin/main"),
+    agent_type: str = Form(""),
+    model: str = Form(""),
+    max_attempts: int = Form(3),
+):
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
+
+    _prune_pending_rebases()
+    op_id = uuid.uuid4().hex[:12]
+    _pending_rebases[op_id] = PendingRebase(
+        job_id=job_id,
+        target_ref=target_ref.strip() or "origin/main",
+        agent_name=agent_type.strip() or None,
+        model=model.strip() or None,
+        max_attempts=max_attempts,
+    )
+    log.info("rebase requested for %s onto %s (op=%s)", job_id, target_ref, op_id)
+    return RedirectResponse(url=f"/jobs/rebasing/{op_id}", status_code=303)
+
+
+@router.get("/jobs/rebasing/{op_id}", response_class=HTMLResponse)
+async def job_rebasing_page(request: Request, op_id: str):
+    _prune_pending_rebases()
+    if op_id not in _pending_rebases:
+        raise HTTPException(status_code=404, detail="Rebase operation not found")
+    op = _pending_rebases[op_id]
+    return templates.TemplateResponse(
+        request, "job_rebasing.html", {"op_id": op_id, "job_id": op.job_id}
+    )
+
+
+@router.get("/jobs/rebasing/{op_id}/progress")
+async def job_rebase_progress(op_id: str):
+    _prune_pending_rebases()
+    op = _pending_rebases.get(op_id)
+    if op is None:
+
+        async def _not_found():
+            yield {"event": "error", "data": "Rebase operation not found."}
+
+        return EventSourceResponse(_not_found())
+
+    if op.task is None:
+        op.task = asyncio.create_task(_run_pending_rebase(op))
+
+    async def event_generator():
+        next_index = 0
+        while True:
+            while next_index < len(op.progress):
+                msg = op.progress[next_index]
+                next_index += 1
+                yield {"event": "progress", "data": html.escape(msg)}
+
+            if op.error is not None and op.done_url is not None:
+                yield {"event": "warning", "data": html.escape(op.error)}
+                yield {"event": "done", "data": op.done_url}
+                return
+            if op.error is not None:
+                yield {"event": "error", "data": html.escape(op.error)}
+                return
+            if op.done_url is not None:
+                yield {"event": "done", "data": op.done_url}
+                return
+
+            try:
+                await asyncio.wait_for(op.wake_event.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            op.wake_event.clear()
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/jobs/{job_id}/status", response_class=HTMLResponse)

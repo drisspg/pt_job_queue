@@ -16,25 +16,84 @@
   </hgroup>
 </header>
 
+{% set has_open_pr = pr_url and pr_state == "open" %}
+{% set has_closed_pr = pr_url and pr_state in ["closed", "merged"] %}
 <div class="actions">
   {% if status == "running" %}
   <form method="post" action="/jobs/{{ job_id }}/kill" style="display:inline">
-    <button type="submit" class="secondary" onclick="return confirm('Kill this agent?')">Kill</button>
+    <button type="submit" class="secondary" data-tip="Stop the running agent process" onclick="return confirm('Kill this agent?')">Kill</button>
   </form>
   {% endif %}
   {% if status != "running" %}
-    {% if pr_url %}
-    <button type="button" class="contrast" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Push Changes</button>
-    <a href="{{ pr_url }}" target="_blank" role="button" class="pr-view-btn">View PR</a>
+    {% if has_open_pr %}
+    <button type="button" class="contrast" data-tip="Push latest changes to the existing PR" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Push Changes</button>
     {% else %}
-    <button type="button" class="contrast" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Create PR</button>
+    <button type="button" class="contrast" data-tip="Create a GitHub PR from the worktree diff" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Create PR</button>
     {% endif %}
   {% endif %}
-  <button type="button" class="secondary outline" onclick="document.getElementById('takeover-cmd').hidden = !document.getElementById('takeover-cmd').hidden">Take Over</button>
-  <form method="post" action="/jobs/{{ job_id }}/clean" style="display:inline">
-    <button type="submit" class="secondary outline" onclick="return confirm('Remove this job and all its files?')">Clean</button>
-  </form>
+  <button type="button" class="secondary outline" data-tip="Copy SSH command to drop into the worktree" onclick="document.getElementById('takeover-cmd').hidden = !document.getElementById('takeover-cmd').hidden">Take Over</button>
+  <div class="actions-right">
+    {% if status != "running" %}
+    {% if has_open_pr %}
+    <a href="{{ pr_url }}" target="_blank" role="button" class="pr-view-btn" data-tip="Open the PR on GitHub">View PR</a>
+    {% elif has_closed_pr %}
+    <a href="{{ pr_url }}" target="_blank" role="button" class="secondary outline" data-tip="Open the last closed/merged PR on GitHub">Closed PR</a>
+    {% endif %}
+    <button type="button" class="secondary outline" data-tip="Rebase onto newer main (agent resolves conflicts)" onclick="document.getElementById('rebase-form').hidden = !document.getElementById('rebase-form').hidden">Rebase</button>
+    {% endif %}
+    <form method="post" action="/jobs/{{ job_id }}/clean" style="display:inline">
+      <button type="submit" class="btn-danger outline" data-tip="Delete all files and remove from tracking" onclick="return confirm('Remove this job and all its files?')">Clean</button>
+    </form>
+  </div>
 </div>
+
+{% if has_closed_pr %}
+<article class="pr-state-banner {{ pr_state }}">
+  <header>Closed PR detected</header>
+  <p><a href="{{ pr_url }}" target="_blank" class="pr-link">{{ pr_url }}</a></p>
+  <p>Create PR will open a new pull request for the latest commits.</p>
+</article>
+{% elif pr_url and pr_state == "unknown" %}
+<article class="pr-state-banner unknown">
+  <header>Pull request status unavailable</header>
+  <p>Could not verify the saved PR state right now. Create PR will re-check before updating.</p>
+</article>
+{% endif %}
+
+{% if rebase_state and rebase_state != "idle" %}
+<article class="rebase-status {{ rebase_state }}">
+  <header>Rebase: {{ rebase_state }}</header>
+  {% if rebase_state == "succeeded" %}
+  <p>Rebased onto <code>{{ rebase_target }}</code> — {{ rebase_before[:10] }} → {{ rebase_after[:10] }}</p>
+  {% elif rebase_state == "needs_human" %}
+  <p>{{ rebase_error }}</p>
+  <p>Use <strong>Take Over</strong> to resolve remaining conflicts manually.</p>
+  {% elif rebase_state == "failed" %}
+  <p>{{ rebase_error }}</p>
+  {% elif rebase_state == "running" %}
+  <p>Rebase in progress ({{ rebase_attempts }} attempt(s) so far)...</p>
+  {% endif %}
+</article>
+{% endif %}
+
+{% if status != "running" %}
+<form method="post" action="/jobs/{{ job_id }}/rebase" id="rebase-form" class="pr-note-form" hidden>
+  <fieldset>
+    <legend>Rebase</legend>
+    <div class="config-grid">
+      <label for="target_ref">Target Ref
+        <input type="text" id="target_ref" name="target_ref" value="origin/main" placeholder="e.g. origin/main">
+      </label>
+      <label for="rebase_max_attempts">Max Attempts
+        <input type="number" id="rebase_max_attempts" name="max_attempts" value="3" min="1" max="10">
+      </label>
+      <div>
+        <button type="submit" class="outline">Start Rebase</button>
+      </div>
+    </div>
+  </fieldset>
+</form>
+{% endif %}
 
 <div id="takeover-cmd" class="takeover-box" hidden>
   <pre><code id="takeover-text">{% if is_local %}cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate{% else %}ssh -t {{ target }} 'cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate && exec $SHELL'{% endif %}</code><button type="button" class="copy-icon" onclick="navigator.clipboard.writeText(document.getElementById('takeover-text').textContent).then(() => { const b = this; b.textContent = '✓'; b.classList.add('copied'); setTimeout(() => { b.textContent = '⧉'; b.classList.remove('copied'); }, 1500); });">⧉</button></pre>
@@ -46,8 +105,8 @@
     <legend>Human Note <small>(required)</small></legend>
     <textarea name="human_note" rows="5" required placeholder="What does this PR do?&#10;Why do you believe it's correct?&#10;How should the reviewer approach it? (trivial fix / RFC / needs careful review)">{{ human_note }}</textarea>
     <div class="pr-note-actions">
-      {% if not pr_url %}<label><input type="checkbox" name="draft" value="1"> Draft PR</label>{% endif %}
-      <button type="submit" class="contrast">{{ "Push" if pr_url else "Submit PR" }}</button>
+      {% if not has_open_pr %}<label><input type="checkbox" name="draft" value="1"> Draft PR</label>{% endif %}
+      <button type="submit" class="contrast">{{ "Push" if has_open_pr else "Submit PR" }}</button>
     </div>
   </fieldset>
 </form>
@@ -73,10 +132,10 @@
       {% else %}
       <input type="text" name="model" id="model" value="{{ default_model }}" placeholder="model">
       {% endif %}
-      <button type="button" class="refresh-models" title="Refresh models" onclick="refreshModels('{{ agent_name }}')">&#10227;</button>
+      <button type="button" class="refresh-models" data-tip="Fetch available models from agent CLI" onclick="refreshModels('{{ agent_name }}')">&#10227;</button>
       </span>
     </div>
-    <button type="submit" class="outline">Follow up</button>
+    <button type="submit" class="outline" data-tip="Launch a new agent run with this steering message">Follow up</button>
   </div>
 </form>
 
@@ -102,7 +161,7 @@ function refreshModels(agent) {
   <button class="tab-btn" data-tab="report">Report</button>
   <button class="tab-btn" data-tab="diff">Diff</button>
   <button class="tab-btn" data-tab="worklog">Worklog</button>
-  <button class="refresh-btn" id="refresh-btn" title="Fetch artifact">&#8635;</button>
+  <button class="refresh-btn" id="refresh-btn" data-tip="Re-fetch this tab from remote">&#8635;</button>
 </div>
 
 <div id="tab-content">

@@ -83,6 +83,16 @@ class JobRepository:
         self.save(job)
         return job.runs
 
+    def save_rebase(self, job_id: str, rebase_data: dict) -> None:
+        db = self._load_raw()
+        if job_id not in db:
+            return
+        if rebase_data:
+            db[job_id]["rebase"] = rebase_data
+        else:
+            db[job_id].pop("rebase", None)
+        self._save_raw(db)
+
     def save_pid(self, job_id: str, pid: int | None) -> None:
         db = self._load_raw()
         if job_id not in db:

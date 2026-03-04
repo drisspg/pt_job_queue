@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Rebasing {{ job_id }} — ptq{% endblock %}
+{% block content %}
+<h1>Rebasing {{ job_id }}</h1>
+
+<article id="progress-area">
+  <div id="progress-log" class="log-viewer" style="min-height: 120px; font-size: 13px;">
+    <span class="log-text">Starting rebase...</span>
+  </div>
+  <progress id="progress-bar"></progress>
+</article>
+
+<div id="warning-area" hidden>
+  <article class="error-banner" style="border-left-color: var(--yellow); color: var(--yellow); background: rgba(241,196,15,0.12);" id="warning-msg"></article>
+</div>
+
+<div id="error-area" hidden>
+  <article class="error-banner" id="error-msg"></article>
+  <a href="/jobs/{{ job_id }}" role="button" class="outline">Back to Job</a>
+</div>
+
+<script>
+(function() {
+  var logEl = document.getElementById('progress-log');
+  var progressBar = document.getElementById('progress-bar');
+  var errorArea = document.getElementById('error-area');
+  var errorMsg = document.getElementById('error-msg');
+  var warningArea = document.getElementById('warning-area');
+  var warningMsg = document.getElementById('warning-msg');
+
+  var source = new EventSource('/jobs/rebasing/{{ op_id }}/progress');
+
+  source.addEventListener('progress', function(e) {
+    var line = document.createElement('div');
+    line.innerHTML = '<span class="log-text">' + e.data + '</span>';
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  });
+
+  source.addEventListener('warning', function(e) {
+    warningMsg.textContent = e.data;
+    warningArea.hidden = false;
+  });
+
+  source.addEventListener('done', function(e) {
+    source.close();
+    progressBar.value = 1;
+    progressBar.max = 1;
+    window.location.href = e.data;
+  });
+
+  source.addEventListener('error', function(e) {
+    source.close();
+    progressBar.hidden = true;
+    if (e.data) {
+      errorMsg.textContent = e.data;
+    } else {
+      errorMsg.textContent = 'Connection lost during rebase.';
+    }
+    errorArea.hidden = false;
+  });
+})();
+</script>
+{% endblock %}

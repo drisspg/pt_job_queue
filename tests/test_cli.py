@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 
 from ptq.cli import app
-from ptq.domain.models import JobRecord
+from ptq.domain.models import JobRecord, RebaseInfo, RebaseState
 from ptq.infrastructure.job_repository import JobRepository
 
 runner = CliRunner()
@@ -224,3 +224,70 @@ class TestSetupValidation:
     def test_no_machine_no_local(self):
         result = runner.invoke(app, ["setup"])
         assert result.exit_code != 0
+
+
+class TestList:
+    def test_list_shows_pr_and_rebase_state(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="job-1",
+                    issue=176093,
+                    local=True,
+                    workspace="/tmp/ws",
+                    agent="cursor",
+                    runs=46,
+                    pr_url="https://github.com/pytorch/pytorch/pull/176243",
+                    rebase=RebaseInfo(state=RebaseState.NEEDS_HUMAN),
+                )
+            ],
+        )
+        mock_backend = MagicMock()
+        mock_backend.workspace = "/tmp/ws"
+        mock_backend.is_pid_alive.return_value = False
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.infrastructure.backends.backend_for_job", return_value=mock_backend
+            ),
+            patch("ptq.application.pr_service.get_pr_state", return_value="closed"),
+        ):
+            result = runner.invoke(app, ["list"])
+
+        assert result.exit_code == 0, result.output
+        assert "PR" in result.output
+        assert "Rebase" in result.output
+        assert "closed" in result.output
+        assert "human" in result.output
+
+    def test_list_shows_dashes_when_no_pr_or_rebase(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="job-2",
+                    issue=176094,
+                    local=True,
+                    workspace="/tmp/ws",
+                    agent="claude",
+                )
+            ],
+        )
+        mock_backend = MagicMock()
+        mock_backend.workspace = "/tmp/ws"
+        mock_backend.is_pid_alive.return_value = False
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.infrastructure.backends.backend_for_job", return_value=mock_backend
+            ),
+        ):
+            result = runner.invoke(app, ["list"])
+
+        assert result.exit_code == 0, result.output
+        assert "PR" in result.output
+        assert "Rebase" in result.output
+        assert "#176" in result.output

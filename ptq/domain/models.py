@@ -18,6 +18,53 @@ class JobNotFoundError(PtqError):
     pass
 
 
+class RebaseState(Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    NEEDS_HUMAN = "needs_human"
+    FAILED = "failed"
+
+
+@dataclass
+class RebaseInfo:
+    state: RebaseState = RebaseState.IDLE
+    target_ref: str = ""
+    before_sha: str = ""
+    after_sha: str = ""
+    attempts: int = 0
+    error: str = ""
+
+    def to_dict(self) -> dict:
+        if self.state == RebaseState.IDLE:
+            return {}
+        d: dict = {"state": self.state.value}
+        if self.target_ref:
+            d["target_ref"] = self.target_ref
+        if self.before_sha:
+            d["before_sha"] = self.before_sha
+        if self.after_sha:
+            d["after_sha"] = self.after_sha
+        if self.attempts:
+            d["attempts"] = self.attempts
+        if self.error:
+            d["error"] = self.error
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict) -> RebaseInfo:
+        if not data:
+            return cls()
+        return cls(
+            state=RebaseState(data.get("state", "idle")),
+            target_ref=data.get("target_ref", ""),
+            before_sha=data.get("before_sha", ""),
+            after_sha=data.get("after_sha", ""),
+            attempts=data.get("attempts", 0),
+            error=data.get("error", ""),
+        )
+
+
 @dataclass
 class JobRecord:
     job_id: str
@@ -32,10 +79,17 @@ class JobRecord:
     initializing: bool = False
     pr_url: str | None = None
     human_note: str | None = None
+    rebase: RebaseInfo | None = None
 
     @property
     def target(self) -> str:
         return self.machine or "local"
+
+    @property
+    def rebase_info(self) -> RebaseInfo:
+        if self.rebase is None:
+            self.rebase = RebaseInfo()
+        return self.rebase
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -57,11 +111,16 @@ class JobRecord:
             d["pr_url"] = self.pr_url
         if self.human_note:
             d["human_note"] = self.human_note
+        if self.rebase is not None:
+            rebase_data = self.rebase.to_dict()
+            if rebase_data:
+                d["rebase"] = rebase_data
         return d
 
     @classmethod
     def from_dict(cls, job_id: str, data: dict) -> JobRecord:
         local = data.get("local", False)
+        rebase_data = data.get("rebase")
         return cls(
             job_id=job_id,
             issue=data.get("issue"),
@@ -77,6 +136,7 @@ class JobRecord:
             initializing=data.get("initializing", False),
             pr_url=data.get("pr_url"),
             human_note=data.get("human_note"),
+            rebase=RebaseInfo.from_dict(rebase_data) if rebase_data else None,
         )
 
 

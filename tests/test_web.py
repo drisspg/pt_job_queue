@@ -113,6 +113,54 @@ class TestJobDetail:
         resp = client.get("/jobs/nonexistent-job")
         assert resp.status_code == 404
 
+    def test_no_pr_shows_create_pr(self, client):
+        resp = client.get("/jobs/20260217-100001")
+        assert resp.status_code == 200
+        assert "Create PR" in resp.text
+        assert "Push Changes" not in resp.text
+        assert "Closed PR" not in resp.text
+
+    def test_closed_pr_shows_create_pr_and_warning(self, tmp_path, mock_backend):
+        repo = _make_repo(tmp_path)
+        job = repo.get("20260217-100001")
+        job.pr_url = "https://github.com/pytorch/pytorch/pull/77"
+        repo.save(job)
+        with (
+            patch("ptq.web.routes._repo", return_value=repo),
+            patch("ptq.web.deps.JobRepository", return_value=repo),
+            patch("ptq.web.deps.backend_for_job", return_value=mock_backend),
+            patch("ptq.web.routes.backend_for_job", return_value=mock_backend),
+            patch("ptq.web.routes.load_config", return_value=TEST_CONFIG),
+            patch("ptq.application.pr_service.get_pr_state", return_value="closed"),
+        ):
+            test_client = TestClient(create_app())
+            resp = test_client.get("/jobs/20260217-100001")
+        assert resp.status_code == 200
+        assert "Create PR" in resp.text
+        assert "Push Changes" not in resp.text
+        assert "Closed PR" in resp.text
+        assert "Closed PR detected" in resp.text
+
+    def test_open_pr_shows_push_changes(self, tmp_path, mock_backend):
+        repo = _make_repo(tmp_path)
+        job = repo.get("20260217-100001")
+        job.pr_url = "https://github.com/pytorch/pytorch/pull/78"
+        repo.save(job)
+        with (
+            patch("ptq.web.routes._repo", return_value=repo),
+            patch("ptq.web.deps.JobRepository", return_value=repo),
+            patch("ptq.web.deps.backend_for_job", return_value=mock_backend),
+            patch("ptq.web.routes.backend_for_job", return_value=mock_backend),
+            patch("ptq.web.routes.load_config", return_value=TEST_CONFIG),
+            patch("ptq.application.pr_service.get_pr_state", return_value="open"),
+        ):
+            test_client = TestClient(create_app())
+            resp = test_client.get("/jobs/20260217-100001")
+        assert resp.status_code == 200
+        assert "Push Changes" in resp.text
+        assert "View PR" in resp.text
+        assert "Closed PR" not in resp.text
+
 
 class TestNewJobForm:
     def test_renders(self, client):

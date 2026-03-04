@@ -6,9 +6,40 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from ptq.application import pr_service
 from ptq.application.pr_service import _build_pr_body, _ensure_ssh_remote, create_pr
 from ptq.domain.models import JobRecord, PtqError
 from ptq.infrastructure.job_repository import JobRepository
+
+
+class TestPrState:
+    def test_get_pr_state_caches(self):
+        backend = MagicMock()
+        backend.run.return_value = CompletedProcess("", 0, "OPEN\t\n", "")
+        pr_service._pr_state_cache.clear()
+
+        first = pr_service.get_pr_state(
+            backend, "https://github.com/pytorch/pytorch/pull/99"
+        )
+        second = pr_service.get_pr_state(
+            backend, "https://github.com/pytorch/pytorch/pull/99"
+        )
+
+        assert first == "open"
+        assert second == "open"
+        assert backend.run.call_count == 1
+
+    def test_get_pr_state_closed_with_merged_at_is_merged(self):
+        backend = MagicMock()
+        backend.run.return_value = CompletedProcess(
+            "", 0, "CLOSED\t2026-03-04T10:00:00Z\n", ""
+        )
+        pr_service._pr_state_cache.clear()
+
+        state = pr_service.get_pr_state(
+            backend, "https://github.com/pytorch/pytorch/pull/100", force_refresh=True
+        )
+        assert state == "merged"
 
 
 class TestBuildPrBody:
@@ -116,6 +147,58 @@ class TestCreatePr:
                 repo, "20260217-42", human_note="Note", title="Custom Title"
             )
         assert result.branch == "ptq/42"
+
+    def test_updates_known_open_pr(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+        job = repo.get("20260217-42")
+        job.pr_url = "https://github.com/pytorch/pytorch/pull/77"
+        repo.save(job)
+
+        def run_side_effect(cmd, check=True):
+            if "gh pr view" in cmd:
+                return CompletedProcess("", 0, "OPEN\t\n", "")
+            if "gh pr edit 'https://github.com/pytorch/pytorch/pull/77'" in cmd:
+                return CompletedProcess("", 0, "", "")
+            if "git remote get-url" in cmd:
+                return CompletedProcess("", 0, "git@github.com:pytorch/pytorch.git\n")
+            if "git merge-base" in cmd:
+                return CompletedProcess("", 0, "abc123\n")
+            if "gh pr create" in cmd:
+                return CompletedProcess("", 1, "", "should not create")
+            return CompletedProcess("", 0, "")
+
+        backend.run = MagicMock(side_effect=run_side_effect)
+        with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
+            result = create_pr(repo, "20260217-42", human_note="Updated note")
+        assert result.url == "https://github.com/pytorch/pytorch/pull/77"
+        create_calls = [
+            c for c in backend.run.call_args_list if "gh pr create" in str(c)
+        ]
+        assert not create_calls
+
+    def test_closed_saved_pr_creates_new_pr(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+        job = repo.get("20260217-42")
+        job.pr_url = "https://github.com/pytorch/pytorch/pull/77"
+        repo.save(job)
+
+        def run_side_effect(cmd, check=True):
+            if "gh pr view" in cmd:
+                return CompletedProcess("", 0, "CLOSED\t\n", "")
+            if "git remote get-url" in cmd:
+                return CompletedProcess("", 0, "git@github.com:pytorch/pytorch.git\n")
+            if "git merge-base" in cmd:
+                return CompletedProcess("", 0, "abc123\n")
+            if "gh pr create" in cmd:
+                return CompletedProcess(
+                    "", 0, "https://github.com/pytorch/pytorch/pull/101\n", ""
+                )
+            return CompletedProcess("", 0, "")
+
+        backend.run = MagicMock(side_effect=run_side_effect)
+        with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
+            result = create_pr(repo, "20260217-42", human_note="Updated note")
+        assert result.url == "https://github.com/pytorch/pytorch/pull/101"
 
     def test_handles_existing_pr(self, tmp_path):
         repo, backend = self._setup(tmp_path)
