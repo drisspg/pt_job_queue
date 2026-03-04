@@ -15,7 +15,7 @@ class TestBuildPrBody:
     def test_human_note_at_top(self):
         body = _build_pr_body("Report", "", issue_number=42, human_note="Trivial fix")
         lines = body.splitlines()
-        assert lines[0] == "## Author's Note"
+        assert lines[0] == "## Human Note"
         assert lines[1] == "Trivial fix"
         assert "Fixes #42" in body
 
@@ -35,7 +35,7 @@ class TestBuildPrBody:
     def test_no_agent_content(self):
         body = _build_pr_body("", "", issue_number=None, human_note="Manual fix")
         assert "Manual fix" in body
-        assert "Author's Note" in body
+        assert "Human Note" in body
 
     def test_issue_reference(self):
         body = _build_pr_body("R", "", issue_number=99, human_note="Fix")
@@ -135,12 +135,15 @@ class TestCreatePr:
 
         backend.run = MagicMock(side_effect=run_side_effect)
         with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
-            result = create_pr(repo, "20260217-42", human_note="Fix")
+            result = create_pr(repo, "20260217-42", human_note="Updated note")
         assert result.url == "https://github.com/pytorch/pytorch/pull/88"
         assert (
             repo.get("20260217-42").pr_url
             == "https://github.com/pytorch/pytorch/pull/88"
         )
+        edit_calls = [c for c in backend.run.call_args_list if "gh pr edit" in str(c)]
+        assert len(edit_calls) == 1
+        assert "Updated note" in str(edit_calls[0])
 
     def test_failure_raises(self, tmp_path):
         repo, backend = self._setup(tmp_path)

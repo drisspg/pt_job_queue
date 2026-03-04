@@ -41,8 +41,8 @@
 {% if status != "running" %}
 <form method="post" action="/jobs/{{ job_id }}/pr" id="pr-form" class="pr-note-form" hidden>
   <fieldset>
-    <legend>Author's Note <small>(required)</small></legend>
-    <textarea name="human_note" rows="5" required placeholder="What does this PR do?&#10;Why do you believe it's correct?&#10;How should the reviewer approach it? (trivial fix / RFC / needs careful review)"></textarea>
+    <legend>Human Note <small>(required)</small></legend>
+    <textarea name="human_note" rows="5" required placeholder="What does this PR do?&#10;Why do you believe it's correct?&#10;How should the reviewer approach it? (trivial fix / RFC / needs careful review)">{{ human_note }}</textarea>
     <div class="pr-note-actions">
       {% if not pr_url %}<label><input type="checkbox" name="draft" value="1"> Draft PR</label>{% endif %}
       <button type="submit" class="contrast">{{ "Push" if pr_url else "Submit PR" }}</button>

@@ -31,6 +31,7 @@ class JobRecord:
     pid: int | None = None
     initializing: bool = False
     pr_url: str | None = None
+    human_note: str | None = None
 
     @property
     def target(self) -> str:
@@ -54,6 +55,8 @@ class JobRecord:
             d["initializing"] = True
         if self.pr_url:
             d["pr_url"] = self.pr_url
+        if self.human_note:
+            d["human_note"] = self.human_note
         return d
 
     @classmethod
@@ -73,6 +76,7 @@ class JobRecord:
             pid=data.get("pid"),
             initializing=data.get("initializing", False),
             pr_url=data.get("pr_url"),
+            human_note=data.get("human_note"),
         )
 
 

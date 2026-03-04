@@ -353,6 +353,7 @@ async def job_detail(request: Request, job_id: str):
             "runs": job.runs,
             "agents": list(AGENTS.keys()),
             "pr_url": job.pr_url,
+            "human_note": job.human_note or "",
             "workspace": job.workspace,
             "is_local": job.local,
         },
