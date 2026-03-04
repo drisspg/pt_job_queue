@@ -509,6 +509,14 @@ button.small {
   text-decoration: none;
   font-family: var(--mono);
   font-size: 12px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.pr-view-btn:hover {
+  background: var(--pico-primary-hover);
+  border-color: var(--pico-primary-hover);
 }
 
 /* PR link in timeline */

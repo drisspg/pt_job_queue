@@ -24,7 +24,8 @@
   {% endif %}
   {% if status != "running" %}
     {% if pr_url %}
-    <a href="{{ pr_url }}" target="_blank" role="button" class="contrast pr-view-btn">View PR</a>
+    <button type="button" class="contrast" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Push Changes</button>
+    <a href="{{ pr_url }}" target="_blank" role="button" class="pr-view-btn">View PR</a>
     {% else %}
     <button type="button" class="contrast" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Create PR</button>
     {% endif %}
@@ -37,14 +38,14 @@
   <pre><code id="takeover-text">{% if is_local %}cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate{% else %}ssh -t {{ target }} 'cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate && exec $SHELL'{% endif %}</code><button type="button" class="copy-icon" onclick="navigator.clipboard.writeText(document.getElementById('takeover-text').textContent).then(function(){var b=event.target;b.textContent='✓';b.classList.add('copied');setTimeout(function(){b.textContent='⧉';b.classList.remove('copied')},1500)})">⧉</button></pre>
 </div>
 
-{% if status != "running" and not pr_url %}
+{% if status != "running" %}
 <form method="post" action="/jobs/{{ job_id }}/pr" id="pr-form" class="pr-note-form" hidden>
   <fieldset>
     <legend>Author's Note <small>(required)</small></legend>
     <textarea name="human_note" rows="5" required placeholder="What does this PR do?&#10;Why do you believe it's correct?&#10;How should the reviewer approach it? (trivial fix / RFC / needs careful review)"></textarea>
     <div class="pr-note-actions">
-      <label><input type="checkbox" name="draft" value="1"> Draft PR</label>
-      <button type="submit" class="contrast">Submit PR</button>
+      {% if not pr_url %}<label><input type="checkbox" name="draft" value="1"> Draft PR</label>{% endif %}
+      <button type="submit" class="contrast">{{ "Push" if pr_url else "Submit PR" }}</button>
     </div>
   </fieldset>
 </form>
