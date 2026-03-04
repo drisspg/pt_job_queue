@@ -82,6 +82,7 @@ async def dashboard(request: Request):
                 "target": job.target,
                 "runs": job.runs,
                 "status": status,
+                "pr_url": job.pr_url,
             }
         )
 
@@ -116,6 +117,7 @@ async def job_list(request: Request, status_filter: str = "all"):
                 "target": job.target,
                 "runs": job.runs,
                 "status": status,
+                "pr_url": job.pr_url,
             }
         )
 
@@ -324,7 +326,7 @@ async def job_launch_progress(launch_id: str):
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
-async def job_detail(request: Request, job_id: str, pr_url: str | None = None):
+async def job_detail(request: Request, job_id: str):
     repo = _repo()
     with _catch_error():
         job_id = repo.resolve_id(job_id)
@@ -350,7 +352,7 @@ async def job_detail(request: Request, job_id: str, pr_url: str | None = None):
             "available_models": available_models,
             "runs": job.runs,
             "agents": list(AGENTS.keys()),
-            "pr_url": pr_url,
+            "pr_url": job.pr_url,
             "workspace": job.workspace,
             "is_local": job.local,
         },
@@ -434,7 +436,7 @@ async def job_create_pr(
         create_pr, repo, job_id, human_note=human_note, draft=bool(draft)
     )
     log.info("PR created for %s: %s", job_id, result.url)
-    return RedirectResponse(url=f"/jobs/{job_id}?pr_url={result.url}", status_code=303)
+    return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
 
 @router.post("/jobs/{job_id}/kill", response_class=HTMLResponse)

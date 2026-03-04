@@ -30,6 +30,7 @@ class JobRecord:
     workspace: str = "~/ptq_workspace"
     pid: int | None = None
     initializing: bool = False
+    pr_url: str | None = None
 
     @property
     def target(self) -> str:
@@ -51,6 +52,8 @@ class JobRecord:
             d["pid"] = self.pid
         if self.initializing:
             d["initializing"] = True
+        if self.pr_url:
+            d["pr_url"] = self.pr_url
         return d
 
     @classmethod
@@ -69,6 +72,7 @@ class JobRecord:
             ),
             pid=data.get("pid"),
             initializing=data.get("initializing", False),
+            pr_url=data.get("pr_url"),
         )
 
 

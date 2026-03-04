@@ -16,10 +16,6 @@
   </hgroup>
 </header>
 
-{% if pr_url %}
-<article class="pr-banner">PR created: <a href="{{ pr_url }}" target="_blank">{{ pr_url }}</a></article>
-{% endif %}
-
 <div class="actions">
   {% if status == "running" %}
   <form method="post" action="/jobs/{{ job_id }}/kill" style="display:inline">
@@ -27,7 +23,11 @@
   </form>
   {% endif %}
   {% if status != "running" %}
-  <button type="button" class="contrast" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Create PR</button>
+    {% if pr_url %}
+    <a href="{{ pr_url }}" target="_blank" role="button" class="contrast pr-view-btn">View PR</a>
+    {% else %}
+    <button type="button" class="contrast" onclick="document.getElementById('pr-form').hidden = !document.getElementById('pr-form').hidden">Create PR</button>
+    {% endif %}
   {% endif %}
   <button type="button" class="secondary outline" onclick="document.getElementById('takeover-cmd').hidden = !document.getElementById('takeover-cmd').hidden">Take Over</button>
   <button class="secondary outline" hx-delete="/jobs/{{ job_id }}" hx-confirm="Remove this job and all its files?" hx-target="body" hx-swap="innerHTML">Clean</button>
@@ -37,7 +37,7 @@
   <pre><code id="takeover-text">{% if is_local %}cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate{% else %}ssh -t {{ target }} 'cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate && exec $SHELL'{% endif %}</code><button type="button" class="copy-icon" onclick="navigator.clipboard.writeText(document.getElementById('takeover-text').textContent).then(function(){var b=event.target;b.textContent='✓';b.classList.add('copied');setTimeout(function(){b.textContent='⧉';b.classList.remove('copied')},1500)})">⧉</button></pre>
 </div>
 
-{% if status != "running" %}
+{% if status != "running" and not pr_url %}
 <form method="post" action="/jobs/{{ job_id }}/pr" id="pr-form" class="pr-note-form" hidden>
   <fieldset>
     <legend>Author's Note <small>(required)</small></legend>

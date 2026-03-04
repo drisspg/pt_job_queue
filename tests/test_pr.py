@@ -96,6 +96,10 @@ class TestCreatePr:
             result = create_pr(repo, "20260217-42", human_note="Trivial fix")
         assert result.url == "https://github.com/pytorch/pytorch/pull/99"
         assert result.branch == "ptq/42"
+        assert (
+            repo.get("20260217-42").pr_url
+            == "https://github.com/pytorch/pytorch/pull/99"
+        )
 
     def test_empty_note_raises(self, tmp_path):
         repo, backend = self._setup(tmp_path)
@@ -133,6 +137,10 @@ class TestCreatePr:
         with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
             result = create_pr(repo, "20260217-42", human_note="Fix")
         assert result.url == "https://github.com/pytorch/pytorch/pull/88"
+        assert (
+            repo.get("20260217-42").pr_url
+            == "https://github.com/pytorch/pytorch/pull/88"
+        )
 
     def test_failure_raises(self, tmp_path):
         repo, backend = self._setup(tmp_path)

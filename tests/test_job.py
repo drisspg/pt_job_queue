@@ -68,6 +68,20 @@ class TestJobRecord:
         assert JobRecord(job_id="j", machine="gpu-dev").target == "gpu-dev"
         assert JobRecord(job_id="j", local=True).target == "local"
 
+    def test_pr_url_roundtrip(self):
+        record = JobRecord(
+            job_id="j",
+            pr_url="https://github.com/pytorch/pytorch/pull/99",
+        )
+        d = record.to_dict()
+        assert d["pr_url"] == "https://github.com/pytorch/pytorch/pull/99"
+        restored = JobRecord.from_dict("j", d)
+        assert restored.pr_url == "https://github.com/pytorch/pytorch/pull/99"
+
+    def test_pr_url_omitted_when_none(self):
+        d = JobRecord(job_id="j").to_dict()
+        assert "pr_url" not in d
+
     def test_initializing_omitted_when_false(self):
         d = JobRecord(job_id="j").to_dict()
         assert "initializing" not in d

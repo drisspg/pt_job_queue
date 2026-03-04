@@ -46,6 +46,7 @@
             {% if job.issue %}#{{ job.issue }}{% else %}adhoc{% endif %}
             · {{ job.agent }}
             · {{ job.target }}
+            {% if job.pr_url %}· <a href="{{ job.pr_url }}" target="_blank" class="pr-link">PR</a>{% endif %}
           </small>
         </div>
       </a>

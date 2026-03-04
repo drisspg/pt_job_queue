@@ -1,5 +1,8 @@
 <tr id="job-{{ job.id }}">
-  <td><span class="badge {{ job.status }}">{{ job.status }}</span></td>
+  <td>
+    <span class="badge {{ job.status }}">{{ job.status }}</span>
+    {% if job.pr_url %}<a href="{{ job.pr_url }}" target="_blank" class="badge pr" title="View PR">PR</a>{% endif %}
+  </td>
   <td><a href="/jobs/{{ job.id }}">{{ job.id }}</a></td>
   <td>{% if job.issue %}#{{ job.issue }}{% else %}<span class="muted">adhoc</span>{% endif %}</td>
   <td>{{ job.agent }}</td>

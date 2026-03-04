@@ -491,19 +491,34 @@ button.small {
   color: var(--text);
 }
 
-/* PR banner */
-.pr-banner {
-  background: var(--green-bg);
-  border-left: 3px solid var(--green);
-  color: var(--green);
-  padding: 8px 14px;
-  margin-bottom: 1em;
+/* PR badge in job list */
+.badge.pr {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  text-decoration: none;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.badge.pr:hover {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+/* PR view button in actions */
+.pr-view-btn {
+  text-decoration: none;
   font-family: var(--mono);
   font-size: 12px;
 }
 
-.pr-banner a {
-  color: var(--accent);
+/* PR link in timeline */
+.pr-link {
+  color: #a78bfa;
+  text-decoration: none;
+}
+
+.pr-link:hover {
+  color: #c4b5fd;
 }
 
 /* Error banner */

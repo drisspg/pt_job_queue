@@ -138,13 +138,15 @@ def create_pr(
     if not url and result.returncode != 0:
         stderr = result.stderr.strip() if result.stderr else ""
         if "already exists" in stderr:
-            list_result = backend.run(
+            url = backend.run(
                 f"cd {worktree} && gh pr list --head '{branch}' --json url --jq '.[0].url'",
                 check=False,
-            )
-            url = list_result.stdout.strip()
-            if url:
-                return PRResult(url=url, branch=branch)
-        raise PtqError(f"gh pr create failed: {stderr or result.stdout}")
+            ).stdout.strip()
+        if not url:
+            raise PtqError(f"gh pr create failed: {stderr or result.stdout}")
+
+    if url:
+        job.pr_url = url
+        repo.save(job)
 
     return PRResult(url=url, branch=branch)
