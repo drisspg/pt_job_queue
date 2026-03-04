@@ -94,31 +94,48 @@ def create_pr(
         f"worklog.md {'found' if worklog else 'missing'}"
     )
 
+    commit_msg = pr_title.replace("'", "'\\''")
+    _log(f"Checking out branch {branch}...")
+    backend.run(f"cd {worktree} && git checkout -B '{branch}'")
     _log("Staging changes...")
     backend.run(f"cd {worktree} && git add -A")
-
-    commit_msg = pr_title.replace("'", "'\\''")
-    _log(f"Creating branch {branch} (single commit)...")
-    base = backend.run(
-        f"cd {worktree} && git merge-base HEAD origin/main", check=False
-    ).stdout.strip()
-    backend.run(f"cd {worktree} && git checkout -B '{branch}'")
-    if base:
-        backend.run(f"cd {worktree} && git reset --soft {base}")
     backend.run(
         f"cd {worktree} && git reset HEAD -- .claude/ .cursorrules AGENTS.md",
         check=False,
     )
-    backend.run(
-        f"cd {worktree} && git commit -m '{commit_msg}' --allow-empty",
-        check=False,
+    has_staged_changes = (
+        backend.run(
+            f"cd {worktree} && git diff --cached --quiet", check=False
+        ).returncode
+        != 0
     )
+    if has_staged_changes:
+        _log("Creating commit...")
+        commit_result = backend.run(
+            f"cd {worktree} && git commit -m '{commit_msg}'",
+            check=False,
+        )
+        if commit_result.returncode != 0:
+            stderr = commit_result.stderr.strip() if commit_result.stderr else ""
+            stdout = commit_result.stdout.strip() if commit_result.stdout else ""
+            raise PtqError(f"git commit failed: {stderr or stdout or 'unknown error'}")
+    else:
+        _log("No staged changes to commit.")
 
     _ensure_ssh_remote(backend, worktree, _log)
-    _log("Pushing and creating PR...")
+    _log("Pushing branch...")
+    push_result = backend.run(
+        f"cd {worktree} && git push -u origin '{branch}'",
+        check=False,
+    )
+    if push_result.returncode != 0:
+        stderr = push_result.stderr.strip() if push_result.stderr else ""
+        stdout = push_result.stdout.strip() if push_result.stdout else ""
+        raise PtqError(f"git push failed: {stderr or stdout or 'unknown error'}")
+    _log("Creating PR...")
     body_escaped = body.replace("'", "'\\''")
     result = backend.run(
-        f"cd {worktree} && git push -u origin '{branch}' --force && "
+        f"cd {worktree} && "
         f"gh pr create "
         f"--title '{commit_msg}' "
         f"--body '{body_escaped}' "

@@ -4,8 +4,10 @@ import asyncio
 import html
 import logging
 import re
+import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 
 import markdown as md_lib
 from fastapi import APIRouter, Form, HTTPException, Request
@@ -22,10 +24,41 @@ from ptq.web.deps import get_job_status_with_finalize, templates
 
 log = logging.getLogger("ptq.web")
 
-_pending_launches: dict[str, dict] = {}
-
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\r")
 MAX_RESULT_LINES = 20
+_PENDING_LAUNCH_TTL_SECONDS = 600.0
+
+
+@dataclass
+class PendingLaunch:
+    params: dict[str, str | int]
+    progress: list[str] = field(default_factory=list)
+    done_url: str | None = None
+    error: str | None = None
+    task: asyncio.Task | None = None
+    updated_at: float = field(default_factory=time.monotonic)
+    finished_at: float | None = None
+    wake_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+_pending_launches: dict[str, PendingLaunch] = {}
+
+
+def _touch_launch(launch: PendingLaunch) -> None:
+    launch.updated_at = time.monotonic()
+    launch.wake_event.set()
+
+
+def _prune_pending_launches() -> None:
+    now = time.monotonic()
+    expired = [
+        launch_id
+        for launch_id, launch in _pending_launches.items()
+        if launch.finished_at is not None
+        and now - launch.finished_at > _PENDING_LAUNCH_TTL_SECONDS
+    ]
+    for launch_id in expired:
+        _pending_launches.pop(launch_id, None)
 
 
 def _render_md(text: str) -> str:
@@ -34,6 +67,72 @@ def _render_md(text: str) -> str:
 
 def _repo() -> JobRepository:
     return JobRepository()
+
+
+async def _run_pending_launch(launch: PendingLaunch) -> None:
+    from ptq.application import run_service
+    from ptq.infrastructure.backends import create_backend
+
+    params = launch.params
+    is_local = params["target_type"] == "local"
+    machine_name = str(params["machine"]) or None
+    issue_raw = str(params["issue"])
+    issue_number = int(issue_raw) if issue_raw else None
+    message_text = str(params["message"]) or None
+
+    backend = create_backend(machine=machine_name, local=is_local)
+    loop = asyncio.get_running_loop()
+
+    def on_progress(msg: str) -> None:
+        loop.call_soon_threadsafe(_append_progress, msg)
+
+    def _append_progress(msg: str) -> None:
+        launch.progress.append(msg)
+        _touch_launch(launch)
+
+    try:
+        issue_data = None
+        if issue_number is not None:
+            from ptq.issue import fetch_issue
+
+            issue_data = await asyncio.to_thread(fetch_issue, issue_number)
+
+        run_request = RunRequest(
+            issue_data=issue_data,
+            issue_number=issue_number,
+            message=message_text,
+            machine=machine_name,
+            local=is_local,
+            follow=False,
+            model=str(params["model"]),
+            max_turns=int(params["max_turns"]),
+            agent_type=str(params["agent"]),
+        )
+
+        log.info(
+            "creating job: agent=%s model=%s target=%s",
+            params["agent"],
+            params["model"],
+            "local" if is_local else machine_name,
+        )
+        job_id = await asyncio.to_thread(
+            run_service.launch,
+            _repo(),
+            backend,
+            run_request,
+            on_progress=on_progress,
+        )
+    except Exception as exc:
+        log.exception("launch failed: %s", exc)
+        launch.error = str(exc)
+        launch.finished_at = time.monotonic()
+        _touch_launch(launch)
+        return
+
+    launch.done_url = f"/jobs/{job_id}"
+    launch.finished_at = time.monotonic()
+    _touch_launch(launch)
+    _prune_pending_launches()
 
 
 router = APIRouter()
@@ -221,22 +320,26 @@ async def job_create(
             status_code=422,
         )
 
+    _prune_pending_launches()
     launch_id = uuid.uuid4().hex[:12]
-    _pending_launches[launch_id] = {
-        "task_type": task_type,
-        "issue": issue.strip(),
-        "message": message.strip(),
-        "target_type": target_type,
-        "machine": machine.strip(),
-        "agent": agent,
-        "model": model,
-        "max_turns": max_turns,
-    }
+    _pending_launches[launch_id] = PendingLaunch(
+        params={
+            "task_type": task_type,
+            "issue": issue.strip(),
+            "message": message.strip(),
+            "target_type": target_type,
+            "machine": machine.strip(),
+            "agent": agent,
+            "model": model,
+            "max_turns": max_turns,
+        }
+    )
     return RedirectResponse(url=f"/jobs/launching/{launch_id}", status_code=303)
 
 
 @router.get("/jobs/launching/{launch_id}", response_class=HTMLResponse)
 async def job_launching(request: Request, launch_id: str):
+    _prune_pending_launches()
     if launch_id not in _pending_launches:
         raise HTTPException(status_code=404, detail="Launch not found")
     return templates.TemplateResponse(
@@ -246,81 +349,38 @@ async def job_launching(request: Request, launch_id: str):
 
 @router.get("/jobs/launching/{launch_id}/progress")
 async def job_launch_progress(launch_id: str):
-    params = _pending_launches.pop(launch_id, None)
-    if params is None:
+    _prune_pending_launches()
+    launch = _pending_launches.get(launch_id)
+    if launch is None:
 
         async def _not_found():
             yield {"event": "error", "data": "Launch not found."}
 
         return EventSourceResponse(_not_found())
 
-    progress_queue: asyncio.Queue[str] = asyncio.Queue()
-
-    def on_progress(msg: str):
-        progress_queue.put_nowait(msg)
-
-    async def run_launch():
-        from ptq.application import run_service
-        from ptq.infrastructure.backends import create_backend
-
-        is_local = params["target_type"] == "local"
-        machine_name = params["machine"] or None
-        issue_number = int(params["issue"]) if params["issue"] else None
-        message_text = params["message"] or None
-
-        backend = create_backend(machine=machine_name, local=is_local)
-
-        issue_data = None
-        if issue_number is not None:
-            from ptq.issue import fetch_issue
-
-            issue_data = await asyncio.to_thread(fetch_issue, issue_number)
-
-        request = RunRequest(
-            issue_data=issue_data,
-            issue_number=issue_number,
-            message=message_text,
-            machine=machine_name,
-            local=is_local,
-            follow=False,
-            model=params["model"],
-            max_turns=params["max_turns"],
-            agent_type=params["agent"],
-        )
-
-        log.info(
-            "creating job: agent=%s model=%s target=%s",
-            params["agent"],
-            params["model"],
-            "local" if is_local else machine_name,
-        )
-        return await asyncio.to_thread(
-            run_service.launch,
-            _repo(),
-            backend,
-            request,
-            on_progress=on_progress,
-        )
+    if launch.task is None:
+        launch.task = asyncio.create_task(_run_pending_launch(launch))
 
     async def event_generator():
-        task = asyncio.create_task(run_launch())
-        while not task.done():
-            try:
-                msg = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+        next_index = 0
+        while True:
+            while next_index < len(launch.progress):
+                msg = launch.progress[next_index]
+                next_index += 1
                 yield {"event": "progress", "data": html.escape(msg)}
+
+            if launch.error is not None:
+                yield {"event": "error", "data": html.escape(launch.error)}
+                return
+            if launch.done_url is not None:
+                yield {"event": "done", "data": launch.done_url}
+                return
+
+            try:
+                await asyncio.wait_for(launch.wake_event.wait(), timeout=0.5)
             except asyncio.TimeoutError:
                 continue
-        while not progress_queue.empty():
-            msg = progress_queue.get_nowait()
-            yield {"event": "progress", "data": html.escape(msg)}
-
-        exc = task.exception()
-        if exc:
-            log.exception("launch failed: %s", exc)
-            yield {"event": "error", "data": html.escape(str(exc))}
-        else:
-            job_id = task.result()
-            yield {"event": "done", "data": f"/jobs/{job_id}"}
+            launch.wake_event.clear()
 
     return EventSourceResponse(event_generator())
 
@@ -463,7 +523,20 @@ async def job_delete(job_id: str):
 
     log.info("cleaning %s", job_id)
     await asyncio.to_thread(clean_single_job, repo, job_id)
-    return HTMLResponse("")
+    return HTMLResponse("", headers={"HX-Redirect": "/jobs"})
+
+
+@router.post("/jobs/{job_id}/clean", response_class=HTMLResponse)
+async def job_clean(job_id: str):
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
+
+    from ptq.application.job_service import clean_single_job
+
+    log.info("cleaning %s", job_id)
+    await asyncio.to_thread(clean_single_job, repo, job_id)
+    return RedirectResponse(url="/jobs", status_code=303)
 
 
 @router.get("/jobs/{job_id}/status", response_class=HTMLResponse)
@@ -503,7 +576,9 @@ async def job_diff(job_id: str):
     result = backend.run(f"git -C {worktree} diff", check=False)
     content = result.stdout.strip() if result.returncode == 0 else None
     if not content:
-        return HTMLResponse('<p class="muted">No changes in worktree.</p>')
+        return HTMLResponse(
+            '<p class="muted">No diff yet (no changes in worktree).</p>'
+        )
     escaped = html.escape(content)
     styled: list[str] = []
     for line in escaped.splitlines():

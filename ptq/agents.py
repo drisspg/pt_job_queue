@@ -277,8 +277,6 @@ class CursorAgent:
                     events.append(
                         StreamEvent(kind="error", text=text or "unknown error")
                     )
-                elif text:
-                    events.append(StreamEvent(kind="text", text=text))
         return events
 
     def extract_summary(self, log_content: str) -> str | None:

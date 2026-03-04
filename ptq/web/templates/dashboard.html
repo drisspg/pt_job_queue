@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — ptq{% endblock %}
 {% block content %}
-<div hx-get="/" hx-trigger="every 10s" hx-select="#dashboard-content" hx-target="#dashboard-content" hx-swap="outerHTML">
+<div hx-get="/dashboard" hx-trigger="every 10s" hx-select="#dashboard-content" hx-target="#dashboard-content" hx-swap="outerHTML">
 <div id="dashboard-content">
 
   <h1>Dashboard</h1>
@@ -38,18 +38,22 @@
   <div class="timeline">
     {% for job in jobs|reverse %}
     <div class="timeline-item {{ job.status }}">
-      <a href="/jobs/{{ job.id }}">
-        <span class="timeline-dot"></span>
-        <div class="timeline-content">
-          <strong>{{ job.id }}</strong>
-          <small>
-            {% if job.issue %}#{{ job.issue }}{% else %}adhoc{% endif %}
-            · {{ job.agent }}
-            · {{ job.target }}
-            {% if job.pr_url %}· <a href="{{ job.pr_url }}" target="_blank" class="pr-link">PR</a>{% endif %}
-          </small>
+      <div class="timeline-row">
+        <a href="/jobs/{{ job.id }}" class="timeline-main">
+          <span class="timeline-dot"></span>
+          <div class="timeline-content">
+            <strong>{{ job.id }}</strong>
+            <small>
+              {% if job.issue %}#{{ job.issue }}{% else %}adhoc{% endif %}
+              · {{ job.agent }}
+              · {{ job.target }}
+            </small>
+          </div>
+        </a>
+        {% if job.pr_url %}
+        <a href="{{ job.pr_url }}" target="_blank" class="pr-link">PR</a>
+        {% endif %}
         </div>
-      </a>
     </div>
     {% endfor %}
   </div>

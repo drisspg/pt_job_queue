@@ -342,7 +342,7 @@ td a {
 }
 
 .pr-note-form fieldset { margin-bottom: 0; }
-.pr-note-form legend small { color: var(--muted); font-weight: normal; }
+.pr-note-form legend small { color: var(--text-muted); font-weight: normal; }
 .pr-note-form textarea { font-size: 13px; }
 
 .pr-note-actions {
@@ -381,7 +381,7 @@ td a {
   background: none;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 14px;
   padding: 2px 6px;
   margin: 0;
@@ -427,8 +427,24 @@ button.small {
 
 .timeline-item {
   position: relative;
-  padding-left: 1.5em;
+  padding-left: 0;
   margin-bottom: 0.8em;
+}
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8em;
+}
+
+.timeline-main {
+  position: relative;
+  display: block;
+  flex: 1;
+  padding-left: 1.5em;
+  text-decoration: none;
+  color: inherit;
 }
 
 .timeline-dot {
@@ -461,12 +477,7 @@ button.small {
   font-size: 11px;
 }
 
-.timeline-item a {
-  text-decoration: none;
-  color: inherit;
-}
-
-.timeline-item a:hover .timeline-content strong {
+.timeline-main:hover .timeline-content strong {
   color: var(--accent);
 }
 
@@ -595,7 +606,7 @@ button.small {
   border: 1px solid var(--border);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 22px;
   line-height: 1;

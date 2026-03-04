@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -251,6 +252,15 @@ class TestJobActions:
         ):
             resp = client.delete("/jobs/20260217-100001")
         assert resp.status_code == 200
+        assert resp.headers.get("HX-Redirect") == "/jobs"
+
+    def test_clean_post_redirects(self, client, mock_backend):
+        with patch(
+            "ptq.application.job_service.backend_for_job", return_value=mock_backend
+        ):
+            resp = client.post("/jobs/20260217-100001/clean", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/jobs"
 
     def test_create_pr_redirects(self, client, mock_backend):
         from ptq.domain.models import PRResult
@@ -326,6 +336,52 @@ class TestJobActions:
         assert resp.status_code == 303
         request = mock.call_args.args[2]
         assert request.model == "opus"
+
+
+class TestLaunching:
+    def test_launch_progress_reconnect_keeps_state(self, client, mock_backend):
+        create_resp = client.post(
+            "/jobs",
+            data={
+                "task_type": "adhoc",
+                "issue": "",
+                "message": "investigate regression",
+                "target_type": "local",
+                "machine": "",
+                "agent": "claude",
+                "model": "opus",
+                "max_turns": "100",
+            },
+            follow_redirects=False,
+        )
+        assert create_resp.status_code == 303
+        launch_id = re.search(
+            r"/jobs/launching/([a-f0-9]+)$", create_resp.headers["location"]
+        ).group(1)
+
+        with (
+            patch(
+                "ptq.infrastructure.backends.create_backend", return_value=mock_backend
+            ),
+            patch(
+                "ptq.application.run_service.launch", return_value="20260217-100001"
+            ) as launch_mock,
+        ):
+            first = client.get(f"/jobs/launching/{launch_id}/progress")
+            second = client.get(f"/jobs/launching/{launch_id}/progress")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert "event: done" in first.text
+        assert "event: done" in second.text
+        assert "/jobs/20260217-100001" in second.text
+        assert "Launch not found." not in second.text
+        assert launch_mock.call_count == 1
+
+    def test_launch_progress_missing_launch(self, client):
+        resp = client.get("/jobs/launching/doesnotexist/progress")
+        assert resp.status_code == 200
+        assert "Launch not found." in resp.text
 
 
 class TestPartials:

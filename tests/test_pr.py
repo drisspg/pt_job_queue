@@ -163,3 +163,15 @@ class TestCreatePr:
             pytest.raises(PtqError, match="gh pr create failed"),
         ):
             create_pr(repo, "20260217-42", human_note="Fix")
+
+    def test_pushes_without_force(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+        with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
+            create_pr(repo, "20260217-42", human_note="Trivial fix")
+        push_calls = [
+            call
+            for call in backend.run.call_args_list
+            if "git push -u origin" in str(call)
+        ]
+        assert len(push_calls) == 1
+        assert "--force" not in str(push_calls[0])
