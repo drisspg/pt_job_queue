@@ -297,13 +297,13 @@ td a {
 
 .refresh-btn {
   margin-left: auto;
-  padding: 4px 10px;
+  padding: 10px 16px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 26px;
   line-height: 1;
   margin-bottom: 0;
 }
@@ -311,6 +311,16 @@ td a {
 .refresh-btn:hover {
   color: var(--text);
   background: rgba(255, 255, 255, 0.08);
+}
+
+.refresh-btn.spinning {
+  animation: spin 0.8s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Actions row */
@@ -581,19 +591,22 @@ button.small {
 
 .refresh-models {
   flex-shrink: 0;
-  padding: 4px 6px;
+  padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: 22px;
   line-height: 1;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .refresh-models:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
-.refresh-models.spinning { animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.refresh-models.spinning { animation: spin 0.8s linear infinite; pointer-events: none; }
 
 /* Follow-up form */
 .rerun-form {

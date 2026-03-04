@@ -498,9 +498,11 @@ async def job_diff(job_id: str):
     with _catch_error():
         job = repo.get(job_id)
     backend = backend_for_job(job)
-    content = read_artifact(backend, f"{backend.workspace}/jobs/{job_id}/fix.diff")
+    worktree = f"{backend.workspace}/jobs/{job_id}/pytorch"
+    result = backend.run(f"git -C {worktree} diff", check=False)
+    content = result.stdout.strip() if result.returncode == 0 else None
     if not content:
-        return HTMLResponse('<p class="muted">No diff yet.</p>')
+        return HTMLResponse('<p class="muted">No changes in worktree.</p>')
     escaped = html.escape(content)
     styled: list[str] = []
     for line in escaped.splitlines():

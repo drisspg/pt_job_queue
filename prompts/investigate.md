@@ -44,7 +44,7 @@ Run ALL python commands with `{workspace}/jobs/{job_id}/.venv/bin/python`. NEVER
   {workspace}/jobs/{job_id}/.venv/bin/python {workspace}/jobs/{job_id}/repro.py
   ```
 - If no repro script exists, write one based on the issue description and run it.
-- Confirm you see the reported error/behavior.
+- **You MUST confirm you can reproduce the reported failure before moving on.** If the repro script passes (no error), try adjusting it (different inputs, flags, or environment) to trigger the failure. If you still cannot reproduce it after reasonable attempts, stop and document in `report.md` that the issue could not be reproduced on this machine, including the hardware, PyTorch version, and what you tried. Do NOT attempt a fix for a bug you cannot observe.
 
 ### 2. Investigate
 - Read relevant PyTorch source code in `{workspace}/jobs/{job_id}/pytorch/`.
