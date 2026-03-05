@@ -96,7 +96,7 @@
 {% endif %}
 
 <div id="takeover-cmd" class="takeover-box" hidden>
-  <pre><code id="takeover-text">{% if is_local %}cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate{% else %}ssh -t {{ target }} 'cd {{ workspace }}/jobs/{{ job_id }}/pytorch && source ../.venv/bin/activate && exec $SHELL'{% endif %}</code><button type="button" class="copy-icon" onclick="navigator.clipboard.writeText(document.getElementById('takeover-text').textContent).then(() => { const b = this; b.textContent = '✓'; b.classList.add('copied'); setTimeout(() => { b.textContent = '⧉'; b.classList.remove('copied'); }, 1500); });">⧉</button></pre>
+  <pre><code id="takeover-text">{% if is_local %}cd {{ workspace }}/jobs/{{ job_id }} && source .venv/bin/activate{% else %}ssh -t {{ target }} 'cd {{ workspace }}/jobs/{{ job_id }} && source .venv/bin/activate && exec $SHELL'{% endif %}</code><button type="button" class="copy-icon" onclick="navigator.clipboard.writeText(document.getElementById('takeover-text').textContent).then(() => { const b = this; b.textContent = '✓'; b.classList.add('copied'); setTimeout(() => { b.textContent = '⧉'; b.classList.remove('copied'); }, 1500); });">⧉</button></pre>
 </div>
 
 {% if status != "running" %}

@@ -70,6 +70,7 @@ def _try_clone_base_venv(
     old_src = _last_line(f"realpath {workspace}/pytorch")
     new_src = _last_line(f"realpath {worktree_path}")
     if not old_src or not new_src or old_src == new_src:
+        log.info("fast-path skipped: path resolution failed or same path")
         return False
 
     if (
@@ -79,9 +80,10 @@ def _try_clone_base_venv(
         ).returncode
         != 0
     ):
+        log.info("fast-path skipped: base venv has no torch")
         return False
 
-    log.info("fast-path clone: %s → %s", old_src, new_src)
+    log.info("fast-path clone: %s -> %s", old_src, new_src)
     progress("Cloning base venv (fast path)...")
     with _timed("venv clone", progress):
         for cp_flags in ("-al", "-a"):
