@@ -36,6 +36,28 @@ Run ALL python commands with `{workspace}/jobs/{job_id}/.venv/bin/python`. NEVER
 - **Python changes**: Picked up automatically (editable install). No action needed.
 - **C++ changes**: Rebuild with `bash {workspace}/scripts/rebuild.sh {workspace}/jobs/{job_id}/pytorch`. This runs an incremental build — only changed files are recompiled.
 
+## Debugging Tools
+
+When you encounter CUDA errors during investigation, use these tools:
+
+**Memory errors** (illegal access, out-of-bounds, uninitialized reads):
+```
+CUDA_LAUNCH_BLOCKING=1 PYTORCH_NO_CUDA_MEMORY_CACHING=1 compute-sanitizer --tool memcheck {workspace}/jobs/{job_id}/.venv/bin/python <script.py>
+```
+
+**Race conditions** (data corruption, non-deterministic results):
+```
+CUDA_LAUNCH_BLOCKING=1 PYTORCH_NO_CUDA_MEMORY_CACHING=1 compute-sanitizer --tool racecheck {workspace}/jobs/{job_id}/.venv/bin/python <script.py>
+```
+
+`PYTORCH_NO_CUDA_MEMORY_CACHING=1` disables the caching allocator so compute-sanitizer sees real allocation sites. `CUDA_LAUNCH_BLOCKING=1` forces synchronous launches so errors are reported on the correct kernel.
+
+**Inductor / Triton debugging**:
+- See generated code: `TORCH_LOGS="output_code" <command>`
+- Dump Triton kernels: `TRITON_ALWAYS_COMPILE=1 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=triton_dump <command>`
+- Disable async compile: `TORCHINDUCTOR_COMPILE_THREADS=1 <command>`
+- Get unique kernel names: `TORCHINDUCTOR_UNIQUE_KERNEL_NAMES=1 <command>`
+
 ## Instructions
 
 ### 1. Reproduce
