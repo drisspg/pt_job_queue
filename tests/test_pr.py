@@ -44,33 +44,52 @@ class TestPrState:
 
 class TestBuildPrBody:
     def test_human_note_at_top(self):
-        body = _build_pr_body("Report", "", issue_number=42, human_note="Trivial fix")
+        body = _build_pr_body(
+            "Report", "", "", issue_number=42, human_note="Trivial fix"
+        )
         lines = body.splitlines()
         assert lines[0] == "## Human Note"
         assert lines[1] == "Trivial fix"
         assert "Fixes #42" in body
 
     def test_with_report(self):
-        body = _build_pr_body("Report here", "", issue_number=42, human_note="Note")
+        body = _build_pr_body("Report here", "", "", issue_number=42, human_note="Note")
         assert "Report here" in body
         assert "Agent Report" in body
 
     def test_with_worklog(self):
         body = _build_pr_body(
-            "Report", "log entries", issue_number=None, human_note="N"
+            "Report", "log entries", "", issue_number=None, human_note="N"
         )
         assert "<details>" in body
         assert "log entries" in body
         assert "Agent Worklog" in body
 
     def test_no_agent_content(self):
-        body = _build_pr_body("", "", issue_number=None, human_note="Manual fix")
+        body = _build_pr_body("", "", "", issue_number=None, human_note="Manual fix")
         assert "Manual fix" in body
         assert "Human Note" in body
 
     def test_issue_reference(self):
-        body = _build_pr_body("R", "", issue_number=99, human_note="Fix")
+        body = _build_pr_body("R", "", "", issue_number=99, human_note="Fix")
         assert "Fixes #99" in body
+
+    def test_with_repro(self):
+        body = _build_pr_body(
+            "R",
+            "",
+            "import torch\nprint(torch.__version__)",
+            issue_number=42,
+            human_note="Fix",
+        )
+        assert "<details>" in body
+        assert "Repro Script" in body
+        assert "import torch" in body
+        assert "```python" in body
+
+    def test_no_repro(self):
+        body = _build_pr_body("R", "", "", issue_number=42, human_note="Fix")
+        assert "Repro Script" not in body
 
 
 class TestEnsureSshRemote:

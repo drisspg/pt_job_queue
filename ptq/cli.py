@@ -303,6 +303,14 @@ def results(
     for name in missing:
         console.print(f"  {name} not found")
 
+    repro_path = results_dir / "repro.py"
+    if repro_path.exists():
+        from rich.syntax import Syntax
+
+        console.print()
+        console.print("[bold]Repro Script[/bold]")
+        console.print(Syntax(repro_path.read_text(), "python", theme="monokai"))
+
     for name, label in [("worklog.md", "Worklog"), ("report.md", "Report")]:
         path = results_dir / name
         if path.exists():

@@ -90,6 +90,7 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 - Summary of the issue
 - Root cause analysis
 - What the fix does
+- Repro script — wrap in a collapsible `<details>` block with `<summary>Repro Script</summary>`, containing the full script as a fenced python code block followed by its output
 - Test results
 
 **fix.diff** — Generate with:

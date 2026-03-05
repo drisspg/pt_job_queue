@@ -762,6 +762,19 @@ async def job_diff(job_id: str):
     return HTMLResponse(f'<pre class="log-viewer">{chr(10).join(styled)}</pre>')
 
 
+@router.get("/jobs/{job_id}/repro", response_class=HTMLResponse)
+async def job_repro(job_id: str):
+    repo = _repo()
+    with _catch_error():
+        job = repo.get(job_id)
+    backend = backend_for_job(job)
+    content = read_artifact(backend, f"{backend.workspace}/jobs/{job_id}/repro.py")
+    if not content:
+        return HTMLResponse('<p class="muted">No repro script found.</p>')
+    escaped = html.escape(content)
+    return HTMLResponse(f'<pre class="log-viewer"><code>{escaped}</code></pre>')
+
+
 @router.get("/jobs/{job_id}/worklog", response_class=HTMLResponse)
 async def job_worklog(job_id: str):
     repo = _repo()

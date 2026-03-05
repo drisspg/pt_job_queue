@@ -64,6 +64,7 @@ def get_pr_state(
 def _build_pr_body(
     report: str,
     worklog: str,
+    repro: str,
     issue_number: int | None,
     human_note: str,
 ) -> str:
@@ -75,6 +76,10 @@ def _build_pr_body(
         parts.append(f"\n## Agent Report\n{report}")
     if issue_number is not None:
         parts.append(f"\n\nFixes #{issue_number}")
+    if repro:
+        parts.append(
+            f"\n\n<details>\n<summary>Repro Script</summary>\n\n```python\n{repro}\n```\n\n</details>"
+        )
     if worklog:
         parts.append(
             f"\n\n<details>\n<summary>Agent Worklog</summary>\n\n{worklog}\n\n</details>"
@@ -144,10 +149,12 @@ def create_pr(
 
     report = _read_file(backend, f"{job_dir}/report.md")
     worklog = _read_file(backend, f"{job_dir}/worklog.md")
-    body = _build_pr_body(report, worklog, job.issue, human_note)
+    repro = _read_file(backend, f"{job_dir}/repro.py")
+    body = _build_pr_body(report, worklog, repro, job.issue, human_note)
     _log(
         f"PR body: report.md {'found' if report else 'missing'}, "
-        f"worklog.md {'found' if worklog else 'missing'}"
+        f"worklog.md {'found' if worklog else 'missing'}, "
+        f"repro.py {'found' if repro else 'missing'}"
     )
 
     commit_msg = pr_title.replace("'", "'\\''")

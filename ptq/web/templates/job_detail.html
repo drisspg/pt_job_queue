@@ -160,6 +160,7 @@ function refreshModels(agent) {
   <button class="tab-btn active" data-tab="logs">Logs</button>
   <button class="tab-btn" data-tab="report">Report</button>
   <button class="tab-btn" data-tab="diff">Diff</button>
+  <button class="tab-btn" data-tab="repro">Repro</button>
   <button class="tab-btn" data-tab="worklog">Worklog</button>
   <button class="refresh-btn" id="refresh-btn" data-tip="Re-fetch this tab from remote">&#8635;</button>
 </div>
@@ -178,6 +179,7 @@ function refreshModels(agent) {
   var tabUrls = {
     report: '/jobs/' + jobId + '/report',
     diff: '/jobs/' + jobId + '/diff',
+    repro: '/jobs/' + jobId + '/repro',
     worklog: '/jobs/' + jobId + '/worklog'
   };
 

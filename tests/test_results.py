@@ -32,7 +32,7 @@ class TestFetchResults:
             dest, fetched, missing = fetch_results(repo, "j1", output)
 
         assert dest == output
-        assert backend.copy_from.call_count == 4
+        assert backend.copy_from.call_count == 5
 
     def test_missing_artifacts_tracked(self, tmp_path):
         repo = JobRepository(tmp_path / "jobs.json")
@@ -48,7 +48,7 @@ class TestFetchResults:
             _, fetched, missing = fetch_results(repo, "j1", tmp_path / "out")
 
         assert len(fetched) == 0
-        assert len(missing) == 4
+        assert len(missing) == 5
 
 
 class TestReadArtifact:

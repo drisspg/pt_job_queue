@@ -14,6 +14,7 @@ web = [
     "markdown>=3.7",
     "sse-starlette>=2.1",
 ]
+dev = ["ptq[test,web]"]
 
 [project.scripts]
 ptq = "ptq.cli:app"

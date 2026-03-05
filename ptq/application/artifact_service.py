@@ -8,7 +8,7 @@ from ptq.domain.models import PtqError
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 
-ARTIFACTS = ["report.md", "fix.diff", "worklog.md"]
+ARTIFACTS = ["report.md", "fix.diff", "worklog.md", "repro.py"]
 
 
 def fetch_results(

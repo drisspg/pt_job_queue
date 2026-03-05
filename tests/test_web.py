@@ -450,6 +450,32 @@ class TestPartials:
         assert resp.status_code == 200
         assert "No diff yet" in resp.text
 
+    def test_repro_no_content(self, client, mock_backend):
+        mock_backend.run.return_value = MagicMock(returncode=1, stdout="")
+        resp = client.get("/jobs/20260217-100001/repro")
+        assert resp.status_code == 200
+        assert "No repro script found" in resp.text
+
+    def test_repro_renders_content(self, client, mock_backend):
+        mock_backend.run.return_value = MagicMock(
+            returncode=0,
+            stdout="import torch\nprint(torch.__version__)\n",
+        )
+        resp = client.get("/jobs/20260217-100001/repro")
+        assert resp.status_code == 200
+        assert "import torch" in resp.text
+        assert "<pre" in resp.text
+
+    def test_repro_escapes_html(self, client, mock_backend):
+        mock_backend.run.return_value = MagicMock(
+            returncode=0,
+            stdout='x = "<script>alert(1)</script>"\n',
+        )
+        resp = client.get("/jobs/20260217-100001/repro")
+        assert resp.status_code == 200
+        assert "<script>" not in resp.text
+        assert "&lt;script&gt;" in resp.text
+
     def test_diff_renders_colors(self, client, mock_backend):
         mock_backend.run.return_value = MagicMock(
             returncode=0,
