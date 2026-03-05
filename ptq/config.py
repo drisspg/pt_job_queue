@@ -55,7 +55,9 @@ class Config:
     default_max_turns: int = 100
     machines: list[str] = field(default_factory=list)
     agent_models: dict[str, AgentModels] = field(default_factory=dict)
-    build_env: dict[str, str] = field(default_factory=lambda: {"USE_NINJA": "1"})
+    build_env: dict[str, str] = field(
+        default_factory=lambda: {"USE_NINJA": "1", "USE_NNPACK": "0"}
+    )
 
     def models_for(self, agent: str) -> AgentModels:
         return self.agent_models.get(agent, AgentModels(available=[], default=""))

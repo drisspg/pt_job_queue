@@ -76,9 +76,7 @@ class TestShebangRewrite:
         _try_clone_base_venv(backend, JOB_DIR, WORKTREE)
         cmds = _all_cmds(backend)
 
-        shebang_seds = [
-            c for c in cmds if "1s|#!" in c and "bin/python" in c
-        ]
+        shebang_seds = [c for c in cmds if "1s|#!" in c and "bin/python" in c]
         assert len(shebang_seds) == 1
         cmd = shebang_seds[0]
         assert f"#!{BASE_VENV}/bin/python" in cmd
@@ -92,9 +90,7 @@ class TestEditableInstallRewrite:
         _try_clone_base_venv(backend, JOB_DIR, WORKTREE)
         cmds = _all_cmds(backend)
 
-        editable_seds = [
-            c for c in cmds if "__editable__" in c and "sed" in c
-        ]
+        editable_seds = [c for c in cmds if "__editable__" in c and "sed" in c]
         assert len(editable_seds) == 1
         cmd = editable_seds[0]
         assert f"s|{OLD_SRC}|{NEW_SRC}|g" in cmd
@@ -114,9 +110,7 @@ class TestFastPathSkips:
     def test_skips_when_realpath_fails(self):
         backend = MagicMock()
         backend.workspace = WORKSPACE
-        backend.run = MagicMock(
-            return_value=_cp(stdout="")
-        )
+        backend.run = MagicMock(return_value=_cp(stdout=""))
 
         assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is False
 
@@ -130,9 +124,7 @@ class TestFastPathSkips:
     def test_skips_when_same_path(self):
         backend = MagicMock()
         backend.workspace = WORKSPACE
-        backend.run = MagicMock(
-            return_value=_cp(stdout=f"{OLD_SRC}\n")
-        )
+        backend.run = MagicMock(return_value=_cp(stdout=f"{OLD_SRC}\n"))
 
         assert _try_clone_base_venv(backend, JOB_DIR, OLD_SRC) is False
 

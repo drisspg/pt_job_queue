@@ -47,6 +47,7 @@ def setup_workspace(
 
     if isinstance(backend, RemoteBackend):
         _install_uv_remote(backend)
+        _ensure_rsync(backend)
 
     console.print("Creating workspace directories...")
     backend.run(f"mkdir -p {workspace}/jobs {workspace}/scripts")
@@ -170,6 +171,19 @@ def _ensure_ccache_config(backend: Backend) -> None:
     backend.run(f"mkdir -p {conf_dir}")
     backend.run(f"cat > {conf_file} << 'CCACHE_EOF'\n{conf}CCACHE_EOF")
     console.print(f"Configured ccache with base_dir={home}")
+
+
+def _ensure_rsync(backend: Backend) -> None:
+    if backend.run("which rsync", check=False).returncode == 0:
+        return
+    console.print("Installing rsync...")
+    if backend.run("sudo apt-get install -y rsync", check=False).returncode == 0:
+        return
+    if backend.run("sudo yum install -y rsync", check=False).returncode == 0:
+        return
+    console.print(
+        "[yellow]Could not install rsync — fast-path venv clone will be disabled.[/yellow]"
+    )
 
 
 def _install_uv_remote(backend: RemoteBackend) -> None:

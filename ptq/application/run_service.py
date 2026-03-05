@@ -67,19 +67,19 @@ def _try_clone_base_venv(
         lines = backend.run(cmd, check=False).stdout.strip().splitlines()
         return lines[-1] if lines else ""
 
-    old_src = _last_line(f"realpath {workspace}/pytorch")
-    new_src = _last_line(f"realpath {worktree_path}")
+    with _timed("path resolution", progress):
+        old_src = _last_line(f"realpath {workspace}/pytorch")
+        new_src = _last_line(f"realpath {worktree_path}")
     if not old_src or not new_src or old_src == new_src:
         log.info("fast-path skipped: path resolution failed or same path")
         return False
 
-    if (
-        backend.run(
+    with _timed("base torch check", progress):
+        has_torch = backend.run(
             f"cd /tmp && {base_venv}/bin/python -c 'import torch' 2>/dev/null",
             check=False,
         ).returncode
-        != 0
-    ):
+    if has_torch != 0:
         log.info("fast-path skipped: base venv has no torch")
         return False
 
@@ -111,6 +111,7 @@ def _try_clone_base_venv(
             check=False,
         )
         if r.returncode not in (0, 23):
+            progress(f"fast-path bail: rsync failed (rc={r.returncode})")
             return _bail()
 
     job_python = f"{job_dir}/.venv/bin/python"
@@ -118,24 +119,27 @@ def _try_clone_base_venv(
         f"{job_python} -c 'import sysconfig; print(sysconfig.get_path(\"purelib\"))'"
     )
     if not sp_dir:
+        progress("fast-path bail: could not resolve site-packages dir")
         return _bail()
 
-    job_venv = f"{job_dir}/.venv"
-    backend.run(
-        f'sed -i "s|{base_venv}|{job_venv}|g" {job_venv}/bin/activate {job_venv}/bin/activate.csh {job_venv}/bin/activate.fish {job_venv}/bin/activate.nu 2>/dev/null',
-        check=False,
-    )
-    backend.run(
-        f'sed -i "1s|#!{base_venv}/bin/python|#!{job_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
-        check=False,
-    )
+    progress("Rewriting venv paths...")
+    with _timed("path rewrite", progress):
+        job_venv = f"{job_dir}/.venv"
+        backend.run(
+            f'sed -i "s|{base_venv}|{job_venv}|g" {job_venv}/bin/activate {job_venv}/bin/activate.csh {job_venv}/bin/activate.fish {job_venv}/bin/activate.nu 2>/dev/null',
+            check=False,
+        )
+        backend.run(
+            f'sed -i "1s|#!{base_venv}/bin/python|#!{job_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
+            check=False,
+        )
 
-    backend.run(
-        f"for f in {sp_dir}/__editable__*torch* {sp_dir}/torch*.dist-info/direct_url.json; do "
-        f'[ -f "$f" ] && sed -i "s|{old_src}|{new_src}|g" "$f"; done',
-        check=False,
-    )
-    backend.run(f"rm -f {sp_dir}/__pycache__/__editable__*torch*.pyc", check=False)
+        backend.run(
+            f"for f in {sp_dir}/__editable__*torch* {sp_dir}/torch*.dist-info/direct_url.json; do "
+            f'[ -f "$f" ] && sed -i "s|{old_src}|{new_src}|g" "$f"; done',
+            check=False,
+        )
+        backend.run(f"rm -f {sp_dir}/__pycache__/__editable__*torch*.pyc", check=False)
 
     progress("Installing dev deps (build + test)...")
     with _timed("dev deps", progress):
@@ -146,20 +150,24 @@ def _try_clone_base_venv(
             stream=verbose,
         )
         if r.returncode != 0:
-            progress("Dev deps install failed, falling back to full install.")
+            progress(f"fast-path bail: dev deps install failed (rc={r.returncode})")
             return _bail()
 
     progress("Verifying torch import...")
-    smoke = backend.run(
-        f"cd /tmp && {job_python} -c "
-        f"'import torch; print(torch.__file__, torch.__version__, torch.cuda.is_available())'",
-        check=False,
-    )
-    if smoke.returncode != 0 or new_src not in smoke.stdout:
-        log.warning(
-            "fast-path verification failed (rc=%s), falling back", smoke.returncode
+    with _timed("smoke test", progress):
+        smoke = backend.run(
+            f"cd /tmp && {job_python} -c "
+            f"'import torch; print(torch.__file__, torch.__version__, torch.cuda.is_available())'",
+            check=False,
         )
-        progress("Clone verification failed, falling back to full install.")
+    if smoke.returncode != 0 or new_src not in smoke.stdout:
+        reason = (
+            f"rc={smoke.returncode} got={smoke.stdout.strip()!r} "
+            f"stderr={smoke.stderr.strip()!r} expected={new_src}"
+        )
+        progress(f"fast-path bail: smoke test failed: {reason}")
+        progress(f"Clone verification failed: {reason}")
+        progress("Falling back to full install.")
         return _bail()
 
     log.info("fast-path complete: %s", smoke.stdout.strip())
