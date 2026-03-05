@@ -778,12 +778,12 @@ def rebase(
             job = repo.get(job_id)
             if job.local:
                 console.print(
-                    f"\n  cd {job.workspace}/jobs/{job_id}/pytorch && source ../.venv/bin/activate"
+                    f"\n  cd {job.workspace}/jobs/{job_id} && source .venv/bin/activate"
                 )
             else:
                 console.print(
-                    f"\n  ssh -t {job.target} 'cd {job.workspace}/jobs/{job_id}/pytorch "
-                    f"&& source ../.venv/bin/activate && exec $SHELL'"
+                    f"\n  ssh -t {job.target} 'cd {job.workspace}/jobs/{job_id} "
+                    f"&& source .venv/bin/activate && exec $SHELL'"
                 )
         case _:
             console.print(f"\n[red]Rebase failed: {result.error}[/red]")

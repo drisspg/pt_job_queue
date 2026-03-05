@@ -120,6 +120,16 @@ def _try_clone_base_venv(
     if not sp_dir:
         return _bail()
 
+    job_venv = f"{job_dir}/.venv"
+    backend.run(
+        f'sed -i "s|{base_venv}|{job_venv}|g" {job_venv}/bin/activate {job_venv}/bin/activate.csh {job_venv}/bin/activate.fish {job_venv}/bin/activate.nu 2>/dev/null',
+        check=False,
+    )
+    backend.run(
+        f'sed -i "1s|#!{base_venv}/bin/python|#!{job_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
+        check=False,
+    )
+
     backend.run(
         f"for f in {sp_dir}/__editable__*torch* {sp_dir}/torch*.dist-info/direct_url.json; do "
         f'[ -f "$f" ] && sed -i "s|{old_src}|{new_src}|g" "$f"; done',
