@@ -475,7 +475,9 @@ async def job_detail(request: Request, job_id: str):
     if job.pr_url:
         from ptq.application.pr_service import get_pr_state
 
-        pr_state = await asyncio.to_thread(get_pr_state, backend_for_job(job), job.pr_url)
+        pr_state = await asyncio.to_thread(
+            get_pr_state, backend_for_job(job), job.pr_url
+        )
 
     rb = job.rebase_info
     if rb.state == RebaseState.SUCCEEDED:

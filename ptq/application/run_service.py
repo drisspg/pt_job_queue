@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import tempfile
 import time
 from collections.abc import Callable
@@ -18,6 +19,8 @@ from ptq.infrastructure.job_repository import JobRepository
 from ptq.issue import extract_repro_script
 from ptq.ssh import Backend, RemoteBackend
 from ptq.workspace import deploy_scripts
+
+log = logging.getLogger("ptq.run")
 
 ProgressCallback = Callable[[str], None]
 
@@ -41,6 +44,117 @@ def _validate_workspace(backend: Backend, workspace: str) -> None:
         )
 
 
+def _try_clone_base_venv(
+    backend: Backend,
+    job_dir: str,
+    worktree_path: str,
+    *,
+    verbose: bool = False,
+    progress: ProgressCallback = _noop_progress,
+) -> bool:
+    """Clone base workspace venv + source artifacts instead of rebuilding.
+
+    Copies the venv (hardlinks), rsyncs gitignored source artifacts
+    (.so, generated .py) into the worktree, and rewrites editable-install
+    paths.  Skips the cmake build dir — if the agent needs to rebuild C++,
+    ccache handles it (~3 min with warm cache).
+    Falls back to the slow editable-install if anything fails.
+    """
+    workspace = backend.workspace
+    base_venv = f"{workspace}/.venv"
+
+    def _last_line(cmd: str) -> str:
+        lines = backend.run(cmd, check=False).stdout.strip().splitlines()
+        return lines[-1] if lines else ""
+
+    old_src = _last_line(f"realpath {workspace}/pytorch")
+    new_src = _last_line(f"realpath {worktree_path}")
+    if not old_src or not new_src or old_src == new_src:
+        return False
+
+    if (
+        backend.run(
+            f"cd /tmp && {base_venv}/bin/python -c 'import torch' 2>/dev/null",
+            check=False,
+        ).returncode
+        != 0
+    ):
+        return False
+
+    log.info("fast-path clone: %s → %s", old_src, new_src)
+    progress("Cloning base venv (fast path)...")
+    with _timed("venv clone", progress):
+        for cp_flags in ("-al", "-a"):
+            if (
+                backend.run(
+                    f"cp {cp_flags} {base_venv} {job_dir}/.venv", check=False
+                ).returncode
+                == 0
+            ):
+                break
+            backend.run(f"rm -rf {job_dir}/.venv", check=False)
+        else:
+            return False
+
+    def _bail() -> bool:
+        backend.run(f"rm -rf {job_dir}/.venv", check=False)
+        backend.run(f"cd {new_src} && git clean -fdx 2>/dev/null", check=False)
+        return False
+
+    progress("Syncing build artifacts into worktree...")
+    with _timed("artifact sync", progress):
+        r = backend.run(
+            f"rsync -a --ignore-existing --exclude='.git' --exclude='build' "
+            f"--exclude='__pycache__' --link-dest={old_src} {old_src}/ {new_src}/",
+            check=False,
+        )
+        if r.returncode not in (0, 23):
+            return _bail()
+
+    job_python = f"{job_dir}/.venv/bin/python"
+    sp_dir = _last_line(
+        f"{job_python} -c 'import sysconfig; print(sysconfig.get_path(\"purelib\"))'"
+    )
+    if not sp_dir:
+        return _bail()
+
+    backend.run(
+        f"for f in {sp_dir}/__editable__*torch* {sp_dir}/torch*.dist-info/direct_url.json; do "
+        f'[ -f "$f" ] && sed -i "s|{old_src}|{new_src}|g" "$f"; done',
+        check=False,
+    )
+    backend.run(f"rm -f {sp_dir}/__pycache__/__editable__*torch*.pyc", check=False)
+
+    progress("Installing dev deps (build + test)...")
+    with _timed("dev deps", progress):
+        r = backend.run(
+            f"cd {worktree_path} && "
+            f"uv pip install --python {job_python} -r requirements.txt",
+            check=False,
+            stream=verbose,
+        )
+        if r.returncode != 0:
+            progress("Dev deps install failed, falling back to full install.")
+            return _bail()
+
+    progress("Verifying torch import...")
+    smoke = backend.run(
+        f"cd /tmp && {job_python} -c "
+        f"'import torch; print(torch.__file__, torch.__version__, torch.cuda.is_available())'",
+        check=False,
+    )
+    if smoke.returncode != 0 or new_src not in smoke.stdout:
+        log.warning(
+            "fast-path verification failed (rc=%s), falling back", smoke.returncode
+        )
+        progress("Clone verification failed, falling back to full install.")
+        return _bail()
+
+    log.info("fast-path complete: %s", smoke.stdout.strip())
+    progress(f"Editable install complete (cloned) — {smoke.stdout.strip()}")
+    return True
+
+
 def _setup_job_venv(
     backend: Backend,
     job_dir: str,
@@ -50,6 +164,12 @@ def _setup_job_venv(
     progress: ProgressCallback = _noop_progress,
     build_env_prefix: str = "USE_NINJA=1 ",
 ) -> None:
+    if _try_clone_base_venv(
+        backend, job_dir, worktree_path, verbose=verbose, progress=progress
+    ):
+        return
+
+    log.info("slow-path: full editable install for %s", job_dir)
     with _timed("venv creation", progress):
         backend.run(f"cd {job_dir} && uv venv --python 3.12")
 
