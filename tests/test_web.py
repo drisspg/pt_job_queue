@@ -108,6 +108,9 @@ class TestJobDetail:
         assert resp.status_code == 200
         assert "20260217-100001" in resp.text
         assert "claude" in resp.text
+        assert "Prompt Library" in resp.text
+        assert "rerun-message-preset" in resp.text
+        assert "Fix And Verify" in resp.text
 
     def test_unknown_job_404(self, client):
         resp = client.get("/jobs/nonexistent-job")
@@ -171,6 +174,10 @@ class TestNewJobForm:
         assert "codex" in resp.text
         assert "gpu-dev" in resp.text
         assert "opus" in resp.text
+        assert "Prompt Library" in resp.text
+        assert "Repro Only" in resp.text
+        assert "Diagnose And Plan" in resp.text
+        assert "Fix And Verify" in resp.text
 
     def test_agent_models_api_returns_fallback_for_claude(self, client):
         resp = client.get("/api/models/claude")

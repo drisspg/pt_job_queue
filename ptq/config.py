@@ -36,6 +36,13 @@ default = "o3"
 [models.cursor]
 default = "auto"
 
+# Optional prompt library overrides for the web UI dropdowns.
+# Built-in presets are available even if this section is omitted.
+#
+# [prompt_library.diagnose_and_plan]
+# title = "Diagnose And Plan"
+# body = "Investigate this issue in diagnosis-and-plan mode."
+
 [build.env]
 USE_NINJA = "1"
 USE_NNPACK = "0"
@@ -48,6 +55,114 @@ class AgentModels:
     default: str
 
 
+@dataclass(frozen=True)
+class PromptPreset:
+    key: str
+    title: str
+    body: str
+
+
+def _default_prompt_presets() -> list[PromptPreset]:
+    return [
+        PromptPreset(
+            key="repro_only",
+            title="Repro Only",
+            body="""\
+Investigate this issue in reproduction-only mode.
+
+Do not edit product source files.
+Do not generate a diff.
+Do not rebuild to validate a hypothetical fix.
+Do not infer a root cause from static inspection alone.
+
+Your job:
+- capture the exact environment: commit, branch, GPU, driver, CUDA, Python env
+- find and run the reporter's repro unchanged if possible
+- determine whether the issue reproduces on this machine
+- if it does not reproduce, stop and report that clearly
+- list the most likely reasons this environment differs from the reporter's setup
+
+Hard stops:
+- no fix without a failing repro in this environment
+- if the tree already contains related edits, report that immediately and do not treat them as proof
+- no stash, revert, or rebuild unless the user explicitly asks
+
+Output:
+- reproduced / not reproduced
+- exact environment
+- exact commands run
+- likely mismatch explanations
+- recommended next experiments
+
+Then wait for user instructions.""",
+        ),
+        PromptPreset(
+            key="diagnose_and_plan",
+            title="Diagnose And Plan",
+            body="""\
+Investigate this issue in diagnosis-and-plan mode.
+
+You may inspect code, compare versions, and create throwaway helpers inside the job directory, but you may not modify product source files or prepare a patch yet.
+
+Use subagents early for parallel exploration. Prefer read-only subagents. Good subagent tasks include:
+- finding related kernels or codepaths
+- comparing behavior across versions or backends
+- locating similar bugs or existing tests
+- checking whether the first hypothesis actually matches the runtime evidence
+
+Your goal:
+- gather evidence
+- produce a minimal repro or a clear non-repro conclusion
+- rank the top root-cause hypotheses
+- propose the smallest plausible fix plan
+- identify unknowns and risks
+
+Rules:
+- do not generate a diff
+- do not broaden scope mid-run
+- do not treat mathematical plausibility or static inspection as sufficient proof
+- if runtime evidence and code inspection disagree, trust runtime evidence and report the disagreement
+
+Output:
+- repro status
+- strongest evidence
+- ranked hypotheses with confidence
+- likely files involved
+- proposed fix plan
+- open questions
+- recommended next action for user approval
+
+Stop after the plan and wait.""",
+        ),
+        PromptPreset(
+            key="fix_and_verify",
+            title="Fix And Verify",
+            body="""\
+I agree with the reproduction and the proposed solution. Implement and verify it.
+
+Your job:
+- write the smallest fix that explains the reproduced failure
+- add or update a focused regression test
+- demonstrate that the test would fail before the fix
+- demonstrate that the same test passes with the fix
+- keep scope tight to the approved diagnosis and plan
+
+Rules:
+- no speculative cleanup or unrelated refactors
+- if the test does not fail before the fix, stop and report that the evidence is insufficient
+- if the fix requires a broader change than planned, stop and ask before expanding scope
+- prefer the narrowest test that captures the reported failure mode
+
+Output:
+- patch summary
+- regression test added or updated
+- evidence that it fails before the fix
+- evidence that it passes after the fix
+- any remaining risks or gaps""",
+        ),
+    ]
+
+
 @dataclass
 class Config:
     default_agent: str = "claude"
@@ -55,6 +170,7 @@ class Config:
     default_max_turns: int = 100
     machines: list[str] = field(default_factory=list)
     agent_models: dict[str, AgentModels] = field(default_factory=dict)
+    prompt_presets: list[PromptPreset] = field(default_factory=_default_prompt_presets)
     build_env: dict[str, str] = field(
         default_factory=lambda: {"USE_NINJA": "1", "USE_NNPACK": "0"}
     )
@@ -80,6 +196,7 @@ def _parse(data: dict) -> Config:
     defaults = data.get("defaults", {})
     machines_section = data.get("machines", {})
     models_section = data.get("models", {})
+    prompt_library_section = data.get("prompt_library", {})
 
     agent_models: dict[str, AgentModels] = {}
     for agent_name, model_data in models_section.items():
@@ -87,6 +204,29 @@ def _parse(data: dict) -> Config:
             available=model_data.get("available", []),
             default=model_data.get("default", ""),
         )
+
+    default_prompt_presets = _default_prompt_presets()
+    prompt_presets_by_key = {preset.key: preset for preset in default_prompt_presets}
+    for preset_key, preset_data in prompt_library_section.items():
+        body = str(preset_data.get("body", "")).strip()
+        if not body:
+            continue
+        title = (
+            str(preset_data.get("title", "")).strip()
+            or preset_key.replace("_", " ").title()
+        )
+        prompt_presets_by_key[preset_key] = PromptPreset(
+            key=preset_key,
+            title=title,
+            body=body,
+        )
+    default_prompt_keys = [preset.key for preset in default_prompt_presets]
+    prompt_presets = [prompt_presets_by_key[key] for key in default_prompt_keys]
+    prompt_presets.extend(
+        preset
+        for key, preset in prompt_presets_by_key.items()
+        if key not in default_prompt_keys
+    )
 
     build_section = data.get("build", {})
     build_env = {
@@ -99,6 +239,7 @@ def _parse(data: dict) -> Config:
         default_max_turns=defaults.get("max_turns", 100),
         machines=machines_section.get("names", []),
         agent_models=agent_models,
+        prompt_presets=prompt_presets,
         build_env=build_env,
     )
 

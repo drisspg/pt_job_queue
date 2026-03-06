@@ -70,11 +70,14 @@ ptq web --port 9000
 
 The web UI lets you:
 - Launch jobs (issue-based or ad-hoc) with agent/model/machine selection
+- Fill the message box from a built-in prompt library for `Repro Only`, `Diagnose And Plan`, and `Fix And Verify`
 - Monitor live logs via streaming
 - View reports, diffs, and worklogs
 - Follow up on stopped jobs with steering messages
 - **Take Over** — copies an SSH command that drops you into the job's worktree with the venv activated
 - Create PRs directly from the UI
+
+The prompt library is backed by `~/.ptq/config.toml`. Built-in presets appear automatically, and you can add or override entries under `[prompt_library.<name>]`.
 
 ### 4. Monitor progress (CLI)
 

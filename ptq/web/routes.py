@@ -16,7 +16,13 @@ from sse_starlette.sse import EventSourceResponse
 
 from ptq.agents import AGENTS, get_agent
 from ptq.application.artifact_service import read_artifact
-from ptq.config import cached_models, discover_models, discover_ssh_hosts, load_config
+from ptq.config import (
+    Config,
+    cached_models,
+    discover_models,
+    discover_ssh_hosts,
+    load_config,
+)
 from ptq.domain.models import PtqError, RebaseState, RunRequest
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
@@ -312,6 +318,7 @@ def _form_context(error: str | None = None) -> dict:
         "agents": list(AGENTS.keys()),
         "machines": machines,
         "agent_models": agent_models,
+        "prompt_presets": _prompt_presets(cfg),
         "defaults": {
             "agent": cfg.default_agent,
             "model": cfg.default_model,
@@ -319,6 +326,13 @@ def _form_context(error: str | None = None) -> dict:
         },
         "error": error,
     }
+
+
+def _prompt_presets(cfg: Config) -> list[dict[str, str]]:
+    return [
+        {"key": preset.key, "title": preset.title, "body": preset.body}
+        for preset in cfg.prompt_presets
+    ]
 
 
 @router.get("/jobs/new", response_class=HTMLResponse)
@@ -507,6 +521,7 @@ async def job_detail(request: Request, job_id: str):
             "rebase_after": rb.after_sha,
             "rebase_attempts": rb.attempts,
             "rebase_error": rb.error,
+            "prompt_presets": _prompt_presets(cfg),
         },
     )
 

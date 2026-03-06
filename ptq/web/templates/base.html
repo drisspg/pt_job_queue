@@ -21,6 +21,19 @@
       <li><a href="/jobs/new" role="button" class="outline">New Job</a></li>
     </ul>
   </nav>
+  <script>
+  function bindPromptLibrary(selectId, textareaId, presets) {
+    var select = document.getElementById(selectId);
+    var textarea = document.getElementById(textareaId);
+    if (!select || !textarea) return;
+    select.addEventListener('change', function() {
+      var preset = presets.find(function(item) { return item.key === select.value; });
+      if (!preset) return;
+      textarea.value = preset.body;
+      textarea.focus();
+    });
+  }
+  </script>
   <main class="container">
     {% block content %}{% endblock %}
   </main>

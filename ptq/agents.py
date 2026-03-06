@@ -8,6 +8,33 @@ if TYPE_CHECKING:
     from ptq.ssh import Backend
 
 
+def _coerce_event_text(value: object) -> str:
+    match value:
+        case str():
+            return value
+        case None:
+            return ""
+        case list() as items:
+            parts: list[str] = []
+            for item in items:
+                text = _coerce_event_text(item)
+                if text:
+                    parts.append(text)
+            return "\n".join(parts)
+        case {"text": str(text)}:
+            return text
+        case {"content": content}:
+            return _coerce_event_text(content)
+        case {"output": output}:
+            return _coerce_event_text(output)
+        case {"message": str(message)}:
+            return message
+        case dict():
+            return json.dumps(value, ensure_ascii=False)
+        case _:
+            return str(value)
+
+
 @dataclass
 class RunContext:
     worktree_path: str
@@ -25,6 +52,9 @@ class StreamEvent:
     text: str = ""
     tool_name: str = ""
     tool_input: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.text = _coerce_event_text(self.text)
 
 
 @runtime_checkable

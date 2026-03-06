@@ -344,6 +344,27 @@ class TestCursorParser:
         assert len(events) == 1
         assert events[0] == StreamEvent(kind="tool_result", text="spark-670f\n")
 
+    def test_tool_call_completed_with_content_blocks(self):
+        line = json.dumps(
+            {
+                "type": "tool_call",
+                "subtype": "completed",
+                "tool_call": {
+                    "readToolCall": {
+                        "args": {"path": "/etc/hostname"},
+                        "result": {
+                            "success": {
+                                "content": [{"type": "text", "text": "spark-670f\n"}]
+                            }
+                        },
+                    }
+                },
+            }
+        )
+        events = CursorAgent().parse_stream_line(line)
+        assert len(events) == 1
+        assert events[0] == StreamEvent(kind="tool_result", text="spark-670f\n")
+
     def test_shell_tool_mapped(self):
         line = json.dumps(
             {

@@ -114,7 +114,18 @@
 
 {% if status != "running" %}
 <form method="post" action="/jobs/{{ job_id }}/rerun" class="rerun-form">
-  <textarea name="message" rows="3" placeholder="Steer the next run… e.g. 'try a different approach' or 'look at file X instead'"></textarea>
+  {% if prompt_presets %}
+  <label for="rerun-message-preset">Prompt Library
+    <select id="rerun-message-preset">
+      <option value="">Custom message</option>
+      {% for preset in prompt_presets %}
+      <option value="{{ preset.key }}">{{ preset.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <p class="muted prompt-library-help">Selecting a preset copies it into the message below so you can edit it.</p>
+  {% endif %}
+  <textarea id="rerun-message" name="message" rows="3" placeholder="Steer the next run... e.g. 'try a different approach' or 'look at file X instead'"></textarea>
   <div class="rerun-controls">
     <select name="agent_type" class="rerun-agent">
       {% for a in agents %}
@@ -153,6 +164,8 @@ function refreshModels(agent) {
     .then(r => r.text())
     .then(function(h) { document.getElementById('model-container').innerHTML = h; });
 }
+
+bindPromptLibrary('rerun-message-preset', 'rerun-message', {{ prompt_presets | tojson }});
 </script>
 {% endif %}
 

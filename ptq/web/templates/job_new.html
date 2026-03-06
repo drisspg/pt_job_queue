@@ -19,6 +19,18 @@
       </label>
     </div>
 
+    {% if prompt_presets %}
+    <label for="message-preset">Prompt Library
+      <select id="message-preset">
+        <option value="">Custom message</option>
+        {% for preset in prompt_presets %}
+        <option value="{{ preset.key }}">{{ preset.title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted prompt-library-help">Selecting a preset copies it into the message below so you can edit it.</p>
+    {% endif %}
+
     <label for="message">Message <small>(optional for issues)</small>
       <textarea id="message" name="message" rows="4" placeholder="Describe the task or add context..."></textarea>
     </label>
@@ -107,5 +119,7 @@ function refreshModels(agent) {
     .then(r => r.text())
     .then(function(h) { document.getElementById('model-container').innerHTML = h; });
 }
+
+bindPromptLibrary('message-preset', 'message', {{ prompt_presets | tojson }});
 </script>
 {% endblock %}
