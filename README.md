@@ -1,6 +1,6 @@
 # ptq — PyTorch Job Queue
 
-CLI tool that takes a GitHub issue number, SSHs into a remote GPU machine, and launches a Claude agent to autonomously investigate and fix the bug. The agent produces a report and a diff that you can review and turn into a PR.
+CLI tool that takes a GitHub issue number, SSHs into a remote GPU machine, and launches an agent (Claude/Codex/Cursor) to autonomously investigate and fix the bug. The agent produces a report and a diff that you can review and turn into a PR.
 
 ## Install
 
@@ -28,6 +28,8 @@ This creates a workspace with:
 - A `uv`-managed venv with PyTorch nightly
 - A pytorch source clone at the matching nightly commit
 - Helper scripts for applying fixes to site-packages
+
+When `--build` is used, setup performs a full checkout nuke before editable install (`git clean -dfx` + submodule sync/update) to avoid stale CMake/Ninja graphs after upstream file moves.
 
 ### 2. Launch an investigation
 
@@ -76,6 +78,12 @@ The web UI lets you:
 - Follow up on stopped jobs with steering messages
 - **Take Over** — copies an SSH command that drops you into the job's worktree with the venv activated
 - Create PRs directly from the UI
+
+### Web UI preview
+
+> Add a screenshot at `docs/assets/web-ui.png` and this README will render it automatically.
+
+![ptq web ui](docs/assets/web-ui.png)
 
 The prompt library is backed by `~/.ptq/config.toml`. Built-in presets appear automatically, and you can add or override entries under `[prompt_library.<name>]`.
 
