@@ -189,6 +189,14 @@ def run(
         str | None,
         typer.Option("--message", "-m", help="Custom instruction for the agent."),
     ] = None,
+    preset: Annotated[
+        str | None,
+        typer.Option(
+            "--preset",
+            "-p",
+            help="Prompt preset key/title (combine with -m to append extra instructions).",
+        ),
+    ] = None,
     input_file: Annotated[
         Path | None,
         typer.Option("--input", "-i", help="Read task description from a file."),
@@ -202,6 +210,8 @@ def run(
     Examples:
         ptq run --issue 174923 --machine aws-gpu-dev
         ptq run --agent codex -m "investigate OOM" --machine gpu-dev
+        ptq run -p diagnose_and_plan --issue 174923 --machine gpu-dev
+        ptq run -p fix_and_verify -m "focus on stride handling" --issue 174923
         ptq run -i task.md --machine gpu-dev --agent cursor
         ptq run 20260214-174923 -m "look at flex_attention.py instead"
         ptq run 174923 -m "try a different approach"
@@ -219,6 +229,18 @@ def run(
     from ptq.issue import fetch_issue
 
     cfg = load_config()
+    if preset:
+        selected_preset = cfg.prompt_preset(preset)
+        if selected_preset is None:
+            choices = ", ".join(cfg.prompt_preset_choices())
+            raise typer.BadParameter(
+                f"Unknown preset '{preset}'. Available presets: {choices}"
+            )
+        if message:
+            message = f"{selected_preset.body}\n\n{message.strip()}"
+        else:
+            message = selected_preset.body
+
     repo = _repo()
 
     resolved_job_id: str | None = None
@@ -236,7 +258,9 @@ def run(
             agent = job.agent
 
     if issue is None and message is None and job_id is None:
-        raise typer.BadParameter("Provide --issue, --message, or a JOB_ID to re-run.")
+        raise typer.BadParameter(
+            "Provide --issue, --preset, --message, or a JOB_ID to re-run."
+        )
     if not machine and not local:
         local = True
     agent = agent or cfg.default_agent
@@ -276,6 +300,17 @@ def run(
         agent_impl = get_agent(job.agent)
         log_file = f"{backend.workspace}/jobs/{launched_id}/{agent_impl.log_filename(job.runs)}"
         _follow_logs(backend, log_file, agent_impl, launched_id)
+
+
+@app.command("presets")
+def list_presets() -> None:
+    """List available prompt presets (built-in + custom from config)."""
+    from ptq.config import load_config
+
+    cfg = load_config()
+    console.print("[bold]Available presets[/bold]")
+    for preset in cfg.prompt_presets:
+        console.print(f"- [cyan]{preset.key}[/cyan] — {preset.title}")
 
 
 @app.command()

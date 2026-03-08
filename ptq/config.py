@@ -36,12 +36,17 @@ default = "o3"
 [models.cursor]
 default = "auto"
 
-# Optional prompt library overrides for the web UI dropdowns.
-# Built-in presets are available even if this section is omitted.
+# Optional prompt presets.
+# Built-ins always exist, but can be overridden under [prompt_library.builtin.*].
+# Add your own under [prompt_library.custom.*].
 #
-# [prompt_library.diagnose_and_plan]
+# [prompt_library.builtin.diagnose_and_plan]
 # title = "Diagnose And Plan"
 # body = "Investigate this issue in diagnosis-and-plan mode."
+#
+# [prompt_library.custom.my_investigation]
+# title = "My Investigation"
+# body = "Investigate with my preferred checklist..."
 
 [build.env]
 USE_NINJA = "1"
@@ -191,6 +196,18 @@ class Config:
             return ""
         return " ".join(f"{k}={v}" for k, v in self.build_env.items()) + " "
 
+    def prompt_preset(self, name_or_key: str) -> PromptPreset | None:
+        needle = name_or_key.strip().lower()
+        if not needle:
+            return None
+        for preset in self.prompt_presets:
+            if preset.key.lower() == needle or preset.title.lower() == needle:
+                return preset
+        return None
+
+    def prompt_preset_choices(self) -> list[str]:
+        return [f"{p.key} ({p.title})" for p in self.prompt_presets]
+
 
 def _parse(data: dict) -> Config:
     defaults = data.get("defaults", {})
@@ -205,21 +222,38 @@ def _parse(data: dict) -> Config:
             default=model_data.get("default", ""),
         )
 
+    def _collect_presets(section: dict) -> dict[str, PromptPreset]:
+        out: dict[str, PromptPreset] = {}
+        for preset_key, preset_data in section.items():
+            if not isinstance(preset_data, dict):
+                continue
+            body = str(preset_data.get("body", "")).strip()
+            if not body:
+                continue
+            normalized_key = str(preset_key).strip().lower().replace("-", "_")
+            title = (
+                str(preset_data.get("title", "")).strip()
+                or normalized_key.replace("_", " ").title()
+            )
+            out[normalized_key] = PromptPreset(
+                key=normalized_key,
+                title=title,
+                body=body,
+            )
+        return out
+
     default_prompt_presets = _default_prompt_presets()
     prompt_presets_by_key = {preset.key: preset for preset in default_prompt_presets}
-    for preset_key, preset_data in prompt_library_section.items():
-        body = str(preset_data.get("body", "")).strip()
-        if not body:
-            continue
-        title = (
-            str(preset_data.get("title", "")).strip()
-            or preset_key.replace("_", " ").title()
-        )
-        prompt_presets_by_key[preset_key] = PromptPreset(
-            key=preset_key,
-            title=title,
-            body=body,
-        )
+
+    # Supported format:
+    # [prompt_library.builtin.<key>]  -> overrides built-ins
+    # [prompt_library.custom.<key>]   -> adds user presets
+    builtins_section = prompt_library_section.get("builtin", {})
+    custom_section = prompt_library_section.get("custom", {})
+
+    prompt_presets_by_key.update(_collect_presets(builtins_section))
+    prompt_presets_by_key.update(_collect_presets(custom_section))
+
     default_prompt_keys = [preset.key for preset in default_prompt_presets]
     prompt_presets = [prompt_presets_by_key[key] for key in default_prompt_keys]
     prompt_presets.extend(
