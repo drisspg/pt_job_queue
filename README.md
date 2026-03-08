@@ -49,6 +49,12 @@ ptq run --machine my-gpu-box -m "Optimize the flex attention CPU codegen"
 # Issue + extra context
 ptq run --issue 174923 --machine my-gpu-box -m "Focus on the stride logic"
 
+# Use a preset template from the prompt library
+ptq run --issue 174923 --machine my-gpu-box -p diagnose_and_plan
+
+# Preset + extra instructions (appends your -m text)
+ptq run --issue 174923 --machine my-gpu-box -p fix_and_verify -m "focus only on scaled_mm path"
+
 # Use a different agent
 ptq run --issue 174923 --machine my-gpu-box --agent cursor --model gpt-5.3-codex-xhigh-fast
 ```
@@ -85,7 +91,17 @@ The web UI lets you:
 
 ![ptq web ui](docs/assets/web-ui.png)
 
-The prompt library is backed by `~/.ptq/config.toml`. Built-in presets appear automatically, and you can add or override entries under `[prompt_library.<name>]`.
+The prompt library is backed by `~/.ptq/config.toml`.
+
+- Built-ins are always available and can be overridden under `[prompt_library.builtin.<name>]`
+- User presets can be added under `[prompt_library.custom.<name>]`
+- Legacy `[prompt_library.<name>]` entries are still supported
+
+List everything available from CLI with:
+
+```bash
+ptq presets
+```
 
 ### 4. Monitor progress (CLI)
 
@@ -166,6 +182,7 @@ Removes job directories and prunes git worktrees.
 | `--model` | run | opus | Model name (agent-specific) |
 | `--max-turns` | run | 100 | Max agent turns |
 | `-m/--message` | run | | Ad-hoc task or extra context for an issue |
+| `-p/--preset` | run | | Prompt preset key/title from prompt library |
 | `--workspace` | setup, run, prune | `~/ptq_workspace` | Custom workspace path |
 | `--keep` | clean | 0 | Number of recent jobs to keep |
 | `--log` | peek | 0 | Number of log lines to show |
