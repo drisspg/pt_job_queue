@@ -95,7 +95,6 @@ The prompt library is backed by `~/.ptq/config.toml`.
 
 - Built-ins are always available and can be overridden under `[prompt_library.builtin.<name>]`
 - User presets can be added under `[prompt_library.custom.<name>]`
-- Legacy `[prompt_library.<name>]` entries are still supported
 
 List everything available from CLI with:
 

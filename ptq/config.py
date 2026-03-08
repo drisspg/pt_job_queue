@@ -245,22 +245,13 @@ def _parse(data: dict) -> Config:
     default_prompt_presets = _default_prompt_presets()
     prompt_presets_by_key = {preset.key: preset for preset in default_prompt_presets}
 
-    # New format:
+    # Supported format:
     # [prompt_library.builtin.<key>]  -> overrides built-ins
     # [prompt_library.custom.<key>]   -> adds user presets
     builtins_section = prompt_library_section.get("builtin", {})
     custom_section = prompt_library_section.get("custom", {})
 
-    # Back-compat format:
-    # [prompt_library.<key>] where key maps directly to preset data.
-    legacy_flat_section = {
-        k: v
-        for k, v in prompt_library_section.items()
-        if k not in {"builtin", "custom"} and isinstance(v, dict)
-    }
-
     prompt_presets_by_key.update(_collect_presets(builtins_section))
-    prompt_presets_by_key.update(_collect_presets(legacy_flat_section))
     prompt_presets_by_key.update(_collect_presets(custom_section))
 
     default_prompt_keys = [preset.key for preset in default_prompt_presets]

@@ -50,13 +50,17 @@ class TestParse:
         cfg = _parse(
             {
                 "prompt_library": {
-                    "diagnose_and_plan": {
-                        "title": "Diagnosis First",
-                        "body": "Plan before patching.",
+                    "builtin": {
+                        "diagnose_and_plan": {
+                            "title": "Diagnosis First",
+                            "body": "Plan before patching.",
+                        }
                     },
-                    "custom_triage": {
-                        "title": "Custom Triage",
-                        "body": "Collect evidence first.",
+                    "custom": {
+                        "custom_triage": {
+                            "title": "Custom Triage",
+                            "body": "Collect evidence first.",
+                        }
                     },
                 }
             }
