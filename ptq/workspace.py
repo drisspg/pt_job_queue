@@ -110,6 +110,16 @@ def build_pytorch(backend: Backend, *, build_env_prefix: str = "USE_NINJA=1 ") -
     console.print(
         "[bold]Building PyTorch from source (this may take a while)...[/bold]"
     )
+
+    # Full nuke before build: mirrors Driss's local workflow and avoids stale
+    # build graphs after upstream renames/deletes.
+    console.print("Nuking local PyTorch checkout artifacts before build...")
+    backend.run(
+        f"cd {workspace}/pytorch && git clean -dfx && git submodule sync && git submodule update --init --recursive",
+        check=False,
+        stream=True,
+    )
+
     result = backend.run(
         f"cd {workspace}/pytorch && {build_env_prefix}{workspace}/.venv/bin/pip install -v -e .",
         check=False,
