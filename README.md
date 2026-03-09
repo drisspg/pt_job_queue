@@ -4,9 +4,18 @@ CLI tool that takes a GitHub issue number, SSHs into a remote GPU machine, and l
 
 ## Install
 
+No install step needed — just use `uv run`:
+
 ```bash
 cd pt_job_queue
-uv pip install -e .
+uv run ptq --help
+```
+
+For development (tests, web dashboard):
+
+```bash
+uv run --extra dev pytest
+uv run --extra web ptq web
 ```
 
 ## Usage
@@ -15,13 +24,13 @@ uv pip install -e .
 
 ```bash
 # Remote GPU machine (auto-detects CUDA version)
-ptq setup my-gpu-box
+uv run ptq setup my-gpu-box
 
 # Remote with explicit CUDA version
-ptq setup my-gpu-box --cuda cu130
+uv run ptq setup my-gpu-box --cuda cu130
 
 # Local (for testing/development)
-ptq setup --local --cpu
+uv run ptq setup --local --cpu
 ```
 
 This creates a workspace with:
@@ -35,19 +44,19 @@ When `--build` is used, setup performs a full checkout nuke before editable inst
 
 ```bash
 # On a remote machine
-ptq run --issue 174923 --machine my-gpu-box
+uv run ptq run --issue 174923 --machine my-gpu-box
 
 # Locally
-ptq run --issue 174923 --local
+uv run ptq run --issue 174923 --local
 
 # Run in background (don't stream output)
-ptq run --issue 174923 --machine my-gpu-box --no-follow
+uv run ptq run --issue 174923 --machine my-gpu-box --no-follow
 
 # Ad-hoc task (no issue, just a message)
-ptq run --machine my-gpu-box -m "Optimize the flex attention CPU codegen"
+uv run ptq run --machine my-gpu-box -m "Optimize the flex attention CPU codegen"
 
 # Issue + extra context
-ptq run --issue 174923 --machine my-gpu-box -m "Focus on the stride logic"
+uv run ptq run --issue 174923 --machine my-gpu-box -m "Focus on the stride logic"
 
 # Use a preset template from the prompt library
 ptq run --issue 174923 --machine my-gpu-box -p diagnose_and_plan
@@ -56,7 +65,7 @@ ptq run --issue 174923 --machine my-gpu-box -p diagnose_and_plan
 ptq run --issue 174923 --machine my-gpu-box -p fix_and_verify -m "focus only on scaled_mm path"
 
 # Use a different agent
-ptq run --issue 174923 --machine my-gpu-box --agent cursor --model gpt-5.3-codex-xhigh-fast
+uv run ptq run --issue 174923 --machine my-gpu-box --agent cursor --model gpt-5.3-codex-xhigh-fast
 ```
 
 The agent will:
@@ -71,9 +80,9 @@ Re-running the same issue reuses the existing worktree and preserves prior edits
 ### 3. Web dashboard
 
 ```bash
-ptq web
+uv run --extra web ptq web
 # or on a custom port
-ptq web --port 9000
+uv run --extra web ptq web --port 9000
 ```
 
 The web UI lets you:
@@ -106,13 +115,13 @@ ptq presets
 
 ```bash
 # Peek at the agent's worklog
-ptq peek 174923
+uv run ptq peek 174923
 
 # Peek with recent log activity
-ptq peek 174923 --log 30
+uv run ptq peek 174923 --log 30
 
 # List all jobs with running/stopped status
-ptq list
+uv run ptq list
 ```
 
 The agent maintains a `worklog.md` with entries after each significant step, so you can check progress without streaming the full output.
@@ -121,10 +130,10 @@ The agent maintains a `worklog.md` with entries after each significant step, so 
 
 ```bash
 # By issue number (uses most recent job)
-ptq results 174923
+uv run ptq results 174923
 
 # By full job ID
-ptq results 20260214-174923
+uv run ptq results 20260214-174923
 ```
 
 Fetches `report.md`, `fix.diff`, `worklog.md`, and the run log from the remote.
@@ -132,7 +141,7 @@ Fetches `report.md`, `fix.diff`, `worklog.md`, and the run log from the remote.
 ### 6. Apply the fix
 
 ```bash
-ptq apply 174923 --pytorch-path ~/meta/pytorch
+uv run ptq apply 174923 --pytorch-path ~/meta/pytorch
 ```
 
 Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps for creating a PR.
@@ -141,29 +150,29 @@ Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps f
 
 ```bash
 # Check status of a specific job
-ptq status 174923
+uv run ptq status 174923
 
 # Kill a specific agent
-ptq kill 174923
+uv run ptq kill 174923
 
 # Kill all agents on a machine (tracked + zombie processes)
-ptq prune my-gpu-box
+uv run ptq prune my-gpu-box
 
 # Kill all local agents
-ptq prune --local
+uv run ptq prune --local
 ```
 
 ### 8. Clean up
 
 ```bash
 # Remove all jobs on a machine
-ptq clean my-gpu-box
+uv run ptq clean my-gpu-box
 
 # Keep the 3 most recent
-ptq clean my-gpu-box --keep 3
+uv run ptq clean my-gpu-box --keep 3
 
 # Clean local workspace
-ptq clean --local
+uv run ptq clean --local
 ```
 
 Removes job directories and prunes git worktrees.
