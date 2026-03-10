@@ -334,6 +334,27 @@ class TestJobActions:
         assert resp.status_code == 303
         assert resp.headers["location"] == "/jobs/20260217-100001"
 
+    def test_create_pr_passes_optional_title(self, client, mock_backend):
+        from ptq.domain.models import PRResult
+
+        with patch(
+            "ptq.application.pr_service.create_pr",
+            return_value=PRResult(
+                url="https://github.com/pytorch/pytorch/pull/99", branch="ptq/100001"
+            ),
+        ) as mock_create_pr:
+            resp = client.post(
+                "/jobs/20260217-100001/pr",
+                data={
+                    "title": "Custom PR Title",
+                    "human_note": "Trivial fix for meta device support",
+                },
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        kwargs = mock_create_pr.call_args.kwargs
+        assert kwargs["title"] == "Custom PR Title"
+
     def test_create_pr_requires_note(self, client, mock_backend):
         resp = client.post(
             "/jobs/20260217-100001/pr",

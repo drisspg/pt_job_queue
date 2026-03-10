@@ -584,6 +584,7 @@ async def job_create_pr(
     request: Request,
     job_id: str,
     human_note: str = Form(""),
+    title: str = Form(""),
     draft: str = Form(""),
 ):
     repo = _repo()
@@ -600,7 +601,12 @@ async def job_create_pr(
 
     log.info("creating PR for %s", job_id)
     result = await asyncio.to_thread(
-        create_pr, repo, job_id, human_note=human_note, draft=bool(draft)
+        create_pr,
+        repo,
+        job_id,
+        human_note=human_note,
+        title=title.strip() or None,
+        draft=bool(draft),
     )
     log.info("PR created for %s: %s", job_id, result.url)
     return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)

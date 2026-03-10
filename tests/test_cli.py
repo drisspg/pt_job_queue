@@ -24,7 +24,10 @@ class TestRunValidation:
     def test_no_issue_no_message_no_job_id(self):
         result = runner.invoke(app, ["run", "--local"])
         assert result.exit_code != 0
-        assert "Provide --issue, --message, or a JOB_ID" in result.output
+        assert (
+            "Provide --issue, --preset, --message, or a JOB_ID to re-run."
+            in result.output
+        )
 
     def test_defaults_to_local_when_no_machine(self, tmp_path):
         repo = _make_repo(tmp_path)
