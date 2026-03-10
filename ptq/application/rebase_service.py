@@ -88,7 +88,7 @@ def _launch_conflict_agent(
     backend.copy_to(prompt_tmp, prompt_remote)
     prompt_tmp.unlink()
 
-    agent.setup_workspace(backend, worktree_path, job_dir, workspace)
+    agent.setup_workspace(backend, worktree_path, job_dir, workspace, prompt_remote)
 
     log_file = f"{job_dir}/rebase-{attempt}.log"
     unbuffer = "stdbuf -oL " if isinstance(backend, RemoteBackend) else ""

@@ -71,6 +71,8 @@ def setup_workspace(
     if result.returncode != 0:
         raise SystemExit("Installing build dependencies failed.")
 
+    _install_triton(backend, workspace)
+
     if build:
         build_pytorch(backend, build_env_prefix=build_env_prefix)
 
@@ -105,6 +107,17 @@ def _clone_pytorch(backend: Backend, workspace: str) -> None:
     )
 
 
+def _install_triton(backend: Backend, workspace: str) -> None:
+    console.print("Installing Triton...")
+    r = backend.run(
+        f"cd {workspace}/pytorch && PATH={workspace}/.venv/bin:$PATH make triton",
+        check=False,
+        stream=True,
+    )
+    if r.returncode != 0:
+        console.print("[yellow]Triton install failed (non-fatal).[/yellow]")
+
+
 def build_pytorch(backend: Backend, *, build_env_prefix: str = "USE_NINJA=1 ") -> None:
     workspace = backend.workspace
     console.print(
@@ -127,6 +140,8 @@ def build_pytorch(backend: Backend, *, build_env_prefix: str = "USE_NINJA=1 ") -
     )
     if result.returncode != 0:
         raise SystemExit("Build failed.")
+
+    _install_triton(backend, workspace)
 
     console.print("Running smoke test...")
     smoke = backend.run(

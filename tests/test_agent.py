@@ -378,7 +378,7 @@ class TestLaunchAgentType:
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        launch(
+        job_id = launch(
             repo,
             backend,
             RunRequest(
@@ -394,14 +394,18 @@ class TestLaunchAgentType:
             for call in backend.run.call_args_list
             if isinstance(call.args[0], str)
         ]
-        assert any("AGENTS.md" in c for c in run_cmds)
+        assert any(
+            c
+            == f"cp /tmp/ws/jobs/{job_id}/system_prompt.md /tmp/ws/jobs/{job_id}/pytorch/AGENTS.md"
+            for c in run_cmds
+        )
 
     @patch("ptq.application.run_service.deploy_scripts")
     def test_cursor_setup_copies_cursorrules(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend)
 
-        launch(
+        job_id = launch(
             repo,
             backend,
             RunRequest(
@@ -417,7 +421,11 @@ class TestLaunchAgentType:
             for call in backend.run.call_args_list
             if isinstance(call.args[0], str)
         ]
-        assert any(".cursorrules" in c for c in run_cmds)
+        assert any(
+            c
+            == f"cp /tmp/ws/jobs/{job_id}/system_prompt.md /tmp/ws/jobs/{job_id}/pytorch/.cursorrules"
+            for c in run_cmds
+        )
 
     @patch("ptq.application.run_service.deploy_scripts")
     def test_claude_setup_writes_settings_json(self, _deploy, repo, frozen_date):

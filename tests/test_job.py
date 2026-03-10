@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,6 +12,18 @@ from ptq.domain.policies import make_job_id
 from ptq.infrastructure.backends import backend_for_job, create_backend
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.ssh import LocalBackend, RemoteBackend
+
+
+def _save_job_after_barrier(
+    path, barrier: threading.Barrier, job_id: str, issue: int | None = None
+) -> None:
+    barrier.wait()
+    JobRepository(path).save(JobRecord(job_id=job_id, issue=issue))
+
+
+def _clear_pid_after_barrier(path, barrier: threading.Barrier, job_id: str) -> None:
+    barrier.wait()
+    JobRepository(path).save_pid(job_id, None)
 
 
 class TestMakeJobId:
@@ -173,6 +187,33 @@ class TestJobRepository:
 
     def test_save_pid_on_missing_job_is_noop(self, repo: JobRepository):
         repo.save_pid("nonexistent", 999)
+
+    def test_concurrent_writes_do_not_drop_other_jobs(self, tmp_path):
+        path = tmp_path / "jobs.json"
+        repo = JobRepository(path)
+        repo.save(JobRecord(job_id="existing", issue=42, pid=12345, initializing=True))
+
+        new_job_ids = [f"job-{i}" for i in range(8)]
+        barrier = threading.Barrier(len(new_job_ids) + 8)
+
+        with ThreadPoolExecutor(max_workers=len(new_job_ids) + 8) as executor:
+            futures = [
+                executor.submit(
+                    _save_job_after_barrier, path, barrier, job_id, 1000 + i
+                )
+                for i, job_id in enumerate(new_job_ids)
+            ]
+            futures.extend(
+                executor.submit(_clear_pid_after_barrier, path, barrier, "existing")
+                for _ in range(8)
+            )
+            for future in futures:
+                future.result()
+
+        all_jobs = JobRepository(path).list_all()
+        assert set(all_jobs) == {"existing", *new_job_ids}
+        assert all_jobs["existing"].pid is None
+        assert all_jobs["existing"].initializing is False
 
     def test_from_dict_minimal(self):
         record = JobRecord.from_dict("j1", {})

@@ -175,6 +175,27 @@ def _try_clone_base_venv(
     return True
 
 
+def _install_triton(
+    backend: Backend,
+    job_dir: str,
+    worktree_path: str,
+    *,
+    verbose: bool = False,
+    progress: ProgressCallback = _noop_progress,
+) -> None:
+    progress("Installing Triton...")
+    with _timed("triton install", progress):
+        r = backend.run(
+            f"cd {worktree_path} && PATH={job_dir}/.venv/bin:$PATH make triton",
+            check=False,
+            stream=verbose,
+        )
+    if r.returncode != 0:
+        progress("Triton install failed (non-fatal) — agent can install manually.")
+    else:
+        progress("Triton installed.")
+
+
 def _setup_job_venv(
     backend: Backend,
     job_dir: str,
@@ -184,36 +205,36 @@ def _setup_job_venv(
     progress: ProgressCallback = _noop_progress,
     build_env_prefix: str = "USE_NINJA=1 ",
 ) -> None:
-    if _try_clone_base_venv(
+    if not _try_clone_base_venv(
         backend, job_dir, worktree_path, verbose=verbose, progress=progress
     ):
-        return
+        log.info("slow-path: full editable install for %s", job_dir)
+        with _timed("venv creation", progress):
+            backend.run(f"cd {job_dir} && uv venv --python 3.12")
 
-    log.info("slow-path: full editable install for %s", job_dir)
-    with _timed("venv creation", progress):
-        backend.run(f"cd {job_dir} && uv venv --python 3.12")
+        job_python = f"{job_dir}/.venv/bin/python"
+        progress("Installing dev deps (build + test)...")
+        with _timed("dev deps", progress):
+            backend.run(
+                f"cd {worktree_path} && "
+                f"uv pip install --python {job_python} -r requirements.txt",
+                stream=verbose,
+            )
+        pip_verbose = " -v" if verbose else ""
+        progress("Editable install (pytorch)... this takes a few minutes")
+        with _timed("editable install", progress):
+            result = backend.run(
+                f"cd {worktree_path} && {build_env_prefix}"
+                f"uv pip install --python {job_python} --no-build-isolation{pip_verbose} -e .",
+                check=False,
+                stream=verbose,
+            )
+        if result.returncode != 0:
+            progress("Editable install failed — agent will need to build manually.")
+        else:
+            progress("Editable install complete.")
 
-    job_python = f"{job_dir}/.venv/bin/python"
-    progress("Installing dev deps (build + test)...")
-    with _timed("dev deps", progress):
-        backend.run(
-            f"cd {worktree_path} && "
-            f"uv pip install --python {job_python} -r requirements.txt",
-            stream=verbose,
-        )
-    pip_verbose = " -v" if verbose else ""
-    progress("Editable install (pytorch)... this takes a few minutes")
-    with _timed("editable install", progress):
-        result = backend.run(
-            f"cd {worktree_path} && {build_env_prefix}"
-            f"uv pip install --python {job_python} --no-build-isolation{pip_verbose} -e .",
-            check=False,
-            stream=verbose,
-        )
-    if result.returncode != 0:
-        progress("Editable install failed — agent will need to build manually.")
-    else:
-        progress("Editable install complete.")
+    _install_triton(backend, job_dir, worktree_path, verbose=verbose, progress=progress)
 
 
 _AGENT_CONFIG_EXCLUDES = [".cursorrules", "AGENTS.md", ".claude/"]
@@ -366,10 +387,6 @@ def launch(
     else:
         progress("Reusing existing worktree.")
 
-    _exclude_agent_configs(backend, worktree_path)
-    progress("Configuring agent workspace...")
-    agent.setup_workspace(backend, worktree_path, job_dir, workspace)
-
     if is_adhoc:
         system_prompt = build_adhoc_prompt(request.message, job_id, workspace)
     else:
@@ -389,8 +406,13 @@ def launch(
         f.write(system_prompt)
         prompt_tmp = Path(f.name)
 
-    backend.copy_to(prompt_tmp, f"{job_dir}/system_prompt.md")
+    prompt_remote = f"{job_dir}/system_prompt.md"
+    backend.copy_to(prompt_tmp, prompt_remote)
     prompt_tmp.unlink()
+
+    _exclude_agent_configs(backend, worktree_path)
+    progress("Configuring agent workspace...")
+    agent.setup_workspace(backend, worktree_path, job_dir, workspace, prompt_remote)
 
     if not is_adhoc:
         repro = extract_repro_script(request.issue_data)
@@ -421,7 +443,7 @@ def launch(
         message=agent_message,
         model=request.model,
         max_turns=request.max_turns,
-        system_prompt_file=f"{job_dir}/system_prompt.md",
+        system_prompt_file=prompt_remote,
         unbuffer_prefix=unbuffer,
     )
     agent_cmd = agent.build_cmd(ctx)

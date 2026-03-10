@@ -65,7 +65,12 @@ class Agent(Protocol):
     def parse_stream_line(self, line: str) -> list[StreamEvent]: ...
     def log_filename(self, run_number: int) -> str: ...
     def setup_workspace(
-        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+        self,
+        backend: Backend,
+        worktree_path: str,
+        job_dir: str,
+        workspace: str,
+        prompt_file: str,
     ) -> None: ...
     def extract_summary(self, log_content: str) -> str | None: ...
 
@@ -149,7 +154,12 @@ class ClaudeAgent:
         return f"claude-{run_number}.log"
 
     def setup_workspace(
-        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+        self,
+        backend: Backend,
+        worktree_path: str,
+        job_dir: str,
+        workspace: str,
+        prompt_file: str,
     ) -> None:
         backend.run(f"mkdir -p {worktree_path}/.claude", check=False)
         settings = json.dumps(
@@ -237,11 +247,14 @@ class CodexAgent:
         return f"codex-{run_number}.log"
 
     def setup_workspace(
-        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+        self,
+        backend: Backend,
+        worktree_path: str,
+        job_dir: str,
+        workspace: str,
+        prompt_file: str,
     ) -> None:
-        backend.run(
-            f"cp {job_dir}/system_prompt.md {worktree_path}/AGENTS.md", check=False
-        )
+        backend.run(f"cp {prompt_file} {worktree_path}/AGENTS.md", check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -333,11 +346,14 @@ class CursorAgent:
         return f"cursor-{run_number}.log"
 
     def setup_workspace(
-        self, backend: Backend, worktree_path: str, job_dir: str, workspace: str
+        self,
+        backend: Backend,
+        worktree_path: str,
+        job_dir: str,
+        workspace: str,
+        prompt_file: str,
     ) -> None:
-        backend.run(
-            f"cp {job_dir}/system_prompt.md {worktree_path}/.cursorrules", check=False
-        )
+        backend.run(f"cp {prompt_file} {worktree_path}/.cursorrules", check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -371,12 +387,12 @@ class CursorAgent:
 #
 #            def setup_workspace(
 #                self, backend: Backend, worktree_path: str,
-#                job_dir: str, workspace: str,
+#                job_dir: str, workspace: str, prompt_file: str,
 #            ) -> None:
 #                # Write agent-specific config files into the worktree.
 #                # e.g. AGENTS.md for codex, .cursorrules for cursor,
 #                #      .claude/settings.json for claude.
-#                # The system prompt is already at {job_dir}/system_prompt.md.
+#                # prompt_file points at the uploaded prompt to stage.
 #                ...
 #
 # 3. Add it to the AGENTS dict below.

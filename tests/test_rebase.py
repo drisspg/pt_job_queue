@@ -256,6 +256,25 @@ class TestRebaseConflictResolution:
         assert result.attempts == 1
         assert backend.launch_background.call_count == 1
 
+    def test_codex_rebase_uses_rebase_prompt_for_agents_file(self, tmp_path):
+        repo, job_id, backend, _ = self._setup(tmp_path)
+
+        with patch(
+            "ptq.application.rebase_service.backend_for_job", return_value=backend
+        ):
+            rebase(repo, job_id, agent_name="codex", max_attempts=1)
+
+        run_cmds = [
+            call.args[0]
+            for call in backend.run.call_args_list
+            if isinstance(call.args[0], str)
+        ]
+        assert any(
+            cmd == f"cp ~/ptq_workspace/jobs/{job_id}/rebase_prompt_1.md "
+            f"~/ptq_workspace/jobs/{job_id}/pytorch/AGENTS.md"
+            for cmd in run_cmds
+        )
+
     def test_escalates_after_max_attempts(self, tmp_path):
         repo, job_id = _make_repo(tmp_path)
 
