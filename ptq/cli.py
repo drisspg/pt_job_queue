@@ -731,7 +731,7 @@ def web(
         from ptq.web.app import create_app
     except ModuleNotFoundError:
         console.print(
-            '[red]Missing web dependencies.[/red] Install with: [bold]pip install -e ".\\[web]"[/bold]'
+            "[red]Missing web dependencies.[/red] Install with: [bold]pip install -e .[/bold]"
         )
         raise typer.Exit(1)  # noqa: B904
 

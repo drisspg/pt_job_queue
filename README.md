@@ -15,7 +15,7 @@ For development (tests, web dashboard):
 
 ```bash
 uv run --extra dev pytest
-uv run --extra web ptq web
+uv run ptq web
 ```
 
 ## Usage
@@ -80,9 +80,9 @@ Re-running the same issue reuses the existing worktree and preserves prior edits
 ### 3. Web dashboard
 
 ```bash
-uv run --extra web ptq web
+uv run ptq web
 # or on a custom port
-uv run --extra web ptq web --port 9000
+uv run ptq web --port 9000
 ```
 
 The web UI lets you:

@@ -297,49 +297,41 @@ name = "ptq"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
+    { name = "jinja2" },
+    { name = "markdown" },
+    { name = "python-multipart" },
     { name = "rich" },
+    { name = "sse-starlette" },
     { name = "typer" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 dev = [
-    { name = "fastapi" },
     { name = "httpx" },
-    { name = "jinja2" },
-    { name = "markdown" },
     { name = "pytest" },
-    { name = "python-multipart" },
-    { name = "sse-starlette" },
-    { name = "uvicorn" },
 ]
 test = [
     { name = "httpx" },
     { name = "pytest" },
 ]
-web = [
-    { name = "fastapi" },
-    { name = "jinja2" },
-    { name = "markdown" },
-    { name = "python-multipart" },
-    { name = "sse-starlette" },
-    { name = "uvicorn" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27" },
-    { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1" },
-    { name = "markdown", marker = "extra == 'web'", specifier = ">=3.7" },
-    { name = "ptq", extras = ["test", "web"], marker = "extra == 'dev'" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "markdown", specifier = ">=3.7" },
+    { name = "ptq", extras = ["test"], marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
-    { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.18" },
+    { name = "python-multipart", specifier = ">=0.0.18" },
     { name = "rich", specifier = ">=13.0.0" },
-    { name = "sse-starlette", marker = "extra == 'web'", specifier = ">=2.1" },
+    { name = "sse-starlette", specifier = ">=2.1" },
     { name = "typer", specifier = ">=0.15.0" },
-    { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34" },
+    { name = "uvicorn", specifier = ">=0.34" },
 ]
-provides-extras = ["test", "web", "dev"]
+provides-extras = ["test", "dev"]
 
 [[package]]
 name = "pydantic"
