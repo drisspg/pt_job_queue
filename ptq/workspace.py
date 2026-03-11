@@ -39,7 +39,11 @@ console = Console()
 
 
 def setup_workspace(
-    backend: Backend, *, build: bool = False, re_cc_jobs: int = 0, build_env_prefix: str = "USE_NINJA=1 "
+    backend: Backend,
+    *,
+    build: bool = False,
+    re_cc_jobs: int = 0,
+    build_env_prefix: str = "USE_NINJA=1 ",
 ) -> None:
     workspace = backend.workspace
 
@@ -118,7 +122,9 @@ def _install_triton(backend: Backend, workspace: str) -> None:
         console.print("[yellow]Triton install failed (non-fatal).[/yellow]")
 
 
-def build_pytorch(backend: Backend, *, re_cc_jobs: int = 0, build_env_prefix: str = "USE_NINJA=1 ") -> None:
+def build_pytorch(
+    backend: Backend, *, re_cc_jobs: int = 0, build_env_prefix: str = "USE_NINJA=1 "
+) -> None:
     workspace = backend.workspace
     console.print(
         "[bold]Building PyTorch from source (this may take a while)...[/bold]"
