@@ -139,6 +139,10 @@ def setup(
     build: Annotated[
         bool, typer.Option("--build", help="Also compile PyTorch from source.")
     ] = False,
+    with_re_cc: Annotated[
+        int | None,
+        typer.Option("--with-re-cc", help="Use re-cc distributed compiler with N parallel jobs."),
+    ] = None,
     workspace: Annotated[
         str | None, typer.Option(help="Custom workspace path.")
     ] = None,
@@ -156,7 +160,7 @@ def setup(
 
     backend = create_backend(machine=machine, local=local, workspace=workspace)
     setup_workspace(
-        backend, build=build, build_env_prefix=load_config().build_env_prefix()
+        backend, build=build, re_cc_jobs=with_re_cc or 0, build_env_prefix=load_config().build_env_prefix()
     )
 
 
