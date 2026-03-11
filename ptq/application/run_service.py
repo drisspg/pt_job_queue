@@ -221,11 +221,18 @@ def _setup_job_venv(
                 stream=verbose,
             )
         pip_verbose = " -v" if verbose else ""
+        pip_cmd = f"uv pip install --python {job_python} --no-build-isolation{pip_verbose} -e ."
+        re_cc_cfg = f"{backend.workspace}/.re-cc-config"
+        re_cc_check = backend.run(f"cat {re_cc_cfg}", check=False)
+        if re_cc_check.returncode == 0 and re_cc_check.stdout.strip().isdigit():
+            re_cc_jobs = re_cc_check.stdout.strip()
+            pip_cmd = f"re-cc -- {pip_cmd}"
+            build_env_prefix = f"MAX_JOBS={re_cc_jobs} {build_env_prefix}"
+            progress(f"Using re-cc with MAX_JOBS={re_cc_jobs}")
         progress("Editable install (pytorch)... this takes a few minutes")
         with _timed("editable install", progress):
             result = backend.run(
-                f"cd {worktree_path} && {build_env_prefix}"
-                f"uv pip install --python {job_python} --no-build-isolation{pip_verbose} -e .",
+                f"cd {worktree_path} && {build_env_prefix}{pip_cmd}",
                 check=False,
                 stream=verbose,
             )

@@ -39,7 +39,7 @@ console = Console()
 
 
 def setup_workspace(
-    backend: Backend, *, build: bool = False, build_env_prefix: str = "USE_NINJA=1 "
+    backend: Backend, *, build: bool = False, re_cc_jobs: int = 0, build_env_prefix: str = "USE_NINJA=1 "
 ) -> None:
     workspace = backend.workspace
 
@@ -74,7 +74,7 @@ def setup_workspace(
     _install_triton(backend, workspace)
 
     if build:
-        build_pytorch(backend, build_env_prefix=build_env_prefix)
+        build_pytorch(backend, re_cc_jobs=re_cc_jobs, build_env_prefix=build_env_prefix)
 
     console.print("Deploying helper scripts...")
     deploy_scripts(backend)
@@ -118,7 +118,7 @@ def _install_triton(backend: Backend, workspace: str) -> None:
         console.print("[yellow]Triton install failed (non-fatal).[/yellow]")
 
 
-def build_pytorch(backend: Backend, *, build_env_prefix: str = "USE_NINJA=1 ") -> None:
+def build_pytorch(backend: Backend, *, re_cc_jobs: int = 0, build_env_prefix: str = "USE_NINJA=1 ") -> None:
     workspace = backend.workspace
     console.print(
         "[bold]Building PyTorch from source (this may take a while)...[/bold]"
@@ -133,8 +133,15 @@ def build_pytorch(backend: Backend, *, build_env_prefix: str = "USE_NINJA=1 ") -
         stream=True,
     )
 
+    pip_cmd = f"{workspace}/.venv/bin/pip install -v -e ."
+    if re_cc_jobs > 0:
+        pip_cmd = f"re-cc -- {workspace}/.venv/bin/pip install -v -e ."
+        build_env_prefix = f"MAX_JOBS={re_cc_jobs} {build_env_prefix}"
+        console.print(f"[bold]Using re-cc with MAX_JOBS={re_cc_jobs}[/bold]")
+        backend.run(f"echo {re_cc_jobs} > {workspace}/.re-cc-config")
+
     result = backend.run(
-        f"cd {workspace}/pytorch && {build_env_prefix}{workspace}/.venv/bin/pip install -v -e .",
+        f"cd {workspace}/pytorch && {build_env_prefix}{pip_cmd}",
         check=False,
         stream=True,
     )
