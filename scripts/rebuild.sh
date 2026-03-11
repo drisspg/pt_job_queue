@@ -2,7 +2,7 @@
 WORKTREE="${1:?Usage: rebuild.sh <pytorch-worktree-path>}"
 JOB_DIR="$(dirname "$WORKTREE")"
 JOB_PYTHON="$JOB_DIR/.venv/bin/python"
-WORKSPACE="$(dirname "$(dirname "$WORKTREE")")"
+WORKSPACE="$(dirname "$(dirname "$JOB_DIR")")"
 RE_CC_CONFIG="$WORKSPACE/.re-cc-config"
 
 if [ -f "$RE_CC_CONFIG" ]; then
