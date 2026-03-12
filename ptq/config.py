@@ -165,6 +165,53 @@ Output:
 - evidence that it passes after the fix
 - any remaining risks or gaps""",
         ),
+        PromptPreset(
+            key="simplify",
+            title="Simplify",
+            body="""\
+Review the code you just changed and simplify it while preserving exact functionality.
+
+Core principles:
+- Never change what the code does — only how it's expressed
+- Clarity over brevity — readable, explicit code beats compact or clever code
+- Minimal diffs — touch only what needs improving, don't mix cleanup with unrelated changes
+- Remove comments that narrate what the code does; keep only non-obvious "why"
+
+Python:
+- Inline single-use variables and unnecessary abstractions
+- Flatten nesting with early returns and guard clauses
+- Prefer match/case over long if/elif chains
+- Use X | Y union syntax; never typing.Optional or typing.Union
+- Default to @dataclass for simple data containers
+- Add or tighten type annotations on function signatures
+- Prefer f-strings over .format() or %
+- Remove dead code: unused imports, unreachable branches, commented-out code
+- Avoid try/except unless the failure mode is expected and common; never swallow exceptions
+- No hasattr/getattr for control flow — use explicit attributes, protocols, or ABCs
+- Nested functions only when under four lines; extract larger ones to module scope
+
+C++:
+- RAII over manual resource management — no raw new/delete
+- TORCH_CHECK(condition, message) for user-facing errors — include shapes, dtypes, device in the message
+- TORCH_INTERNAL_ASSERT for invariants that indicate bugs, not user mistakes
+- Const correctness — mark references, pointers, and methods const where possible
+- Prefer range-based for and STL algorithms over raw index loops when they express intent more clearly
+- Minimize header includes; prefer forward declarations
+- Use auto when the type is obvious from context; spell it out when it aids comprehension
+- No clever template metaprogramming unless the surrounding code already establishes the pattern
+
+Anti-patterns to fix:
+- Nested ternaries → if/else or switch/match
+- Boolean parameters (foo(true, false)) → named constants, enums, or options struct
+- isinstance chains → match/case or polymorphism
+- Catch-all except Exception → specific exception types or remove try/except
+- Magic numbers / string literals → named constants
+- Wrapper that only forwards → inline or remove the layer
+- Bare assert in C++ → TORCH_CHECK or TORCH_INTERNAL_ASSERT
+- printf/std::cout for errors → TORCH_WARN or TORCH_CHECK with context
+
+Flag any change that could alter semantics — when in doubt, don't change it.""",
+        ),
     ]
 
 
