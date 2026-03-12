@@ -11,7 +11,7 @@ from ptq.agent import (
     build_adhoc_prompt,
     build_system_prompt,
 )
-from ptq.application.run_service import launch
+from ptq.application.run_service import _build_prior_context, launch
 from ptq.domain.models import RunRequest
 from ptq.ssh import LocalBackend, RemoteBackend
 
@@ -60,6 +60,7 @@ class TestBuildAdhocPrompt:
         assert "fix oom" in result
         assert "j-123" in result
         assert "/ws" in result
+        assert "spin fixlint" in result
         assert "{job_id}" not in result
         assert "{task_description}" not in result
         assert "{workspace}" not in result
@@ -77,6 +78,7 @@ class TestBuildSystemPrompt:
         assert "j-42" in result
         assert "#42" in result or "42" in result
         assert "/ws" in result
+        assert "spin fixlint" in result
         assert "{job_id}" not in result
         assert "{workspace}" not in result
 
@@ -90,6 +92,19 @@ class TestBuildSystemPrompt:
         result = build_system_prompt(issue_data, 1, "j-1", "/ws")
         assert "x-anthropic-secret" not in result
         assert "[redacted-header]" in result
+
+
+class TestBuildPriorContext:
+    def test_mentions_fixlint_for_follow_up_runs(self):
+        backend = MagicMock()
+        backend.run.side_effect = [
+            CompletedProcess(args="", returncode=0, stdout="old worklog", stderr=""),
+            CompletedProcess(args="", returncode=0, stdout="old report", stderr=""),
+        ]
+
+        result = _build_prior_context(backend, "/tmp/job", 2)
+
+        assert "spin fixlint" in result
 
 
 def _ok(*args, **kwargs) -> CompletedProcess[str]:

@@ -98,4 +98,6 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 cd {workspace}/jobs/{job_id}/pytorch && git diff > {workspace}/jobs/{job_id}/fix.diff
 ```
 
+If you made code changes, run `spin fixlint` from `{workspace}/jobs/{job_id}/pytorch/` before generating `fix.diff` and before finishing.
+
 IMPORTANT: Always generate both report.md and fix.diff before finishing.

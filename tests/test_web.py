@@ -109,6 +109,24 @@ class TestJobDetail:
         assert "rerun-message-preset" in resp.text
         assert "Fix And Verify" in resp.text
 
+    def test_takeover_command_uses_worktree_and_parent_venv_for_local_job(self, client):
+        resp = client.get("/jobs/20260218-adhoc-abc123")
+        assert resp.status_code == 200
+        assert (
+            "cd ~/.ptq_workspace/jobs/20260218-adhoc-abc123/pytorch && "
+            "source ../.venv/bin/activate"
+        ) in resp.text
+
+    def test_takeover_command_uses_worktree_and_parent_venv_for_remote_job(
+        self, client
+    ):
+        resp = client.get("/jobs/20260217-100001")
+        assert resp.status_code == 200
+        assert (
+            "ssh -t gpu-dev 'cd ~/ptq_workspace/jobs/20260217-100001/pytorch && "
+            "source ../.venv/bin/activate && exec $SHELL'"
+        ) in resp.text
+
     def test_unknown_job_404(self, client):
         resp = client.get("/jobs/nonexistent-job")
         assert resp.status_code == 404
