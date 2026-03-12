@@ -80,6 +80,7 @@ class JobRecord:
     pr_url: str | None = None
     human_note: str | None = None
     rebase: RebaseInfo | None = None
+    name: str | None = None
 
     @property
     def target(self) -> str:
@@ -111,6 +112,8 @@ class JobRecord:
             d["pr_url"] = self.pr_url
         if self.human_note:
             d["human_note"] = self.human_note
+        if self.name:
+            d["name"] = self.name
         if self.rebase is not None:
             rebase_data = self.rebase.to_dict()
             if rebase_data:
@@ -137,6 +140,7 @@ class JobRecord:
             pr_url=data.get("pr_url"),
             human_note=data.get("human_note"),
             rebase=RebaseInfo.from_dict(rebase_data) if rebase_data else None,
+            name=data.get("name"),
         )
 
 
@@ -153,6 +157,7 @@ class RunRequest:
     agent_type: str = "claude"
     existing_job_id: str | None = None
     verbose: bool = False
+    name: str | None = None
 
 
 @dataclass

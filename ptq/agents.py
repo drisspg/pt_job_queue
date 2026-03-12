@@ -87,7 +87,7 @@ class ClaudeAgent:
     def build_cmd(self, ctx: RunContext) -> str:
         escaped = ctx.message.replace("'", "'\\''")
         return (
-            f"cd {ctx.worktree_path} && "
+            f"cd {ctx.job_dir} && "
             f"{ctx.unbuffer_prefix}"
             f"claude -p '{escaped}' "
             f"--model {ctx.model} "
@@ -161,7 +161,7 @@ class ClaudeAgent:
         workspace: str,
         prompt_file: str,
     ) -> None:
-        backend.run(f"mkdir -p {worktree_path}/.claude", check=False)
+        backend.run(f"mkdir -p {job_dir}/.claude", check=False)
         settings = json.dumps(
             {
                 "sandbox": {
@@ -172,7 +172,7 @@ class ClaudeAgent:
             }
         )
         backend.run(
-            f"cat > {worktree_path}/.claude/settings.json << 'SETTINGS_EOF'\n{settings}\nSETTINGS_EOF"
+            f"cat > {job_dir}/.claude/settings.json << 'SETTINGS_EOF'\n{settings}\nSETTINGS_EOF"
         )
 
 
@@ -192,7 +192,7 @@ class CodexAgent:
             f"codex exec '{escaped}' "
             f"--model {ctx.model} "
             f"--dangerously-bypass-approvals-and-sandbox "
-            f"-C {ctx.worktree_path} "
+            f"-C {ctx.job_dir} "
             f"--json"
         )
 
@@ -254,7 +254,7 @@ class CodexAgent:
         workspace: str,
         prompt_file: str,
     ) -> None:
-        backend.run(f"cp {prompt_file} {worktree_path}/AGENTS.md", check=False)
+        backend.run(f"cp {prompt_file} {job_dir}/AGENTS.md", check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +283,7 @@ class CursorAgent:
             f"agent -p '{escaped}' "
             f"--model {ctx.model} "
             f"--force "
-            f"--workspace {ctx.worktree_path} "
+            f"--workspace {ctx.job_dir} "
             f"--output-format stream-json"
         )
 
@@ -353,7 +353,7 @@ class CursorAgent:
         workspace: str,
         prompt_file: str,
     ) -> None:
-        backend.run(f"cp {prompt_file} {worktree_path}/.cursorrules", check=False)
+        backend.run(f"cp {prompt_file} {job_dir}/.cursorrules", check=False)
 
 
 # ---------------------------------------------------------------------------

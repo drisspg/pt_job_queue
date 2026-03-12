@@ -85,6 +85,7 @@ async def _run_pending_launch(launch: PendingLaunch) -> None:
     issue_raw = str(params["issue"])
     issue_number = int(issue_raw) if issue_raw else None
     message_text = str(params["message"]) or None
+    job_name = str(params.get("name", "")) or None
 
     backend = create_backend(machine=machine_name, local=is_local)
     loop = asyncio.get_running_loop()
@@ -113,6 +114,7 @@ async def _run_pending_launch(launch: PendingLaunch) -> None:
             model=str(params["model"]),
             max_turns=int(params["max_turns"]),
             agent_type=str(params["agent"]),
+            name=job_name,
         )
 
         log.info(
@@ -231,53 +233,6 @@ async def root():
     return RedirectResponse(url="/jobs", status_code=302)
 
 
-@router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    repo = _repo()
-    all_jobs = repo.list_all()
-    jobs: list[dict] = []
-    running_count = 0
-    stopped_count = 0
-    machines: dict[str, dict] = {}
-
-    for job_id, job in sorted(all_jobs.items()):
-        status = get_job_status_with_finalize(job_id, job)
-        if status in ("running", "initializing"):
-            running_count += 1
-        else:
-            stopped_count += 1
-
-        machines.setdefault(job.target, {"running": 0, "stopped": 0, "total": 0})
-        machines[job.target][
-            "running" if status in ("running", "initializing") else "stopped"
-        ] += 1
-        machines[job.target]["total"] += 1
-
-        jobs.append(
-            {
-                "id": job_id,
-                "issue": job.issue,
-                "agent": job.agent,
-                "target": job.target,
-                "runs": job.runs,
-                "status": status,
-                "pr_url": job.pr_url,
-            }
-        )
-
-    return templates.TemplateResponse(
-        request,
-        "dashboard.html",
-        {
-            "jobs": jobs,
-            "total": len(all_jobs),
-            "running": running_count,
-            "stopped": stopped_count,
-            "machines": machines,
-        },
-    )
-
-
 @router.get("/jobs", response_class=HTMLResponse)
 async def job_list(request: Request, status_filter: str = "all"):
     repo = _repo()
@@ -297,6 +252,7 @@ async def job_list(request: Request, status_filter: str = "all"):
                 "runs": job.runs,
                 "status": status,
                 "pr_url": job.pr_url,
+                "name": job.name,
             }
         )
 
@@ -385,6 +341,7 @@ async def job_create(
     agent: str = Form("claude"),
     model: str = Form("opus"),
     max_turns: int = Form(100),
+    name: str = Form(""),
 ):
     if task_type == "issue" and not issue.strip():
         return templates.TemplateResponse(
@@ -420,6 +377,7 @@ async def job_create(
             "agent": agent,
             "model": model,
             "max_turns": max_turns,
+            "name": name.strip(),
         }
     )
     return RedirectResponse(url=f"/jobs/launching/{launch_id}", status_code=303)
@@ -501,7 +459,7 @@ async def job_detail(request: Request, job_id: str):
         "job_detail.html",
         {
             "job_id": job_id,
-            "job": job.to_dict(),
+            "job_name": job.name or "",
             "status": status,
             "target": job.target,
             "issue": job.issue,
@@ -524,6 +482,18 @@ async def job_detail(request: Request, job_id: str):
             "prompt_presets": _prompt_presets(cfg),
         },
     )
+
+
+@router.post("/jobs/{job_id}/rename", response_class=HTMLResponse)
+async def job_rename(
+    job_id: str,
+    name: str = Form(""),
+):
+    repo = _repo()
+    with _catch_error():
+        job_id = repo.resolve_id(job_id)
+    repo.save_name(job_id, name.strip() or None)
+    return RedirectResponse(url=f"/jobs/{job_id}", status_code=303)
 
 
 @router.post("/jobs/{job_id}/rerun", response_class=HTMLResponse)

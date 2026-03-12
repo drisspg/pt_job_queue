@@ -136,24 +136,25 @@ def _try_clone_base_venv(
     progress("Rewriting venv paths...")
     with _timed("path rewrite", progress):
         job_venv = f"{job_dir}/.venv"
+        resolved_venv = _last_line(f"realpath {job_venv}") or job_venv
         backend.run(
-            f'sed -i "s|{base_venv}|{job_venv}|g" {job_venv}/bin/activate {job_venv}/bin/activate.csh {job_venv}/bin/activate.fish {job_venv}/bin/activate.nu 2>/dev/null',
+            f'sed -i "s|{base_venv}|{resolved_venv}|g" {job_venv}/bin/activate {job_venv}/bin/activate.csh {job_venv}/bin/activate.fish {job_venv}/bin/activate.nu 2>/dev/null',
             check=False,
         )
         backend.run(
-            f"""sed -i "s|^VIRTUAL_ENV=.*|VIRTUAL_ENV='{job_venv}'|" {job_venv}/bin/activate 2>/dev/null""",
+            f"""sed -i "s|^VIRTUAL_ENV=.*|VIRTUAL_ENV='{resolved_venv}'|" {job_venv}/bin/activate 2>/dev/null""",
             check=False,
         )
         backend.run(
-            f"""sed -i 's|^setenv VIRTUAL_ENV .*|setenv VIRTUAL_ENV "{job_venv}"|' {job_venv}/bin/activate.csh 2>/dev/null""",
+            f"""sed -i 's|^setenv VIRTUAL_ENV .*|setenv VIRTUAL_ENV "{resolved_venv}"|' {job_venv}/bin/activate.csh 2>/dev/null""",
             check=False,
         )
         backend.run(
-            f"""sed -i 's|^set -gx VIRTUAL_ENV .*|set -gx VIRTUAL_ENV "{job_venv}"|' {job_venv}/bin/activate.fish 2>/dev/null""",
+            f"""sed -i 's|^set -gx VIRTUAL_ENV .*|set -gx VIRTUAL_ENV "{resolved_venv}"|' {job_venv}/bin/activate.fish 2>/dev/null""",
             check=False,
         )
         backend.run(
-            f'sed -i "1s|#!{base_venv}/bin/python[0-9.]*|#!{job_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
+            f'sed -i "1s|#!{base_venv}/bin/python[0-9.]*|#!{resolved_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
             check=False,
         )
 
@@ -267,19 +268,6 @@ def _setup_job_venv(
     _install_triton(backend, job_dir, worktree_path, verbose=verbose, progress=progress)
 
 
-_AGENT_CONFIG_EXCLUDES = [".cursorrules", "AGENTS.md", ".claude/"]
-
-
-def _exclude_agent_configs(backend: Backend, worktree_path: str) -> None:
-    exclude_file = f"{worktree_path}/.git/info/exclude"
-    backend.run(f"mkdir -p $(dirname {exclude_file})", check=False)
-    for pattern in _AGENT_CONFIG_EXCLUDES:
-        backend.run(
-            f"grep -qxF '{pattern}' {exclude_file} 2>/dev/null || echo '{pattern}' >> {exclude_file}",
-            check=False,
-        )
-
-
 def _stamp_worklog_header(
     backend: Backend, job_dir: str, run_number: int, message: str | None
 ) -> None:
@@ -377,18 +365,22 @@ def launch(
     backend.run(f"mkdir -p {job_dir}")
 
     if not existing:
-        record = JobRecord(
-            job_id=job_id,
-            issue=request.issue_number,
-            runs=run_number,
-            agent=request.agent_type,
-            model=request.model,
-            machine=request.machine,
-            local=request.local,
-            workspace=workspace,
-            initializing=True,
+        repo.save(
+            JobRecord(
+                job_id=job_id,
+                issue=request.issue_number,
+                runs=run_number,
+                agent=request.agent_type,
+                model=request.model,
+                machine=request.machine,
+                local=request.local,
+                workspace=workspace,
+                initializing=True,
+                name=request.name,
+            )
         )
-        repo.save(record)
+    elif request.name:
+        repo.save_name(job_id, request.name)
 
     deploy_scripts(backend)
 
@@ -440,7 +432,6 @@ def launch(
     backend.copy_to(prompt_tmp, prompt_remote)
     prompt_tmp.unlink()
 
-    _exclude_agent_configs(backend, worktree_path)
     progress("Configuring agent workspace...")
     agent.setup_workspace(backend, worktree_path, job_dir, workspace, prompt_remote)
 

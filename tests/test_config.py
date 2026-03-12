@@ -44,7 +44,7 @@ class TestParse:
 
     def test_build_env_defaults(self):
         cfg = _parse({})
-        assert cfg.build_env == {"USE_NINJA": "1"}
+        assert cfg.build_env == {"USE_NINJA": "1", "USE_NNPACK": "0"}
 
     def test_prompt_library_overrides_and_appends(self):
         cfg = _parse(

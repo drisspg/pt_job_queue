@@ -145,6 +145,17 @@ class JobRepository:
 
         self._update_raw(update)
 
+    def save_name(self, job_id: str, name: str | None) -> None:
+        def update(db: dict) -> None:
+            if job_id not in db:
+                return
+            if name:
+                db[job_id]["name"] = name
+            else:
+                db[job_id].pop("name", None)
+
+        self._update_raw(update)
+
     def save_pid(self, job_id: str, pid: int | None) -> None:
         def update(db: dict) -> None:
             if job_id not in db:

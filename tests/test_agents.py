@@ -62,7 +62,7 @@ class TestProtocol:
 class TestBuildCmd:
     def test_claude_cmd_structure(self, ctx):
         cmd = ClaudeAgent().build_cmd(ctx)
-        assert cmd.startswith("cd /tmp/wt && ")
+        assert cmd.startswith("cd /tmp/job && ")
         assert "claude -p " in cmd
         assert "--model opus" in cmd
         assert "--max-turns 50" in cmd
@@ -75,7 +75,7 @@ class TestBuildCmd:
         assert "codex exec " in cmd
         assert "--model opus" in cmd
         assert "--dangerously-bypass-approvals-and-sandbox" in cmd
-        assert "-C /tmp/wt" in cmd
+        assert "-C /tmp/job" in cmd
         assert "--json" in cmd
         assert "--max-turns" not in cmd
 
@@ -84,7 +84,7 @@ class TestBuildCmd:
         assert "agent -p " in cmd
         assert "--model opus" in cmd
         assert "--force" in cmd
-        assert "--workspace /tmp/wt" in cmd
+        assert "--workspace /tmp/job" in cmd
         assert "--output-format stream-json" in cmd
         assert "--max-turns" not in cmd
 

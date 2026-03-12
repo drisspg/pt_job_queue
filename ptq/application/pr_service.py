@@ -162,10 +162,6 @@ def create_pr(
     backend.run(f"cd {worktree} && git checkout -B '{branch}'")
     _log("Staging changes...")
     backend.run(f"cd {worktree} && git add -A")
-    backend.run(
-        f"cd {worktree} && git reset HEAD -- .claude/ .cursorrules AGENTS.md",
-        check=False,
-    )
     has_staged_changes = (
         backend.run(
             f"cd {worktree} && git diff --cached --quiet", check=False

@@ -70,19 +70,16 @@ def client(tmp_path, mock_backend):
         yield TestClient(create_app())
 
 
-class TestDashboard:
-    def test_renders(self, client):
+class TestRoot:
+    def test_redirects_to_jobs(self, client):
+        resp = client.get("/", follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/jobs"
+
+    def test_renders_job_list(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "Dashboard" in resp.text
-
-    def test_shows_job_count(self, client):
-        resp = client.get("/dashboard")
-        assert "Total Jobs" in resp.text
-
-    def test_shows_machine(self, client):
-        resp = client.get("/")
-        assert "gpu-dev" in resp.text
+        assert "Jobs" in resp.text
 
 
 class TestJobList:

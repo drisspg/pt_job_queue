@@ -210,6 +210,10 @@ def run(
         Path | None,
         typer.Option("--input", "-i", help="Read task description from a file."),
     ] = None,
+    name: Annotated[
+        str | None,
+        typer.Option("--name", "-n", help="Display name for this job."),
+    ] = None,
 ) -> None:
     """Launch an AI agent to investigate a PyTorch issue or run an adhoc task.
 
@@ -295,6 +299,7 @@ def run(
         agent_type=agent,
         existing_job_id=resolved_job_id,
         verbose=verbose,
+        name=name,
     )
 
     try:
@@ -490,6 +495,7 @@ def list_jobs() -> None:
     )
     table.add_column("Status", width=9)
     table.add_column("Job ID")
+    table.add_column("Name")
     table.add_column("Issue", style="cyan")
     table.add_column("Agent", width=7)
     table.add_column("Runs", justify="right")
@@ -511,6 +517,7 @@ def list_jobs() -> None:
         table.add_row(
             status_str,
             job_id,
+            job.name or "[dim]-[/dim]",
             issue_display,
             job.agent,
             str(job.runs),
@@ -772,6 +779,22 @@ def kill(
         console.print(f"[bold]Killed agent for {job_id} (pid {job.pid})[/bold]")
     else:
         console.print(f"[dim]Agent already stopped for {job_id}[/dim]")
+
+
+@app.command()
+def rename(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+    name: Annotated[str, typer.Argument(help="New display name for the job.")],
+) -> None:
+    """Set or change the display name of a job."""
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+
+    repo.save_name(job_id, name)
+    console.print(f"[bold]{job_id}[/bold] → {name}")
 
 
 @app.command()

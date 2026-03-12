@@ -271,7 +271,7 @@ class TestRebaseConflictResolution:
         ]
         assert any(
             cmd == f"cp ~/ptq_workspace/jobs/{job_id}/rebase_prompt_1.md "
-            f"~/ptq_workspace/jobs/{job_id}/pytorch/AGENTS.md"
+            f"~/ptq_workspace/jobs/{job_id}/AGENTS.md"
             for cmd in run_cmds
         )
 

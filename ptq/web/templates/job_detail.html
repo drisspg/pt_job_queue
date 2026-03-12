@@ -3,7 +3,17 @@
 {% block content %}
 <header>
   <hgroup>
-    <h1>{{ job_id }}</h1>
+    <h1>
+      <span>
+        {% if job_name %}{{ job_name }}{% else %}{{ job_id }}{% endif %}
+      </span>
+      <button type="button" class="rename-btn" title="Rename job" onclick="toggleRename()">✎</button>
+    </h1>
+    <form id="rename-form" method="post" action="/jobs/{{ job_id }}/rename" class="rename-row" hidden>
+      <input type="text" name="name" value="{{ job_name }}" placeholder="Display name">
+      <button type="submit" class="outline small">Save</button>
+      <button type="button" class="secondary outline small" onclick="toggleRename()">Cancel</button>
+    </form>
     <p>
       {% if issue %}<a href="https://github.com/pytorch/pytorch/issues/{{ issue }}" target="_blank">#{{ issue }}</a>{% else %}adhoc{% endif %}
       · {{ agent_name }}
@@ -15,6 +25,14 @@
     </p>
   </hgroup>
 </header>
+<script>
+function toggleRename() {
+  var form = document.getElementById('rename-form');
+  var show = form.hidden;
+  form.hidden = !show;
+  if (show) form.querySelector('input').focus();
+}
+</script>
 
 {% set has_open_pr = pr_url and pr_state == "open" %}
 {% set has_closed_pr = pr_url and pr_state in ["closed", "merged"] %}

@@ -396,7 +396,7 @@ class TestLaunchAgentType:
         ]
         assert any(
             c
-            == f"cp /tmp/ws/jobs/{job_id}/system_prompt.md /tmp/ws/jobs/{job_id}/pytorch/AGENTS.md"
+            == f"cp /tmp/ws/jobs/{job_id}/system_prompt.md /tmp/ws/jobs/{job_id}/AGENTS.md"
             for c in run_cmds
         )
 
@@ -423,7 +423,7 @@ class TestLaunchAgentType:
         ]
         assert any(
             c
-            == f"cp /tmp/ws/jobs/{job_id}/system_prompt.md /tmp/ws/jobs/{job_id}/pytorch/.cursorrules"
+            == f"cp /tmp/ws/jobs/{job_id}/system_prompt.md /tmp/ws/jobs/{job_id}/.cursorrules"
             for c in run_cmds
         )
 

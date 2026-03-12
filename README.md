@@ -40,6 +40,19 @@ This creates a workspace with:
 
 When `--build` is used, setup performs a full checkout nuke before editable install (`git clean -dfx` + submodule sync/update) to avoid stale CMake/Ninja graphs after upstream file moves.
 
+**Speed up C++ rebuilds:** Install system NCCL to skip building it from source (~5 min savings per rebuild):
+
+```bash
+sudo apt install -y libnccl-dev
+```
+
+Then add to `~/.ptq/config.toml`:
+
+```toml
+[build.env]
+USE_SYSTEM_NCCL = "1"
+```
+
 ### 2. Launch an investigation
 
 ```bash

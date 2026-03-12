@@ -803,6 +803,41 @@ hgroup a {
   color: var(--text-muted);
 }
 
+.rename-btn {
+  all: unset;
+  cursor: pointer;
+  font-size: 14px;
+  color: #4d9de0;
+  opacity: 0.6;
+  vertical-align: middle;
+  padding: 2px 4px;
+  margin-left: 6px;
+  line-height: 1;
+  border-radius: 4px;
+  transition: opacity 150ms;
+}
+.rename-btn:hover {
+  opacity: 1;
+}
+
+.rename-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+.rename-row input {
+  width: 250px;
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.9rem;
+}
+.rename-row button {
+  padding: 0.3rem 0.7rem;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
 /* htmx loading indicator */
 .htmx-indicator {
   opacity: 0;

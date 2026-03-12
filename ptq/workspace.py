@@ -167,6 +167,8 @@ def build_pytorch(
 def deploy_scripts(backend: Backend) -> None:
     from pathlib import Path
 
+    from ptq.config import load_config
+
     workspace = backend.workspace
     scripts_dir = Path(__file__).parent.parent / "scripts"
     backend.run(f"mkdir -p {workspace}/scripts")
@@ -183,6 +185,17 @@ def deploy_scripts(backend: Backend) -> None:
             shutil.copy2(script, dest_dir / script.name)
 
     backend.run(f"chmod +x {workspace}/scripts/*.sh")
+
+    cfg = load_config()
+    if cfg.build_env:
+        build_env_script = "\n".join(
+            f"export {key}={value}" for key, value in cfg.build_env.items()
+        )
+        backend.run(
+            f"cat > {workspace}/scripts/.build-env << 'BUILD_ENV_EOF'\n"
+            f"{build_env_script}\n"
+            f"BUILD_ENV_EOF"
+        )
 
 
 _CCACHE_CONF = """\

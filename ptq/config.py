@@ -51,6 +51,9 @@ default = "auto"
 [build.env]
 USE_NINJA = "1"
 USE_NNPACK = "0"
+# Uncomment to skip building NCCL from source (~5 min savings).
+# Requires NCCL installed system-wide (e.g. via apt install libnccl-dev).
+# USE_SYSTEM_NCCL = "1"
 """
 
 
@@ -311,7 +314,10 @@ def _parse(data: dict) -> Config:
 
     build_section = data.get("build", {})
     build_env = {
-        str(k): str(v) for k, v in build_section.get("env", {"USE_NINJA": "1"}).items()
+        str(k): str(v)
+        for k, v in build_section.get(
+            "env", {"USE_NINJA": "1", "USE_NNPACK": "0"}
+        ).items()
     }
 
     return Config(
