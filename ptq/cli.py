@@ -10,7 +10,7 @@ from rich.console import Console
 
 from ptq.agent import _clean, _indent, _truncate
 from ptq.agents import StreamEvent, get_agent
-from ptq.domain.models import JobStatus, PtqError, RebaseState, RunRequest
+from ptq.domain.models import JobRecord, JobStatus, PtqError, RebaseState, RunRequest
 
 app = typer.Typer(
     name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix PyTorch issues."
@@ -795,6 +795,96 @@ def rename(
 
     repo.save_name(job_id, name)
     console.print(f"[bold]{job_id}[/bold] → {name}")
+
+
+@app.command()
+def worktree(
+    name: Annotated[str, typer.Argument(help="Display name for this worktree.")],
+    machine: Annotated[
+        str | None, typer.Option(help="Remote machine to create worktree on.")
+    ] = None,
+    local: Annotated[
+        bool, typer.Option("--local", help="Create in local workspace.")
+    ] = False,
+    workspace: Annotated[
+        str | None, typer.Option(help="Custom workspace path.")
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Stream build output and show timings."),
+    ] = False,
+) -> None:
+    """Create a named PyTorch worktree with a ready-to-use venv.
+
+    Sets up a git worktree and per-worktree venv without launching an agent.
+    Use `ptq run <name>` later to launch an agent in this worktree.
+
+    Examples:
+        ptq worktree flex-attn --machine gpu-dev
+        ptq worktree my-fix --local
+        ptq run flex-attn -m "optimize the CPU codegen"
+    """
+    if not machine and not local:
+        local = True
+
+    from ptq.application.worktree_service import provision_worktree, validate_workspace
+    from ptq.domain.policies import make_job_id
+    from ptq.infrastructure.backends import create_backend
+    from ptq.workspace import deploy_scripts
+
+    repo = _repo()
+    existing = repo.find_by_name(name)
+    if existing:
+        console.print(
+            f"[yellow]Worktree '{name}' already exists as {existing}[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    backend = create_backend(machine=machine, local=local, workspace=workspace)
+    try:
+        validate_workspace(backend, backend.workspace)
+    except PtqError as e:
+        _handle_error(e)
+
+    job_id = make_job_id(message=name)
+    repo.save(
+        JobRecord(
+            job_id=job_id,
+            runs=0,
+            agent="claude",
+            model="",
+            machine=machine,
+            local=local,
+            workspace=backend.workspace,
+            name=name,
+        )
+    )
+
+    deploy_scripts(backend)
+    try:
+        provision_worktree(
+            backend,
+            job_id,
+            verbose=verbose,
+            progress=lambda msg: console.print(msg),
+        )
+    except PtqError as e:
+        _handle_error(e)
+
+    ws = backend.workspace
+    job_dir = f"{ws}/jobs/{job_id}"
+    console.print()
+    console.print(f"[bold green]Worktree '{name}' ready.[/bold green]")
+    console.print(f"  Job ID:   {job_id}")
+    console.print(f"  Worktree: {job_dir}/pytorch")
+    if local:
+        console.print(f"\n  cd {job_dir}/pytorch && source ../.venv/bin/activate")
+    else:
+        console.print(
+            f"\n  ssh -t {machine} 'cd {job_dir}/pytorch && "
+            f"source ../.venv/bin/activate && exec $SHELL'"
+        )
+    console.print(f"\n  To launch an agent: ptq run {name} -m 'your task'")
 
 
 @app.command()

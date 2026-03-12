@@ -97,7 +97,16 @@ class JobRepository:
             if matches:
                 return sorted(matches, key=lambda x: x[0])[-1][0]
             raise JobNotFoundError(f"No jobs found for issue #{issue_num}")
+        by_name = [(k, v) for k, v in db.items() if v.get("name") == job_id_or_issue]
+        if by_name:
+            return sorted(by_name, key=lambda x: x[0])[-1][0]
         raise JobNotFoundError(f"Unknown job: {job_id_or_issue}")
+
+    def find_by_name(self, name: str) -> str | None:
+        for job_id, entry in sorted(self._load_raw().items(), reverse=True):
+            if entry.get("name") == name:
+                return job_id
+        return None
 
     def find_by_issue(
         self,

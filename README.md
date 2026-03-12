@@ -53,7 +53,30 @@ Then add to `~/.ptq/config.toml`:
 USE_SYSTEM_NCCL = "1"
 ```
 
-### 2. Launch an investigation
+### 2. Create a named worktree
+
+```bash
+# On a remote machine
+uv run ptq worktree flex-attn --machine my-gpu-box
+
+# Locally (default when no --machine)
+uv run ptq worktree my-fix --local
+
+# With verbose build output
+uv run ptq worktree stride-fix --machine my-gpu-box -v
+```
+
+Creates a PyTorch git worktree with a ready-to-use venv, without launching an agent. Useful when you want to work in the worktree yourself or defer agent launch. The command prints the shell command to enter the worktree.
+
+Later, launch an agent in the same worktree by name:
+
+```bash
+uv run ptq run flex-attn -m "optimize the CPU codegen"
+```
+
+The worktree shows up in `ptq list` and can be cleaned with `ptq clean` like any other job.
+
+### 3. Launch an investigation
 
 ```bash
 # On a remote machine
@@ -90,7 +113,7 @@ The agent will:
 
 Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees.
 
-### 3. Web dashboard
+### 4. Web dashboard
 
 ```bash
 uv run ptq web
@@ -124,7 +147,7 @@ List everything available from CLI with:
 ptq presets
 ```
 
-### 4. Monitor progress (CLI)
+### 5. Monitor progress (CLI)
 
 ```bash
 # Peek at the agent's worklog
@@ -139,7 +162,7 @@ uv run ptq list
 
 The agent maintains a `worklog.md` with entries after each significant step, so you can check progress without streaming the full output.
 
-### 5. View results
+### 6. View results
 
 ```bash
 # By issue number (uses most recent job)
@@ -151,7 +174,7 @@ uv run ptq results 20260214-174923
 
 Fetches `report.md`, `fix.diff`, `worklog.md`, and the run log from the remote.
 
-### 6. Apply the fix
+### 7. Apply the fix
 
 ```bash
 uv run ptq apply 174923 --pytorch-path ~/meta/pytorch
@@ -159,7 +182,7 @@ uv run ptq apply 174923 --pytorch-path ~/meta/pytorch
 
 Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps for creating a PR.
 
-### 7. Manage agents
+### 8. Manage agents
 
 ```bash
 # Check status of a specific job
@@ -175,7 +198,7 @@ uv run ptq prune my-gpu-box
 uv run ptq prune --local
 ```
 
-### 8. Clean up
+### 9. Clean up
 
 ```bash
 # Remove all jobs on a machine
@@ -196,15 +219,15 @@ Removes job directories and prunes git worktrees.
 |------|---------|---------|-------------|
 | `--cuda` | setup | auto-detect | CUDA tag (`cu124`, `cu126`, `cu128`, `cu130`) |
 | `--cpu` | setup | | Use CPU-only PyTorch (macOS/testing) |
-| `--machine` | run | | Remote machine hostname |
-| `--local` | setup, run, clean, prune | | Use local workspace instead of SSH |
+| `--machine` | run, worktree | | Remote machine hostname |
+| `--local` | setup, run, worktree, clean, prune | | Use local workspace instead of SSH |
 | `--follow/--no-follow` | run | follow | Stream agent output to terminal |
 | `--agent` | run | claude | Agent (`claude`, `codex`, `cursor`) |
 | `--model` | run | opus | Model name (agent-specific) |
 | `--max-turns` | run | 100 | Max agent turns |
 | `-m/--message` | run | | Ad-hoc task or extra context for an issue |
 | `-p/--preset` | run | | Prompt preset key/title from prompt library |
-| `--workspace` | setup, run, prune | `~/ptq_workspace` | Custom workspace path |
+| `--workspace` | setup, run, worktree, prune | `~/ptq_workspace` | Custom workspace path |
 | `--keep` | clean | 0 | Number of recent jobs to keep |
 | `--log` | peek | 0 | Number of log lines to show |
 
@@ -229,6 +252,7 @@ pt_job_queue/
 │   │   └── backends.py                 # Backend factory functions
 │   ├── application/
 │   │   ├── run_service.py              # Launch/rerun orchestration
+│   │   ├── worktree_service.py         # Worktree + venv provisioning
 │   │   ├── job_service.py              # Status/kill/clean/list
 │   │   ├── artifact_service.py         # Results fetching + diff apply
 │   │   └── pr_service.py              # PR creation workflow
