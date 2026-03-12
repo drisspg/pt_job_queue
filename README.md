@@ -18,6 +18,20 @@ uv run --extra dev pytest
 uv run ptq web
 ```
 
+### UBER SPEED MODE GETING STARTED
+Assumes you have uv installed otherwise: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+```bash
+git clone git@github.com:drisspg/pt_job_queue.git
+
+# This will take a second
+uv run ptq setup --local --build 
+uv run ptq run -m "tell me a story" --agent codex
+```
+
+
+
+
 ## Usage
 
 ### 1. Set up a machine
