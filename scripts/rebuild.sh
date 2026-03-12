@@ -5,6 +5,12 @@ JOB_PYTHON="$JOB_DIR/.venv/bin/python"
 WORKSPACE="$(dirname "$(dirname "$JOB_DIR")")"
 RE_CC_CONFIG="$WORKSPACE/.re-cc-config"
 
+# Fast-path cloned worktrees may still have hardlinked .so files that
+# setuptools won't overwrite.  Break them before the editable install.
+find "$WORKTREE/torch" -name '*.so' -links +1 \
+    -exec cp --remove-destination {} {}.tmp \; \
+    -exec mv -f {}.tmp {} \; 2>/dev/null
+
 if [ -f "$RE_CC_CONFIG" ]; then
     MAX_JOBS=$(cat "$RE_CC_CONFIG")
     echo "Using re-cc with MAX_JOBS=$MAX_JOBS"

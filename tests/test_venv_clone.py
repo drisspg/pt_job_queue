@@ -63,11 +63,24 @@ class TestActivateRewrite:
         cmds = _all_cmds(backend)
 
         activate_seds = [c for c in cmds if "activate" in c and "sed" in c]
-        assert len(activate_seds) == 1
-        cmd = activate_seds[0]
-        assert f"s|{BASE_VENV}|{JOB_VENV}|g" in cmd
+        assert len(activate_seds) == 4
+
+        generic = activate_seds[0]
+        assert f"s|{BASE_VENV}|{JOB_VENV}|g" in generic
         for script in ("activate", "activate.csh", "activate.fish", "activate.nu"):
-            assert f"{JOB_VENV}/bin/{script}" in cmd
+            assert f"{JOB_VENV}/bin/{script}" in generic
+
+        bash_fix = activate_seds[1]
+        assert "^VIRTUAL_ENV=" in bash_fix
+        assert f"VIRTUAL_ENV='{JOB_VENV}'" in bash_fix
+
+        csh_fix = activate_seds[2]
+        assert "^setenv VIRTUAL_ENV" in csh_fix
+        assert f'VIRTUAL_ENV "{JOB_VENV}"' in csh_fix
+
+        fish_fix = activate_seds[3]
+        assert "^set -gx VIRTUAL_ENV" in fish_fix
+        assert f'VIRTUAL_ENV "{JOB_VENV}"' in fish_fix
 
 
 class TestShebangRewrite:
@@ -79,7 +92,7 @@ class TestShebangRewrite:
         shebang_seds = [c for c in cmds if "1s|#!" in c and "bin/python" in c]
         assert len(shebang_seds) == 1
         cmd = shebang_seds[0]
-        assert f"#!{BASE_VENV}/bin/python" in cmd
+        assert f"#!{BASE_VENV}/bin/python[0-9.]*" in cmd
         assert f"#!{JOB_VENV}/bin/python" in cmd
         assert f"{JOB_VENV}/bin/*" in cmd
 
@@ -104,6 +117,23 @@ class TestEditableInstallRewrite:
         pyc_cmds = [c for c in cmds if "__editable__" in c and "rm -f" in c]
         assert len(pyc_cmds) == 1
         assert ".pyc" in pyc_cmds[0]
+
+
+class TestHardlinkBreaking:
+    def test_breaks_so_hardlinks_after_rsync(self):
+        backend = _make_backend()
+        _try_clone_base_venv(backend, JOB_DIR, WORKTREE)
+        cmds = _all_cmds(backend)
+
+        find_cmds = [c for c in cmds if "links +1" in c and ".so" in c]
+        assert len(find_cmds) == 1
+        cmd = find_cmds[0]
+        assert f"{NEW_SRC}/torch" in cmd
+        assert "--remove-destination" in cmd
+
+        rsync_idx = next(i for i, c in enumerate(cmds) if "rsync" in c)
+        find_idx = next(i for i, c in enumerate(cmds) if "links +1" in c)
+        assert find_idx > rsync_idx
 
 
 class TestFastPathSkips:

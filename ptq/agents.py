@@ -151,7 +151,7 @@ class ClaudeAgent:
         return last_text
 
     def log_filename(self, run_number: int) -> str:
-        return f"claude-{run_number}.log"
+        return f"agent_logs/claude-{run_number}.log"
 
     def setup_workspace(
         self,
@@ -244,7 +244,7 @@ class CodexAgent:
         return last_text
 
     def log_filename(self, run_number: int) -> str:
-        return f"codex-{run_number}.log"
+        return f"agent_logs/codex-{run_number}.log"
 
     def setup_workspace(
         self,
@@ -343,7 +343,7 @@ class CursorAgent:
         return result_text or last_assistant
 
     def log_filename(self, run_number: int) -> str:
-        return f"cursor-{run_number}.log"
+        return f"agent_logs/cursor-{run_number}.log"
 
     def setup_workspace(
         self,
@@ -383,7 +383,7 @@ class CursorAgent:
 #                ...
 #
 #            def log_filename(self, run_number: int) -> str:
-#                return f"myagent-{run_number}.log"
+#                return f"agent_logs/myagent-{run_number}.log"
 #
 #            def setup_workspace(
 #                self, backend: Backend, worktree_path: str,

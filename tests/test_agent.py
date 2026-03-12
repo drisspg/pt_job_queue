@@ -371,7 +371,7 @@ class TestLaunchAgentType:
                 ),
             )
             log_file = backend.launch_background.call_args[0][1]
-            assert f"{agent_type}-1.log" in log_file
+            assert f"agent_logs/{agent_type}-1.log" in log_file
 
     @patch("ptq.application.run_service.deploy_scripts")
     def test_codex_setup_copies_agents_md(self, _deploy, repo, frozen_date):

@@ -110,9 +110,9 @@ class TestLogFilename:
     @pytest.mark.parametrize(
         "cls,expected",
         [
-            (ClaudeAgent, "claude-3.log"),
-            (CodexAgent, "codex-3.log"),
-            (CursorAgent, "cursor-3.log"),
+            (ClaudeAgent, "agent_logs/claude-3.log"),
+            (CodexAgent, "agent_logs/codex-3.log"),
+            (CursorAgent, "agent_logs/cursor-3.log"),
         ],
     )
     def test_log_filename(self, cls, expected):

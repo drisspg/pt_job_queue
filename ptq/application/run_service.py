@@ -114,6 +114,17 @@ def _try_clone_base_venv(
             progress(f"fast-path bail: rsync failed (rc={r.returncode})")
             return _bail()
 
+    # rsync --link-dest hardlinks .so files to the base workspace.  A later
+    # rebuild.sh (pip install -e .) may skip overwriting them if setuptools
+    # sees matching size/mtime, leaving the job on stale native code.
+    # Break hardlinks now so rebuilds always produce independent copies.
+    backend.run(
+        f"find {new_src}/torch -name '*.so' -links +1 "
+        f"-exec cp --remove-destination {{}} {{}}.tmp \\; "
+        f"-exec mv -f {{}}.tmp {{}} \\;",
+        check=False,
+    )
+
     job_python = f"{job_dir}/.venv/bin/python"
     sp_dir = _last_line(
         f"{job_python} -c 'import sysconfig; print(sysconfig.get_path(\"purelib\"))'"
@@ -130,7 +141,19 @@ def _try_clone_base_venv(
             check=False,
         )
         backend.run(
-            f'sed -i "1s|#!{base_venv}/bin/python|#!{job_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
+            f"""sed -i "s|^VIRTUAL_ENV=.*|VIRTUAL_ENV='{job_venv}'|" {job_venv}/bin/activate 2>/dev/null""",
+            check=False,
+        )
+        backend.run(
+            f"""sed -i 's|^setenv VIRTUAL_ENV .*|setenv VIRTUAL_ENV "{job_venv}"|' {job_venv}/bin/activate.csh 2>/dev/null""",
+            check=False,
+        )
+        backend.run(
+            f"""sed -i 's|^set -gx VIRTUAL_ENV .*|set -gx VIRTUAL_ENV "{job_venv}"|' {job_venv}/bin/activate.fish 2>/dev/null""",
+            check=False,
+        )
+        backend.run(
+            f'sed -i "1s|#!{base_venv}/bin/python[0-9.]*|#!{job_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
             check=False,
         )
 
@@ -145,7 +168,7 @@ def _try_clone_base_venv(
     with _timed("dev deps", progress):
         r = backend.run(
             f"cd {worktree_path} && "
-            f"uv pip install --python {job_python} -r requirements.txt",
+            f"uv pip install --python {job_python} -r requirements.txt pytest",
             check=False,
             stream=verbose,
         )
@@ -217,7 +240,7 @@ def _setup_job_venv(
         with _timed("dev deps", progress):
             backend.run(
                 f"cd {worktree_path} && "
-                f"uv pip install --python {job_python} -r requirements.txt",
+                f"uv pip install --python {job_python} -r requirements.txt pytest",
                 stream=verbose,
             )
         pip_verbose = " -v" if verbose else ""
@@ -458,7 +481,7 @@ def launch(
     progress(
         f"Launching {agent.name} agent ({'local' if request.local else request.machine})..."
     )
-    backend.run(f"touch {log_file}")
+    backend.run(f"mkdir -p {job_dir}/agent_logs && touch {log_file}")
     pid = backend.launch_background(agent_cmd, log_file)
     repo.save_pid(job_id, pid)
 

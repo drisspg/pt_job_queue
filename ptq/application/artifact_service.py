@@ -22,7 +22,7 @@ def fetch_results(
     dest = output_dir or (Path.home() / ".ptq" / "results" / job_id)
     dest.mkdir(parents=True, exist_ok=True)
 
-    artifacts = [*ARTIFACTS, f"{job.agent}-{job.runs}.log"]
+    artifacts = [*ARTIFACTS, f"agent_logs/{job.agent}-{job.runs}.log"]
     fetched: list[str] = []
     missing: list[str] = []
     for artifact in artifacts:
