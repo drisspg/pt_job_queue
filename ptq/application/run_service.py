@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
+from subprocess import CompletedProcess
 
 from ptq.agent import (
     DEFAULT_MESSAGE,
@@ -34,6 +35,15 @@ def _timed(label: str, progress: ProgressCallback):
     t0 = time.monotonic()
     yield
     progress(f"  {label}: {time.monotonic() - t0:.1f}s")
+
+
+def _chain_result(
+    result: CompletedProcess[str],
+    next_step: Callable[[], CompletedProcess[str]],
+) -> CompletedProcess[str]:
+    if result.returncode != 0:
+        return result
+    return next_step()
 
 
 def _validate_workspace(backend: Backend, workspace: str) -> None:
@@ -199,27 +209,6 @@ def _try_clone_base_venv(
     return True
 
 
-def _install_triton(
-    backend: Backend,
-    job_dir: str,
-    worktree_path: str,
-    *,
-    verbose: bool = False,
-    progress: ProgressCallback = _noop_progress,
-) -> None:
-    progress("Installing Triton...")
-    with _timed("triton install", progress):
-        r = backend.run(
-            f"cd {worktree_path} && PATH={job_dir}/.venv/bin:$PATH make triton",
-            check=False,
-            stream=verbose,
-        )
-    if r.returncode != 0:
-        progress("Triton install failed (non-fatal) — agent can install manually.")
-    else:
-        progress("Triton installed.")
-
-
 def _setup_job_venv(
     backend: Backend,
     job_dir: str,
@@ -237,13 +226,24 @@ def _setup_job_venv(
             backend.run(f"cd {job_dir} && uv venv --python 3.12")
 
         job_python = f"{job_dir}/.venv/bin/python"
-        progress("Installing dev deps (build + test)...")
+        progress("Installing dev deps (build + test + Triton)...")
         with _timed("dev deps", progress):
-            backend.run(
+            result = backend.run(
                 f"cd {worktree_path} && "
                 f"uv pip install --python {job_python} -r requirements.txt pytest",
+                check=False,
                 stream=verbose,
             )
+            result = _chain_result(
+                result,
+                lambda: backend.run(
+                    f"cd {worktree_path} && PATH={job_dir}/.venv/bin:$PATH make triton",
+                    check=False,
+                    stream=verbose,
+                ),
+            )
+        if result.returncode != 0:
+            progress("Dev dependency setup incomplete — agent can install manually.")
         pip_verbose = " -v" if verbose else ""
         pip_cmd = f"uv pip install --python {job_python} --no-build-isolation{pip_verbose} -e ."
         re_cc_cfg = f"{backend.workspace}/.re-cc-config"
@@ -264,8 +264,6 @@ def _setup_job_venv(
             progress("Editable install failed — agent will need to build manually.")
         else:
             progress("Editable install complete.")
-
-    _install_triton(backend, job_dir, worktree_path, verbose=verbose, progress=progress)
 
 
 def _stamp_worklog_header(
@@ -328,6 +326,11 @@ def launch(
     agent = get_agent(request.agent_type)
     workspace = backend.workspace
     is_adhoc = request.issue_number is None
+    issue_number = request.issue_number
+    issue_data = request.issue_data
+
+    if not is_adhoc and (issue_number is None or issue_data is None):
+        raise PtqError("Issue runs require both issue number and issue data.")
 
     if request.existing_job_id:
         job_id = request.existing_job_id
@@ -343,19 +346,20 @@ def launch(
         run_number = 1
         progress(f"Job {job_id} — adhoc (run 1)")
     else:
+        assert issue_number is not None
         existing = repo.find_by_issue(
-            request.issue_number, machine=request.machine, local=request.local
+            issue_number, machine=request.machine, local=request.local
         )
         if existing:
             job_id = existing
             run_number = repo.increment_run(
                 job_id, agent_type=request.agent_type, model=request.model
             )
-            progress(f"Job {job_id} — issue #{request.issue_number} (run {run_number})")
+            progress(f"Job {job_id} — issue #{issue_number} (run {run_number})")
         else:
-            job_id = make_job_id(request.issue_number)
+            job_id = make_job_id(issue_number)
             run_number = 1
-            progress(f"Job {job_id} — issue #{request.issue_number} (run 1)")
+            progress(f"Job {job_id} — issue #{issue_number} (run 1)")
 
     job_dir = f"{workspace}/jobs/{job_id}"
     worktree_path = f"{job_dir}/pytorch"
@@ -411,11 +415,13 @@ def launch(
         progress("Reusing existing worktree.")
 
     if is_adhoc:
-        system_prompt = build_adhoc_prompt(request.message, job_id, workspace)
-    else:
-        system_prompt = build_system_prompt(
-            request.issue_data, request.issue_number, job_id, workspace
+        system_prompt = build_adhoc_prompt(
+            request.message or DEFAULT_MESSAGE, job_id, workspace
         )
+    else:
+        assert issue_number is not None
+        assert issue_data is not None
+        system_prompt = build_system_prompt(issue_data, issue_number, job_id, workspace)
 
     if existing:
         prior_context = _build_prior_context(backend, job_dir, run_number)
@@ -437,7 +443,8 @@ def launch(
     agent.setup_workspace(backend, worktree_path, job_dir, workspace, prompt_remote)
 
     if not is_adhoc:
-        repro = extract_repro_script(request.issue_data)
+        assert issue_data is not None
+        repro = extract_repro_script(issue_data)
         if repro:
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                 f.write(repro)
@@ -448,9 +455,7 @@ def launch(
         else:
             progress("No repro script found in issue — agent will write one.")
 
-    if is_adhoc:
-        agent_message = request.message
-    elif existing:
+    if is_adhoc or existing:
         agent_message = request.message or DEFAULT_MESSAGE
     elif request.message:
         agent_message = f"{DEFAULT_MESSAGE}\n\nAdditional context: {request.message}"

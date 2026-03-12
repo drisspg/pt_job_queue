@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from subprocess import CompletedProcess
 
 from rich.console import Console
 
@@ -38,6 +40,15 @@ def detect_cuda_version(backend: Backend) -> str:
 console = Console()
 
 
+def _chain_result(
+    result: CompletedProcess[str],
+    next_step: Callable[[], CompletedProcess[str]],
+) -> CompletedProcess[str]:
+    if result.returncode != 0:
+        return result
+    return next_step()
+
+
 def setup_workspace(
     backend: Backend,
     *,
@@ -72,10 +83,10 @@ def setup_workspace(
         check=False,
         stream=True,
     )
+    result = _chain_result(result, lambda: _install_triton(backend, workspace))
+
     if result.returncode != 0:
         raise SystemExit("Installing build dependencies failed.")
-
-    _install_triton(backend, workspace)
 
     if build:
         build_pytorch(backend, re_cc_jobs=re_cc_jobs, build_env_prefix=build_env_prefix)
@@ -111,15 +122,13 @@ def _clone_pytorch(backend: Backend, workspace: str) -> None:
     )
 
 
-def _install_triton(backend: Backend, workspace: str) -> None:
-    console.print("Installing Triton...")
+def _install_triton(backend: Backend, workspace: str) -> CompletedProcess[str]:
     r = backend.run(
         f"cd {workspace}/pytorch && PATH={workspace}/.venv/bin:$PATH make triton",
         check=False,
         stream=True,
     )
-    if r.returncode != 0:
-        console.print("[yellow]Triton install failed (non-fatal).[/yellow]")
+    return r
 
 
 def build_pytorch(
@@ -153,8 +162,6 @@ def build_pytorch(
     )
     if result.returncode != 0:
         raise SystemExit("Build failed.")
-
-    _install_triton(backend, workspace)
 
     console.print("Running smoke test...")
     smoke = backend.run(
