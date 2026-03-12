@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import markdown as md_lib
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from sse_starlette.sse import EventSourceResponse
 
 from ptq.agents import AGENTS, get_agent
@@ -726,31 +726,21 @@ async def job_report(job_id: str):
     )
 
 
-@router.get("/jobs/{job_id}/diff", response_class=HTMLResponse)
+@router.get("/jobs/{job_id}/diff")
 async def job_diff(job_id: str):
     repo = _repo()
     with _catch_error():
         job = repo.get(job_id)
     backend = backend_for_job(job)
     worktree = f"{backend.workspace}/jobs/{job_id}/pytorch"
-    result = backend.run(f"git -C {worktree} diff", check=False)
+    result = backend.run(
+        f"git -C {worktree} -c color.diff=never diff --no-color --no-ext-diff",
+        check=False,
+    )
     content = result.stdout.strip() if result.returncode == 0 else None
     if not content:
-        return HTMLResponse(
-            '<p class="muted">No diff yet (no changes in worktree).</p>'
-        )
-    escaped = html.escape(content)
-    styled: list[str] = []
-    for line in escaped.splitlines():
-        if line.startswith("+"):
-            styled.append(f'<span class="diff-add">{line}</span>')
-        elif line.startswith("-"):
-            styled.append(f'<span class="diff-del">{line}</span>')
-        elif line.startswith("@@"):
-            styled.append(f'<span class="diff-hunk">{line}</span>')
-        else:
-            styled.append(line)
-    return HTMLResponse(f'<pre class="log-viewer">{chr(10).join(styled)}</pre>')
+        return PlainTextResponse("")
+    return PlainTextResponse(content)
 
 
 @router.get("/jobs/{job_id}/repro", response_class=HTMLResponse)

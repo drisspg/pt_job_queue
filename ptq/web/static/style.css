@@ -246,19 +246,60 @@ td a {
   font-weight: 500;
 }
 
-/* Diff colors */
-.diff-add {
-  color: var(--green);
-  background: var(--green-bg);
+/* Reset Pico CSS within diff2html (Pico styles bare table/td/code elements) */
+.d2h-wrapper {
+  background: transparent;
+}
+.d2h-wrapper table,
+.d2h-wrapper tr,
+.d2h-wrapper td,
+.d2h-wrapper th {
+  background: inherit;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+.d2h-wrapper code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.d2h-file-wrapper {
+  margin-bottom: 1em;
+}
+.d2h-files-diff {
+  overflow-x: auto;
 }
 
-.diff-del {
-  color: var(--red);
-  background: var(--red-bg);
+/* Diff view mode toggle */
+.diff-controls {
+  display: inline-flex;
+  gap: 0;
+  margin-left: auto;
+  padding-left: 0.5em;
 }
-
-.diff-hunk {
+.diff-mode-btn {
+  font-size: 0.75rem;
+  padding: 0.2em 0.7em;
+  border: 1px solid var(--border);
+  background: transparent;
   color: var(--text-muted);
+  cursor: pointer;
+  margin: 0;
+  line-height: 1.4;
+}
+.diff-mode-btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.diff-mode-btn:last-child {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+}
+.diff-mode-btn.active {
+  background: var(--primary);
+  color: var(--primary-inverse);
+  border-color: var(--primary);
 }
 
 /* Tab navigation */

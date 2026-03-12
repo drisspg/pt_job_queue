@@ -193,6 +193,10 @@ bindPromptLibrary('rerun-message-preset', 'rerun-message', {{ prompt_presets | t
   <button class="tab-btn active" data-tab="logs">Logs</button>
   <button class="tab-btn" data-tab="report">Report</button>
   <button class="tab-btn" data-tab="diff">Diff</button>
+  <span id="diff-controls" class="diff-controls" hidden>
+    <button class="diff-mode-btn active" data-mode="line-by-line">Unified</button>
+    <button class="diff-mode-btn" data-mode="side-by-side">Split</button>
+  </span>
   <button class="tab-btn" data-tab="repro">Repro</button>
   <button class="tab-btn" data-tab="worklog">Worklog</button>
   <button class="refresh-btn" id="refresh-btn" data-tip="Re-fetch this tab from remote">&#8635;</button>
@@ -216,6 +220,31 @@ bindPromptLibrary('rerun-message-preset', 'rerun-message', {{ prompt_presets | t
     worklog: '/jobs/' + jobId + '/worklog'
   };
 
+  var diffRaw = null;
+  var diffMode = 'line-by-line';
+  var diffControls = document.getElementById('diff-controls');
+
+  function renderDiff() {
+    var content = document.getElementById('tab-content');
+    content.innerHTML = '<div id="diff-viewer"></div>';
+    var ui = new Diff2HtmlUI(
+      document.getElementById('diff-viewer'),
+      diffRaw,
+      { outputFormat: diffMode, drawFileList: true, highlight: true, colorScheme: 'dark' }
+    );
+    ui.draw();
+    ui.highlightCode();
+  }
+
+  diffControls.querySelectorAll('.diff-mode-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      diffControls.querySelectorAll('.diff-mode-btn').forEach(function(b) { b.classList.remove('active'); });
+      this.classList.add('active');
+      diffMode = this.dataset.mode;
+      if (diffRaw) renderDiff();
+    });
+  });
+
   document.querySelectorAll('.tab-btn[data-tab]').forEach(function(btn) {
     btn.addEventListener('click', function() {
       var tab = this.dataset.tab;
@@ -224,6 +253,7 @@ bindPromptLibrary('rerun-message-preset', 'rerun-message', {{ prompt_presets | t
       document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
       this.classList.add('active');
       activeTab = tab;
+      diffControls.hidden = (tab !== 'diff');
       fetchTab(tab, false);
     });
   });
@@ -241,6 +271,24 @@ bindPromptLibrary('rerun-message-preset', 'rerun-message', {{ prompt_presets | t
     }
     if (spin) refreshBtn.classList.add('spinning');
     content.innerHTML = '<p class="muted">Loading...</p>';
+
+    if (tab === 'diff') {
+      fetch(tabUrls[tab])
+        .then(function(r) { return r.text(); })
+        .then(function(text) {
+          if (!text.trim()) {
+            diffRaw = null;
+            content.innerHTML = '<p class="muted">No diff yet (no changes in worktree).</p>';
+            return;
+          }
+          diffRaw = text;
+          cache[tab] = text;
+          renderDiff();
+        })
+        .finally(function() { refreshBtn.classList.remove('spinning'); });
+      return;
+    }
+
     fetch(tabUrls[tab])
       .then(function(r) { return r.text(); })
       .then(function(html) {
@@ -256,6 +304,7 @@ bindPromptLibrary('rerun-message-preset', 'rerun-message', {{ prompt_presets | t
 
   refreshBtn.addEventListener('click', function() {
     delete cache[activeTab];
+    diffRaw = null;
     fetchTab(activeTab, true);
   });
 })();
