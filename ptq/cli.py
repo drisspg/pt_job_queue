@@ -544,6 +544,9 @@ def list_jobs() -> None:
     console.print(
         "[dim]  ptq pr JOB_ID                         # create GitHub PR[/dim]"
     )
+    console.print(
+        "[dim]  ptq takeover JOB_ID                   # drop into worktree[/dim]"
+    )
     console.print("[dim]  ptq kill JOB_ID                       # stop agent[/dim]")
     console.print(
         "[dim]  ptq clean JOB_ID                      # remove job entirely[/dim]"
@@ -619,6 +622,31 @@ def peek(
                                 pass
                 except (json.JSONDecodeError, ValueError):
                     console.print(f"  [dim]{line[:200]}[/dim]")
+
+
+@app.command()
+def takeover(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+) -> None:
+    """Print the shell command to drop into a job's worktree."""
+    from ptq.infrastructure.backends import backend_for_job
+
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+    job = repo.get(job_id)
+    backend = backend_for_job(job)
+    ws = backend.workspace
+    job_dir = f"{ws}/jobs/{job_id}"
+
+    if job.local:
+        cmd = f"cd {job_dir} && source .venv/bin/activate"
+    else:
+        cmd = f"ssh -t {job.machine} 'cd {job_dir} && source .venv/bin/activate && exec $SHELL'"
+
+    console.print(cmd)
 
 
 @app.command()
