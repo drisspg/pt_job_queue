@@ -25,7 +25,7 @@ Assumes you have uv installed otherwise: `curl -LsSf https://astral.sh/uv/instal
 git clone git@github.com:drisspg/pt_job_queue.git
 
 # This will take a second
-uv run ptq setup --local --build 
+uv run ptq setup --local --build
 uv run ptq run -m "tell me a story" --agent codex
 ```
 

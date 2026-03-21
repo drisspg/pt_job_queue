@@ -392,27 +392,30 @@ def launch(
     worktree_exists = backend.run(
         f"test -d {worktree_path}/.git || test -f {worktree_path}/.git", check=False
     )
-    if worktree_exists.returncode != 0:
-        progress("Creating worktree with submodules...")
-        with _timed("worktree creation", progress):
-            backend.run(
-                f"cd {workspace}/pytorch && {workspace}/.venv/bin/python tools/create_worktree.py create pytorch "
-                f"--parent-dir {job_dir} --commit HEAD",
-                stream=request.verbose,
-            )
-        progress("Creating per-job venv...")
-        from ptq.config import load_config
-
-        _setup_job_venv(
-            backend,
-            job_dir,
-            worktree_path,
-            verbose=request.verbose,
-            progress=progress,
-            build_env_prefix=load_config().build_env_prefix(),
-        )
-    else:
+    venv_exists = backend.run(f"test -d {job_dir}/.venv/bin", check=False)
+    if worktree_exists.returncode == 0 and venv_exists.returncode == 0:
         progress("Reusing existing worktree.")
+    else:
+        if worktree_exists.returncode != 0:
+            progress("Creating worktree with submodules...")
+            with _timed("worktree creation", progress):
+                backend.run(
+                    f"cd {workspace}/pytorch && {workspace}/.venv/bin/python tools/create_worktree.py create pytorch "
+                    f"--parent-dir {job_dir} --commit HEAD",
+                    stream=request.verbose,
+                )
+        if venv_exists.returncode != 0:
+            progress("Creating per-job venv...")
+            from ptq.config import load_config
+
+            _setup_job_venv(
+                backend,
+                job_dir,
+                worktree_path,
+                verbose=request.verbose,
+                progress=progress,
+                build_env_prefix=load_config().build_env_prefix(),
+            )
 
     if is_adhoc:
         system_prompt = build_adhoc_prompt(
