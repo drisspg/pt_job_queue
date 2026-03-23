@@ -471,6 +471,7 @@ async def job_detail(request: Request, job_id: str):
             "pr_url": job.pr_url,
             "pr_state": pr_state,
             "human_note": job.human_note or "",
+            "pr_title": job.pr_title or "",
             "workspace": job.workspace,
             "is_local": job.local,
             "rebase_state": rb.state.value,

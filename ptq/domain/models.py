@@ -79,6 +79,7 @@ class JobRecord:
     initializing: bool = False
     pr_url: str | None = None
     human_note: str | None = None
+    pr_title: str | None = None
     rebase: RebaseInfo | None = None
     name: str | None = None
 
@@ -112,6 +113,8 @@ class JobRecord:
             d["pr_url"] = self.pr_url
         if self.human_note:
             d["human_note"] = self.human_note
+        if self.pr_title:
+            d["pr_title"] = self.pr_title
         if self.name:
             d["name"] = self.name
         if self.rebase is not None:
@@ -139,6 +142,7 @@ class JobRecord:
             initializing=data.get("initializing", False),
             pr_url=data.get("pr_url"),
             human_note=data.get("human_note"),
+            pr_title=data.get("pr_title"),
             rebase=RebaseInfo.from_dict(rebase_data) if rebase_data else None,
             name=data.get("name"),
         )

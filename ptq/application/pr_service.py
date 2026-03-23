@@ -243,6 +243,7 @@ def create_pr(
     if url:
         job.pr_url = url
         job.human_note = human_note
+        job.pr_title = pr_title
         repo.save(job)
 
     return PRResult(url=url, branch=branch)

@@ -122,7 +122,7 @@ function toggleRename() {
   <fieldset>
     <legend>Human Note <small>(required)</small></legend>
     <label for="pr-title">PR Title <small>(optional)</small></label>
-    <input type="text" id="pr-title" name="title" placeholder="Leave blank to use the default title">
+    <input type="text" id="pr-title" name="title" value="{{ pr_title }}" placeholder="Leave blank to use the default title">
     <textarea name="human_note" rows="5" required placeholder="What does this PR do?&#10;Why do you believe it's correct?&#10;How should the reviewer approach it? (trivial fix / RFC / needs careful review)">{{ human_note }}</textarea>
     <div class="pr-note-actions">
       {% if not has_open_pr %}<label><input type="checkbox" name="draft" value="1"> Draft PR</label>{% endif %}
@@ -234,6 +234,26 @@ bindPromptLibrary('rerun-message-preset', 'rerun-message', {{ prompt_presets | t
     );
     ui.draw();
     ui.highlightCode();
+
+    document.querySelectorAll('.d2h-file-wrapper').forEach(function(wrapper) {
+      var header = wrapper.querySelector('.d2h-file-header');
+      var diff = wrapper.querySelector('.d2h-file-diff');
+      if (!header || !diff) return;
+
+      var chevron = document.createElement('span');
+      chevron.className = 'd2h-chevron';
+      chevron.textContent = '▾';
+      header.insertBefore(chevron, header.firstChild);
+
+      diff.style.display = 'none';
+      chevron.textContent = '▸';
+
+      header.addEventListener('click', function() {
+        var collapsed = diff.style.display === 'none';
+        diff.style.display = collapsed ? '' : 'none';
+        chevron.textContent = collapsed ? '▾' : '▸';
+      });
+    });
   }
 
   diffControls.querySelectorAll('.diff-mode-btn').forEach(function(btn) {
