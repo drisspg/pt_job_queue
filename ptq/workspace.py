@@ -6,6 +6,7 @@ from subprocess import CompletedProcess
 
 from rich.console import Console
 
+from ptq.repo_profiles import RepoProfile, available_repos, get_profile
 from ptq.ssh import Backend, RemoteBackend
 
 _CUDA_VERSION_RE = re.compile(r"CUDA Version:\s*(\d+)\.(\d+)")
@@ -68,7 +69,10 @@ def setup_workspace(
     backend.run(f"mkdir -p {workspace}/jobs {workspace}/scripts")
 
     _ensure_ccache_config(backend)
-    _clone_pytorch(backend, workspace)
+
+    for name in available_repos():
+        profile = get_profile(name)
+        _clone_repo(backend, workspace, profile)
 
     console.print("Installing Python 3.12 via uv...")
     backend.run("uv python install 3.12", check=False)
@@ -97,29 +101,33 @@ def setup_workspace(
     console.print("[bold green]Workspace setup complete.[/bold green]")
 
 
-def _clone_pytorch(backend: Backend, workspace: str) -> None:
-    existing = backend.run(f"test -d {workspace}/pytorch/.git", check=False)
+def _clone_repo(backend: Backend, workspace: str, profile: RepoProfile) -> None:
+    repo_dir = f"{workspace}/{profile.dir_name}"
+    existing = backend.run(f"test -d {repo_dir}/.git", check=False)
+
     if existing.returncode == 0:
-        console.print("PyTorch checkout already exists, resetting to latest...")
+        console.print(f"{profile.name} checkout already exists, resetting to latest...")
         backend.run(
-            f"cd {workspace}/pytorch && git fetch origin && git reset --hard origin/main",
+            f"cd {repo_dir} && git fetch origin && git reset --hard origin/main",
             stream=True,
         )
-        backend.run(
-            f"cd {workspace}/pytorch && git submodule sync && git submodule update --init --recursive --progress",
-            stream=True,
-        )
+        if profile.uses_custom_worktree_tool:
+            backend.run(
+                f"cd {repo_dir} && git submodule sync && git submodule update --init --recursive --progress",
+                stream=True,
+            )
         return
 
-    console.print("Cloning pytorch (full clone with submodules)...")
+    console.print(f"Cloning {profile.name}...")
     backend.run(
-        f"git clone --progress https://github.com/pytorch/pytorch.git {workspace}/pytorch",
+        f"git clone --progress {profile.clone_url} {repo_dir}",
         stream=True,
     )
-    backend.run(
-        f"cd {workspace}/pytorch && git submodule update --init --recursive --progress",
-        stream=True,
-    )
+    if profile.uses_custom_worktree_tool:
+        backend.run(
+            f"cd {repo_dir} && git submodule update --init --recursive --progress",
+            stream=True,
+        )
 
 
 def _install_triton(backend: Backend, workspace: str) -> CompletedProcess[str]:

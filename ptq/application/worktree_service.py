@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from subprocess import CompletedProcess
 
 from ptq.domain.models import PtqError
+from ptq.repo_profiles import get_profile
 from ptq.ssh import Backend
 
 log = logging.getLogger("ptq.worktree")
@@ -34,11 +35,81 @@ def _chain_result(
     return next_step()
 
 
-def validate_workspace(backend: Backend, workspace: str) -> None:
-    result = backend.run(f"test -d {workspace}/pytorch/.git", check=False)
+def _setup_lightweight_venv(
+    backend: Backend,
+    job_dir: str,
+    worktree_path: str,
+    *,
+    verbose: bool = False,
+    progress: ProgressCallback = _noop_progress,
+    repo: str = "torchtitan",
+) -> None:
+    """Set up venv for lightweight (pure-Python) repos like torchtitan.
+
+    Clones the base workspace venv (which has torch built), then does
+    an editable install of the target repo.
+    """
+    profile = get_profile(repo)
+    workspace = backend.workspace
+    base_venv = f"{workspace}/.venv"
+
+    progress("Cloning base venv...")
+    with _timed("venv clone", progress):
+        for cp_flags in ("-al", "-a"):
+            if (
+                backend.run(
+                    f"cp {cp_flags} {base_venv} {job_dir}/.venv", check=False
+                ).returncode
+                == 0
+            ):
+                break
+            backend.run(f"rm -rf {job_dir}/.venv", check=False)
+        else:
+            progress("Venv clone failed, creating fresh venv...")
+            backend.run(f"cd {job_dir} && uv venv --python 3.12")
+
+    job_python = f"{job_dir}/.venv/bin/python"
+
+    # Rewrite venv paths to point to job-local copy
+    job_venv = f"{job_dir}/.venv"
+
+    def _last_line(cmd: str) -> str:
+        lines = backend.run(cmd, check=False).stdout.strip().splitlines()
+        return lines[-1] if lines else ""
+
+    resolved_venv = _last_line(f"realpath {job_venv}") or job_venv
+    backend.run(
+        f'sed -i "s|{base_venv}|{resolved_venv}|g" {job_venv}/bin/activate {job_venv}/bin/activate.csh {job_venv}/bin/activate.fish {job_venv}/bin/activate.nu 2>/dev/null',
+        check=False,
+    )
+    backend.run(
+        f"""sed -i "s|^VIRTUAL_ENV=.*|VIRTUAL_ENV='{resolved_venv}'|" {job_venv}/bin/activate 2>/dev/null""",
+        check=False,
+    )
+    backend.run(
+        f'sed -i "1s|#!{base_venv}/bin/python[0-9.]*|#!{resolved_venv}/bin/python|" {job_venv}/bin/* 2>/dev/null',
+        check=False,
+    )
+
+    progress(f"Editable install ({profile.name})...")
+    with _timed("editable install", progress):
+        result = backend.run(
+            f"cd {worktree_path} && uv pip install --python {job_python} -e .",
+            check=False,
+            stream=verbose,
+        )
+    if result.returncode != 0:
+        progress("Editable install failed — agent can install manually.")
+    else:
+        progress("Editable install complete.")
+
+
+def validate_workspace(backend: Backend, workspace: str, repo: str = "pytorch") -> None:
+    profile = get_profile(repo)
+    result = backend.run(f"test -d {workspace}/{profile.dir_name}/.git", check=False)
     if result.returncode != 0:
         raise PtqError(
-            f"Workspace broken: {workspace}/pytorch/.git missing. Re-run: ptq setup"
+            f"Workspace broken: {workspace}/{profile.dir_name}/.git missing. Re-run: ptq setup"
         )
 
 
@@ -49,6 +120,7 @@ def _try_clone_base_venv(
     *,
     verbose: bool = False,
     progress: ProgressCallback = _noop_progress,
+    repo: str = "pytorch",
 ) -> bool:
     """Clone base workspace venv + source artifacts instead of rebuilding.
 
@@ -205,9 +277,20 @@ def _setup_job_venv(
     verbose: bool = False,
     progress: ProgressCallback = _noop_progress,
     build_env_prefix: str = "USE_NINJA=1 ",
+    repo: str = "pytorch",
 ) -> None:
+    profile = get_profile(repo)
+
+    if not profile.needs_cpp_build:
+        _setup_lightweight_venv(
+            backend, job_dir, worktree_path,
+            verbose=verbose, progress=progress, repo=repo,
+        )
+        return
+
     if not _try_clone_base_venv(
-        backend, job_dir, worktree_path, verbose=verbose, progress=progress
+        backend, job_dir, worktree_path, verbose=verbose, progress=progress,
+        repo=repo,
     ):
         log.info("slow-path: full editable install for %s", job_dir)
         with _timed("venv creation", progress):
@@ -260,15 +343,17 @@ def provision_worktree(
     *,
     verbose: bool = False,
     progress: ProgressCallback | None = None,
+    repo: str = "pytorch",
 ) -> bool:
     """Create a git worktree and per-worktree venv if they don't already exist.
 
     Returns True if a new worktree was created, False if reusing existing.
     """
     cb = progress or _noop_progress
+    profile = get_profile(repo)
     workspace = backend.workspace
     job_dir = f"{workspace}/jobs/{job_id}"
-    worktree_path = f"{job_dir}/pytorch"
+    worktree_path = f"{job_dir}/{profile.dir_name}"
 
     backend.run(f"mkdir -p {job_dir}")
 
@@ -281,13 +366,23 @@ def provision_worktree(
         return False
 
     if worktree_exists.returncode != 0:
-        cb("Creating worktree with submodules...")
-        with _timed("worktree creation", cb):
-            backend.run(
-                f"cd {workspace}/pytorch && {workspace}/.venv/bin/python tools/create_worktree.py create pytorch "
-                f"--parent-dir {job_dir} --commit HEAD",
-                stream=verbose,
-            )
+        if profile.uses_custom_worktree_tool:
+            cb("Creating worktree with submodules...")
+            with _timed("worktree creation", cb):
+                backend.run(
+                    f"cd {workspace}/pytorch && {workspace}/.venv/bin/python tools/create_worktree.py create pytorch "
+                    f"--parent-dir {job_dir} --commit HEAD",
+                    stream=verbose,
+                )
+        else:
+            cb(f"Creating {profile.name} worktree...")
+            with _timed("worktree creation", cb):
+                branch = f"ptq-{job_id}"
+                backend.run(
+                    f"cd {workspace}/{profile.dir_name} && "
+                    f"git worktree add -b {branch} {worktree_path} HEAD",
+                    stream=verbose,
+                )
 
     if venv_exists.returncode != 0:
         cb("Creating per-job venv...")
@@ -300,6 +395,7 @@ def provision_worktree(
             verbose=verbose,
             progress=cb,
             build_env_prefix=load_config().build_env_prefix(),
+            repo=repo,
         )
 
     return worktree_exists.returncode != 0

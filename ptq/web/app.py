@@ -21,6 +21,11 @@ def setup_logging(*, debug: bool = False) -> None:
         logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
+def create_debug_app() -> FastAPI:
+    """Factory for uvicorn --reload (no args)."""
+    return create_app(debug=True)
+
+
 def create_app(*, debug: bool = False) -> FastAPI:
     setup_logging(debug=debug)
     app = FastAPI(title="ptq — PyTorch Job Queue")

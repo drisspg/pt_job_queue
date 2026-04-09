@@ -18,6 +18,8 @@ from ptq.domain.models import JobRecord, PtqError, RunRequest
 from ptq.domain.policies import make_job_id
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.issue import extract_repro_script
+from ptq.application.worktree_service import _setup_lightweight_venv
+from ptq.repo_profiles import get_profile
 from ptq.ssh import Backend, RemoteBackend
 from ptq.workspace import deploy_scripts
 
@@ -46,11 +48,12 @@ def _chain_result(
     return next_step()
 
 
-def _validate_workspace(backend: Backend, workspace: str) -> None:
-    result = backend.run(f"test -d {workspace}/pytorch/.git", check=False)
+def _validate_workspace(backend: Backend, workspace: str, repo: str = "pytorch") -> None:
+    profile = get_profile(repo)
+    result = backend.run(f"test -d {workspace}/{profile.dir_name}/.git", check=False)
     if result.returncode != 0:
         raise PtqError(
-            f"Workspace broken: {workspace}/pytorch/.git missing. Re-run: ptq setup"
+            f"Workspace broken: {workspace}/{profile.dir_name}/.git missing. Re-run: ptq setup"
         )
 
 
@@ -61,6 +64,7 @@ def _try_clone_base_venv(
     *,
     verbose: bool = False,
     progress: ProgressCallback = _noop_progress,
+    repo: str = "pytorch",
 ) -> bool:
     """Clone base workspace venv + source artifacts instead of rebuilding.
 
@@ -217,9 +221,20 @@ def _setup_job_venv(
     verbose: bool = False,
     progress: ProgressCallback = _noop_progress,
     build_env_prefix: str = "USE_NINJA=1 ",
+    repo: str = "pytorch",
 ) -> None:
+    profile = get_profile(repo)
+
+    if not profile.needs_cpp_build:
+        _setup_lightweight_venv(
+            backend, job_dir, worktree_path,
+            verbose=verbose, progress=progress, repo=repo,
+        )
+        return
+
     if not _try_clone_base_venv(
-        backend, job_dir, worktree_path, verbose=verbose, progress=progress
+        backend, job_dir, worktree_path, verbose=verbose, progress=progress,
+        repo=repo,
     ):
         log.info("slow-path: full editable install for %s", job_dir)
         with _timed("venv creation", progress):
@@ -328,6 +343,8 @@ def launch(
     is_adhoc = request.issue_number is None
     issue_number = request.issue_number
     issue_data = request.issue_data
+    repo_name = request.repo
+    profile = get_profile(repo_name)
 
     if not is_adhoc and (issue_number is None or issue_data is None):
         raise PtqError("Issue runs require both issue number and issue data.")
@@ -342,13 +359,14 @@ def launch(
         existing = job_id
     elif is_adhoc:
         existing = None
-        job_id = make_job_id(message=request.message)
+        job_id = make_job_id(message=request.message, repo=repo_name)
         run_number = 1
         progress(f"Job {job_id} — adhoc (run 1)")
     else:
         assert issue_number is not None
         existing = repo.find_by_issue(
-            issue_number, machine=request.machine, local=request.local
+            issue_number, machine=request.machine, local=request.local,
+            repo=repo_name,
         )
         if existing:
             job_id = existing
@@ -357,15 +375,15 @@ def launch(
             )
             progress(f"Job {job_id} — issue #{issue_number} (run {run_number})")
         else:
-            job_id = make_job_id(issue_number)
+            job_id = make_job_id(issue_number, repo=repo_name)
             run_number = 1
             progress(f"Job {job_id} — issue #{issue_number} (run 1)")
 
     job_dir = f"{workspace}/jobs/{job_id}"
-    worktree_path = f"{job_dir}/pytorch"
+    worktree_path = f"{job_dir}/{profile.dir_name}"
 
     if existing:
-        _validate_workspace(backend, workspace)
+        _validate_workspace(backend, workspace, repo_name)
 
     backend.run(f"mkdir -p {job_dir}")
 
@@ -382,6 +400,7 @@ def launch(
                 workspace=workspace,
                 initializing=True,
                 name=request.name,
+                repo=repo_name,
             )
         )
     elif request.name:
@@ -397,13 +416,23 @@ def launch(
         progress("Reusing existing worktree.")
     else:
         if worktree_exists.returncode != 0:
-            progress("Creating worktree with submodules...")
-            with _timed("worktree creation", progress):
-                backend.run(
-                    f"cd {workspace}/pytorch && {workspace}/.venv/bin/python tools/create_worktree.py create pytorch "
-                    f"--parent-dir {job_dir} --commit HEAD",
-                    stream=request.verbose,
-                )
+            if profile.uses_custom_worktree_tool:
+                progress("Creating worktree with submodules...")
+                with _timed("worktree creation", progress):
+                    backend.run(
+                        f"cd {workspace}/pytorch && {workspace}/.venv/bin/python tools/create_worktree.py create pytorch "
+                        f"--parent-dir {job_dir} --commit HEAD",
+                        stream=request.verbose,
+                    )
+            else:
+                progress(f"Creating {profile.name} worktree...")
+                with _timed("worktree creation", progress):
+                    branch = f"ptq-{job_id}"
+                    backend.run(
+                        f"cd {workspace}/{profile.dir_name} && "
+                        f"git worktree add -b {branch} {worktree_path} HEAD",
+                        stream=request.verbose,
+                    )
         if venv_exists.returncode != 0:
             progress("Creating per-job venv...")
             from ptq.config import load_config
@@ -415,16 +444,19 @@ def launch(
                 verbose=request.verbose,
                 progress=progress,
                 build_env_prefix=load_config().build_env_prefix(),
+                repo=repo_name,
             )
 
     if is_adhoc:
         system_prompt = build_adhoc_prompt(
-            request.message or DEFAULT_MESSAGE, job_id, workspace
+            request.message or DEFAULT_MESSAGE, job_id, workspace, repo=repo_name
         )
     else:
         assert issue_number is not None
         assert issue_data is not None
-        system_prompt = build_system_prompt(issue_data, issue_number, job_id, workspace)
+        system_prompt = build_system_prompt(
+            issue_data, issue_number, job_id, workspace, repo=repo_name
+        )
 
     if existing:
         prior_context = _build_prior_context(backend, job_dir, run_number)
@@ -447,7 +479,7 @@ def launch(
 
     if not is_adhoc:
         assert issue_data is not None
-        repro = extract_repro_script(issue_data)
+        repro = extract_repro_script(issue_data, import_hint=profile.repro_import_hint)
         if repro:
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                 f.write(repro)

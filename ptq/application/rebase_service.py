@@ -9,6 +9,7 @@ from ptq.agents import RunContext, get_agent
 from ptq.domain.models import PtqError, RebaseInfo, RebaseState
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
+from ptq.repo_profiles import get_profile
 from ptq.ssh import Backend, RemoteBackend
 
 ProgressCallback = Callable[[str], None]
@@ -130,7 +131,8 @@ def rebase(
     backend = backend_for_job(job)
     workspace = backend.workspace
     job_dir = f"{workspace}/jobs/{job_id}"
-    worktree = f"{job_dir}/pytorch"
+    profile = get_profile(job.repo)
+    worktree = f"{job_dir}/{profile.dir_name}"
 
     agent_name = agent_name or job.agent
     model = model or job.model

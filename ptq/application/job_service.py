@@ -3,6 +3,7 @@ from __future__ import annotations
 from ptq.domain.models import JobRecord, JobStatus
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
+from ptq.repo_profiles import get_profile
 from ptq.ssh import Backend
 
 
@@ -30,6 +31,7 @@ def kill_job(repo: JobRepository, job_id: str) -> bool:
 def clean_single_job(repo: JobRepository, job_id: str) -> JobRecord:
     """Remove a job: kill agent, delete files, drop from DB. Returns the removed record."""
     job = repo.get(job_id)
+    profile = get_profile(job.repo)
     backend = backend_for_job(job)
     ws = backend.workspace
     job_dir = f"{ws}/jobs/{job_id}"
@@ -37,13 +39,18 @@ def clean_single_job(repo: JobRepository, job_id: str) -> JobRecord:
     if job.pid is not None and backend.is_pid_alive(job.pid):
         backend.kill_pid(job.pid)
 
-    backend.run(
-        f"cd {ws}/pytorch && {ws}/.venv/bin/python tools/create_worktree.py remove pytorch "
-        f"--parent-dir {job_dir}",
-        check=False,
-    )
+    if profile.uses_custom_worktree_tool:
+        backend.run(
+            f"cd {ws}/pytorch && {ws}/.venv/bin/python tools/create_worktree.py remove pytorch "
+            f"--parent-dir {job_dir}",
+            check=False,
+        )
+    else:
+        worktree_path = f"{job_dir}/{profile.dir_name}"
+        backend.run(f"git -C {ws}/{profile.dir_name} worktree remove --force {worktree_path}", check=False)
+
     backend.run(f"rm -rf {job_dir}", check=False)
-    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
+    backend.run(f"cd {ws}/{profile.dir_name} && git worktree prune", check=False)
     repo.delete(job_id)
     return job
 
@@ -80,21 +87,30 @@ def clean_machine(
         return [], skipped_running
 
     ws = backend.workspace
-    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
+    # Prune worktrees for all repos that have jobs being cleaned
+    repos_seen: set[str] = set()
 
     removed: list[str] = []
     for jid, job in to_remove:
+        profile = get_profile(job.repo)
+        repos_seen.add(job.repo)
         if job.pid is not None and backend.is_pid_alive(job.pid):
             backend.kill_pid(job.pid)
         job_dir = f"{ws}/jobs/{jid}"
-        backend.run(
-            f"cd {ws}/pytorch && {ws}/.venv/bin/python tools/create_worktree.py remove pytorch "
-            f"--parent-dir {job_dir}",
-            check=False,
-        )
+        if profile.uses_custom_worktree_tool:
+            backend.run(
+                f"cd {ws}/pytorch && {ws}/.venv/bin/python tools/create_worktree.py remove pytorch "
+                f"--parent-dir {job_dir}",
+                check=False,
+            )
+        else:
+            worktree_path = f"{job_dir}/{profile.dir_name}"
+            backend.run(f"git -C {ws}/{profile.dir_name} worktree remove --force {worktree_path}", check=False)
         backend.run(f"rm -rf {job_dir}")
         repo.delete(jid)
         removed.append(jid)
 
-    backend.run(f"cd {ws}/pytorch && git worktree prune", check=False)
+    for repo_name in repos_seen:
+        p = get_profile(repo_name)
+        backend.run(f"cd {ws}/{p.dir_name} && git worktree prune", check=False)
     return removed, skipped_running
