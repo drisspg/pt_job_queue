@@ -245,6 +245,32 @@ Removes job directories and prunes git worktrees.
 | `--keep` | clean | 0 | Number of recent jobs to keep |
 | `--log` | peek | 0 | Number of log lines to show |
 
+## Adding a new repo
+
+1. Add a `[repos.<name>]` section to `~/.ptq/config.toml`:
+
+```toml
+[repos.torchtitan]
+github_repo = "pytorch/torchtitan"
+clone_url = "https://github.com/pytorch/torchtitan.git"
+dir_name = "torchtitan"
+smoke_test_import = "torchtitan"
+repro_import_hint = "import torchtitan"
+```
+
+2. Create prompt templates in `prompts/`:
+   - `prompts/investigate_<name>.md` — issue investigation prompt
+   - `prompts/adhoc_<name>.md` — freeform task prompt
+
+The prompt templates are where the real work is — they teach the agent about the repo's build system, directory layout, debugging tools, and testing conventions. See the existing `investigate.md` and `investigate_torchtitan.md` for examples.
+
+Optional profile fields (all default to `false`/`null`):
+| Field | Description |
+|-------|-------------|
+| `uses_custom_worktree_tool` | Use `tools/create_worktree.py` instead of `git worktree add` |
+| `needs_cpp_build` | Run C++ rebuild after worktree creation |
+| `lint_cmd` | Lint command to run before PRs |
+
 ## Project layout
 
 ```
@@ -277,8 +303,10 @@ pt_job_queue/
 │       ├── static/style.css            # Dark-theme styles
 │       └── templates/                  # Jinja2 templates (Pico CSS + htmx)
 ├── prompts/
-│   ├── investigate.md                  # Issue investigation prompt
-│   └── adhoc.md                        # Freeform task prompt
+│   ├── investigate.md                  # PyTorch issue investigation prompt
+│   ├── adhoc.md                        # PyTorch freeform task prompt
+│   ├── investigate_torchtitan.md       # TorchTitan issue investigation prompt
+│   └── adhoc_torchtitan.md             # TorchTitan freeform task prompt
 └── scripts/
     └── rebuild.sh
 ```
