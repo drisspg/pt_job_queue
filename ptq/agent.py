@@ -3,13 +3,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-PROMPT_TEMPLATE = (
-    Path(__file__).parent.parent / "prompts" / "investigate.md"
-).read_text()
+from ptq.issue import format_issue_context
+from ptq.repo_profiles import get_profile
 
-ADHOC_PROMPT_TEMPLATE = (
-    Path(__file__).parent.parent / "prompts" / "adhoc.md"
-).read_text()
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+PROMPT_TEMPLATE = (PROMPTS_DIR / "investigate.md").read_text()
+ADHOC_PROMPT_TEMPLATE = (PROMPTS_DIR / "adhoc.md").read_text()
 
 RESERVED_HEADER_RE = re.compile(r"x-anthropic-\S+", re.IGNORECASE)
 
@@ -18,8 +18,16 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\r")
 MAX_OUTPUT_LINES = 30
 
 DEFAULT_MESSAGE = (
-    "Investigate and fix the PyTorch issue described in your system prompt."
+    "Investigate and fix the issue described in your system prompt."
 )
+
+_template_cache: dict[str, str] = {}
+
+
+def _load_template(filename: str) -> str:
+    if filename not in _template_cache:
+        _template_cache[filename] = (PROMPTS_DIR / filename).read_text()
+    return _template_cache[filename]
 
 
 def _sanitize_for_api(text: str) -> str:
@@ -27,12 +35,16 @@ def _sanitize_for_api(text: str) -> str:
 
 
 def build_system_prompt(
-    issue_data: dict, issue_number: int, job_id: str, workspace: str
+    issue_data: dict,
+    issue_number: int,
+    job_id: str,
+    workspace: str,
+    repo: str = "pytorch",
 ) -> str:
-    from ptq.issue import format_issue_context
-
+    profile = get_profile(repo)
+    template = _load_template(profile.prompt_template)
     return _sanitize_for_api(
-        PROMPT_TEMPLATE.format(
+        template.format(
             job_id=job_id,
             issue_number=issue_number,
             issue_context=format_issue_context(issue_data, issue_number),
@@ -41,9 +53,13 @@ def build_system_prompt(
     )
 
 
-def build_adhoc_prompt(message: str, job_id: str, workspace: str) -> str:
+def build_adhoc_prompt(
+    message: str, job_id: str, workspace: str, repo: str = "pytorch"
+) -> str:
+    profile = get_profile(repo)
+    template = _load_template(profile.adhoc_prompt_template)
     return _sanitize_for_api(
-        ADHOC_PROMPT_TEMPLATE.format(
+        template.format(
             job_id=job_id,
             task_description=message,
             workspace=workspace,

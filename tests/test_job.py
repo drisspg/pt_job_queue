@@ -28,12 +28,12 @@ def _clear_pid_after_barrier(path, barrier: threading.Barrier, job_id: str) -> N
 
 class TestMakeJobId:
     def test_issue_id(self, frozen_date):
-        assert make_job_id(issue_number=42) == "20260217-42"
+        assert make_job_id(issue_number=42) == "20260217-pytorch-42"
 
     def test_adhoc_id(self, frozen_date):
         result = make_job_id(message="hello")
-        assert result.startswith("20260217-adhoc-")
-        assert len(result.split("-")) == 3
+        assert result.startswith("20260217-pytorch-adhoc-")
+        assert len(result.split("-")) == 4
 
     def test_adhoc_ids_differ_by_message(self, frozen_date):
         assert make_job_id(message="a") != make_job_id(message="b")

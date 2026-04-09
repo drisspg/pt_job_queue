@@ -21,6 +21,15 @@ class TestGetProfile:
         assert p.uses_custom_worktree_tool is True
         assert p.lint_cmd == "spin fixlint"
 
+    def test_torchtitan(self):
+        p = get_profile("torchtitan")
+        assert p.name == "torchtitan"
+        assert p.github_repo == "pytorch/torchtitan"
+        assert p.dir_name == "torchtitan"
+        assert p.needs_cpp_build is False
+        assert p.uses_custom_worktree_tool is False
+        assert p.lint_cmd is None
+
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown repo 'nope'"):
             get_profile("nope")
@@ -38,6 +47,7 @@ class TestGetProfile:
     def test_available_repos(self):
         repos = available_repos()
         assert "pytorch" in repos
+        assert "torchtitan" in repos
 
 
 class TestLoadFromConfig:

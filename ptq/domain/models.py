@@ -82,6 +82,7 @@ class JobRecord:
     pr_title: str | None = None
     rebase: RebaseInfo | None = None
     name: str | None = None
+    repo: str = "pytorch"
 
     @property
     def target(self) -> str:
@@ -117,6 +118,8 @@ class JobRecord:
             d["pr_title"] = self.pr_title
         if self.name:
             d["name"] = self.name
+        if self.repo != "pytorch":
+            d["repo"] = self.repo
         if self.rebase is not None:
             rebase_data = self.rebase.to_dict()
             if rebase_data:
@@ -145,6 +148,7 @@ class JobRecord:
             pr_title=data.get("pr_title"),
             rebase=RebaseInfo.from_dict(rebase_data) if rebase_data else None,
             name=data.get("name"),
+            repo=data.get("repo", "pytorch"),
         )
 
 
@@ -162,6 +166,7 @@ class RunRequest:
     existing_job_id: str | None = None
     verbose: bool = False
     name: str | None = None
+    repo: str = "pytorch"
 
 
 @dataclass

@@ -58,6 +58,13 @@ uses_custom_worktree_tool = true
 needs_cpp_build = true
 lint_cmd = "spin fixlint"
 
+[repos.torchtitan]
+github_repo = "pytorch/torchtitan"
+clone_url = "https://github.com/pytorch/torchtitan.git"
+dir_name = "torchtitan"
+smoke_test_import = "torchtitan"
+repro_import_hint = "import torchtitan"
+
 [build.env]
 USE_NINJA = "1"
 USE_NNPACK = "0"

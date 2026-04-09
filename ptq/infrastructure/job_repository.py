@@ -113,9 +113,12 @@ class JobRepository:
         issue_number: int,
         machine: str | None = None,
         local: bool = False,
+        repo: str = "pytorch",
     ) -> str | None:
         for job_id, entry in sorted(self._load_raw().items(), reverse=True):
             if entry.get("issue") != issue_number:
+                continue
+            if entry.get("repo", "pytorch") != repo:
                 continue
             if local and entry.get("local"):
                 return job_id

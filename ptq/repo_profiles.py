@@ -54,6 +54,19 @@ _DEFAULT_PROFILES: dict[str, RepoProfile] = {
         prompt_template="investigate.md",
         adhoc_prompt_template="adhoc.md",
     ),
+    "torchtitan": RepoProfile(
+        name="torchtitan",
+        github_repo="pytorch/torchtitan",
+        clone_url="https://github.com/pytorch/torchtitan.git",
+        dir_name="torchtitan",
+        smoke_test_import="torchtitan",
+        repro_import_hint="import torchtitan",
+        uses_custom_worktree_tool=False,
+        needs_cpp_build=False,
+        lint_cmd=None,
+        prompt_template="investigate_torchtitan.md",
+        adhoc_prompt_template="adhoc_torchtitan.md",
+    ),
 }
 
 
