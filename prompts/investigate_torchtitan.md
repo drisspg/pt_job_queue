@@ -70,7 +70,9 @@ CUDA_LAUNCH_BLOCKING=1 PYTORCH_NO_CUDA_MEMORY_CACHING=1 compute-sanitizer --tool
 
 ### 3. Fix
 - Edit source files in `{workspace}/jobs/{job_id}/torchtitan/` to fix the bug.
-- If the root cause is in PyTorch, edit files in `{workspace}/pytorch/` instead (changes are picked up after C++ rebuild if needed).
+- If the root cause is in PyTorch, edit files in `{workspace}/pytorch/` instead.
+  - **Python-only changes**: picked up automatically.
+  - **C++ changes**: rebuild with `bash {workspace}/scripts/rebuild.sh {workspace}/pytorch`
 - Make minimal, targeted changes.
 
 ### 4. Test
@@ -90,6 +92,10 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 **fix.diff** — Generate with:
 ```
 cd {workspace}/jobs/{job_id}/torchtitan && git diff > {workspace}/jobs/{job_id}/fix.diff
+```
+If you also edited PyTorch source, generate a separate diff:
+```
+cd {workspace}/pytorch && git diff > {workspace}/jobs/{job_id}/pytorch-fix.diff
 ```
 
 IMPORTANT: Always generate both report.md and fix.diff before finishing.

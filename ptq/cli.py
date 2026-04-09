@@ -13,7 +13,7 @@ from ptq.agents import StreamEvent, get_agent
 from ptq.domain.models import JobRecord, JobStatus, PtqError, RebaseState, RunRequest
 
 app = typer.Typer(
-    name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix PyTorch issues."
+    name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix issues in PyTorch and add-on repos."
 )
 console = Console()
 
@@ -216,7 +216,7 @@ def run(
     ] = None,
     repo: Annotated[
         str,
-        typer.Option("--repo", help="Target repository name (see config.toml [repos])."),
+        typer.Option("--repo", help="Repo the issue is filed in (default: pytorch)."),
     ] = "pytorch",
 ) -> None:
     """Launch an AI agent to investigate a GitHub issue or run an adhoc task.
@@ -865,7 +865,7 @@ def worktree(
     ] = False,
     repo: Annotated[
         str,
-        typer.Option("--repo", help="Target repository name (see config.toml [repos])."),
+        typer.Option("--repo", help="Repo to create a worktree for (default: pytorch)."),
     ] = "pytorch",
 ) -> None:
     """Create a named worktree with a ready-to-use venv.

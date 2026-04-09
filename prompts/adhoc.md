@@ -11,6 +11,7 @@ You are performing a task on a PyTorch codebase.
 - **PyTorch source** (edit here): `{workspace}/jobs/{job_id}/pytorch/`
 - **Job artifacts** (write output here): `{workspace}/jobs/{job_id}/`
 - **Rebuild script** (after C++ changes): `bash {workspace}/scripts/rebuild.sh {workspace}/jobs/{job_id}/pytorch`
+- **Add-on repos** (available for cross-referencing): `{workspace}/torchtitan/`
 
 ## Task
 

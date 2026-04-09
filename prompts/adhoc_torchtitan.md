@@ -58,5 +58,9 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 ```
 cd {workspace}/jobs/{job_id}/torchtitan && git diff > {workspace}/jobs/{job_id}/fix.diff
 ```
+If you also edited PyTorch source, generate a separate diff:
+```
+cd {workspace}/pytorch && git diff > {workspace}/jobs/{job_id}/pytorch-fix.diff
+```
 
 IMPORTANT: Always generate report.md before finishing. Generate fix.diff if you made any code changes.
