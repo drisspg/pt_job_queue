@@ -15,7 +15,7 @@
       <button type="button" class="secondary outline small" onclick="toggleRename()">Cancel</button>
     </form>
     <p>
-      {% if issue %}<a href="https://github.com/pytorch/pytorch/issues/{{ issue }}" target="_blank">#{{ issue }}</a>{% else %}adhoc{% endif %}
+      {% if issue %}<a href="https://github.com/{{ github_repo }}/issues/{{ issue }}" target="_blank">{{ github_repo }}#{{ issue }}</a>{% else %}adhoc{% endif %}
       · {{ agent_name }}
       · {{ target }}
       · run {{ runs }}

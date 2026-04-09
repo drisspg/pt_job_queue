@@ -10,6 +10,14 @@
 <form method="post" action="/jobs">
   <fieldset>
     <legend>Task</legend>
+    <label for="repo">Repository
+      <select id="repo" name="repo">
+        {% for r in repos %}
+        <option value="{{ r.name }}">{{ r.github_repo }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
     <label><input type="radio" name="task_type" value="issue" checked onchange="toggleTask(this)"> GitHub Issue</label>
     <label><input type="radio" name="task_type" value="adhoc" onchange="toggleTask(this)"> Ad-hoc Message</label>
 
