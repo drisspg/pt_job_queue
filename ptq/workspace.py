@@ -56,6 +56,7 @@ def setup_workspace(
     build: bool = False,
     re_cc_jobs: int = 0,
     build_env_prefix: str = "USE_NINJA=1 ",
+    extras: list[str] | None = None,
 ) -> None:
     workspace = backend.workspace
 
@@ -70,7 +71,11 @@ def setup_workspace(
 
     _ensure_ccache_config(backend)
 
+    # Always clone pytorch; clone extras only if requested
+    extras_set = set(extras or [])
     for name in available_repos():
+        if name != "pytorch" and name not in extras_set:
+            continue
         profile = get_profile(name)
         _clone_repo(backend, workspace, profile)
 

@@ -148,10 +148,15 @@ def setup(
     workspace: Annotated[
         str | None, typer.Option(help="Custom workspace path.")
     ] = None,
+    extras: Annotated[
+        list[str] | None,
+        typer.Option("--extras", help="Additional repos to clone (e.g. --extras torchtitan)."),
+    ] = None,
 ) -> None:
     """One-time workspace setup: clone PyTorch with submodules, create venv, install build deps.
 
     Use --build to also compile PyTorch from source (needed for C++ edit support).
+    Use --extras to also clone add-on repos (e.g. --extras torchtitan).
     """
     if not machine and not local:
         raise typer.BadParameter("Provide a machine name or use --local.")
@@ -166,6 +171,7 @@ def setup(
         build=build,
         re_cc_jobs=with_re_cc or 0,
         build_env_prefix=load_config().build_env_prefix(),
+        extras=extras or [],
     )
 
 
