@@ -26,6 +26,7 @@ from ptq.config import (
 from ptq.domain.models import PtqError, RebaseState, RunRequest
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
+from ptq.repo_profiles import available_repos, get_profile
 from ptq.web.deps import get_job_status_with_finalize, templates
 
 log = logging.getLogger("ptq.web")
@@ -99,10 +100,15 @@ async def _run_pending_launch(launch: PendingLaunch) -> None:
 
     try:
         issue_data = None
+        repo_name = str(params.get("repo", "pytorch"))
+
         if issue_number is not None:
             from ptq.issue import fetch_issue
 
-            issue_data = await asyncio.to_thread(fetch_issue, issue_number)
+            profile = get_profile(repo_name)
+            issue_data = await asyncio.to_thread(
+                fetch_issue, issue_number, repo=profile.github_repo
+            )
 
         run_request = RunRequest(
             issue_data=issue_data,
@@ -115,6 +121,7 @@ async def _run_pending_launch(launch: PendingLaunch) -> None:
             max_turns=int(params["max_turns"]),
             agent_type=str(params["agent"]),
             name=job_name,
+            repo=repo_name,
         )
 
         log.info(
@@ -247,6 +254,7 @@ async def job_list(request: Request, status_filter: str = "all"):
             {
                 "id": job_id,
                 "issue": job.issue,
+                "repo": job.repo,
                 "agent": job.agent,
                 "target": job.target,
                 "runs": job.runs,
@@ -270,11 +278,13 @@ def _form_context(error: str | None = None) -> dict:
         available = am.available or cached_models(name)
         agent_models[name] = {"available": available, "default": am.default}
     machines = list(dict.fromkeys(cfg.machines + discover_ssh_hosts()))
+
     return {
         "agents": list(AGENTS.keys()),
         "machines": machines,
         "agent_models": agent_models,
         "prompt_presets": _prompt_presets(cfg),
+        "repos": [get_profile(r) for r in available_repos()],
         "defaults": {
             "agent": cfg.default_agent,
             "model": cfg.default_model,
@@ -342,6 +352,7 @@ async def job_create(
     model: str = Form("opus"),
     max_turns: int = Form(100),
     name: str = Form(""),
+    repo: str = Form("pytorch"),
 ):
     if task_type == "issue" and not issue.strip():
         return templates.TemplateResponse(
@@ -378,6 +389,7 @@ async def job_create(
             "model": model,
             "max_turns": max_turns,
             "name": name.strip(),
+            "repo": repo.strip(),
         }
     )
     return RedirectResponse(url=f"/jobs/launching/{launch_id}", status_code=303)
@@ -451,6 +463,8 @@ async def job_detail(request: Request, job_id: str):
             get_pr_state, backend_for_job(job), job.pr_url
         )
 
+    profile = get_profile(job.repo)
+
     rb = job.rebase_info
     if rb.state == RebaseState.SUCCEEDED:
         repo.save_rebase(job_id, {})
@@ -481,6 +495,9 @@ async def job_detail(request: Request, job_id: str):
             "rebase_attempts": rb.attempts,
             "rebase_error": rb.error,
             "prompt_presets": _prompt_presets(cfg),
+            "github_repo": profile.github_repo,
+            "repo_name": job.repo,
+            "dir_name": profile.dir_name,
         },
     )
 
@@ -529,7 +546,10 @@ async def job_rerun(
     if job.issue is not None:
         from ptq.issue import fetch_issue
 
-        issue_data = await asyncio.to_thread(fetch_issue, job.issue)
+        profile = get_profile(job.repo)
+        issue_data = await asyncio.to_thread(
+            fetch_issue, job.issue, repo=profile.github_repo
+        )
 
     run_request = RunRequest(
         issue_data=issue_data,
@@ -542,6 +562,7 @@ async def job_rerun(
         max_turns=cfg.default_max_turns,
         agent_type=agent_type,
         existing_job_id=job_id,
+        repo=job.repo,
     )
 
     await asyncio.to_thread(run_service.launch, repo, backend, run_request)
@@ -733,13 +754,28 @@ async def job_diff(job_id: str):
     with _catch_error():
         job = repo.get(job_id)
     backend = backend_for_job(job)
-    worktree = f"{backend.workspace}/jobs/{job_id}/pytorch"
+    profile = get_profile(job.repo)
+    worktree = f"{backend.workspace}/jobs/{job_id}/{profile.dir_name}"
+
+    # Show all changes: committed (branch vs merge-base with main) + uncommitted
+    # Use a single shell command to avoid multiple SSH round-trips
     result = backend.run(
-        f"git -C {worktree} -c color.diff=never diff --no-color --no-ext-diff",
+        f"cd {worktree} && "
+        f"mb=$(git merge-base HEAD origin/main 2>/dev/null) && "
+        f"git -c color.diff=never diff --no-color --no-ext-diff $mb",
         check=False,
     )
     content = result.stdout.strip() if result.returncode == 0 else None
     if not content:
+        # merge-base failed or no committed changes — try plain diff (uncommitted only)
+        result = backend.run(
+            f"cd {worktree} && git -c color.diff=never diff --no-color --no-ext-diff",
+            check=False,
+        )
+        content = result.stdout.strip() if result.returncode == 0 else None
+    if not content:
+        log.warning("Empty diff for job %s (worktree=%s, stderr=%s)",
+                     job_id, worktree, result.stderr.strip() if result.stderr else "")
         return PlainTextResponse("")
     return PlainTextResponse(content)
 

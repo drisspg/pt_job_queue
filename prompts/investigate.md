@@ -11,6 +11,7 @@ You are investigating a PyTorch bug. Your goal is to reproduce, understand, and 
 - **PyTorch source** (edit here): `{workspace}/jobs/{job_id}/pytorch/`
 - **Job artifacts** (write output here): `{workspace}/jobs/{job_id}/`
 - **Rebuild script** (after C++ changes): `bash {workspace}/scripts/rebuild.sh {workspace}/jobs/{job_id}/pytorch`
+- **Add-on repos** (available for cross-referencing): `{workspace}/torchtitan/`
 
 ## Issue Context
 

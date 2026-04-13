@@ -24,14 +24,16 @@ def fetch_issue(issue_number: int, repo: str = "pytorch/pytorch") -> dict:
     return json.loads(result.stdout)
 
 
-def extract_repro_script(issue_data: dict) -> str | None:
+def extract_repro_script(
+    issue_data: dict, import_hint: str = "import torch"
+) -> str | None:
     body = issue_data.get("body", "") or ""
     for comment in issue_data.get("comments", []):
         body += "\n" + (comment.get("body", "") or "")
 
     code_blocks = re.findall(r"```(?:python)?\s*\n(.*?)```", body, re.DOTALL)
     for block in code_blocks:
-        if "import torch" in block:
+        if import_hint in block or "import torch" in block:
             return block.strip()
     return None
 

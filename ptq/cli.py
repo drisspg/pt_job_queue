@@ -13,7 +13,7 @@ from ptq.agents import StreamEvent, get_agent
 from ptq.domain.models import JobRecord, JobStatus, PtqError, RebaseState, RunRequest
 
 app = typer.Typer(
-    name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix PyTorch issues."
+    name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix issues in PyTorch and add-on repos."
 )
 console = Console()
 
@@ -148,10 +148,15 @@ def setup(
     workspace: Annotated[
         str | None, typer.Option(help="Custom workspace path.")
     ] = None,
+    extras: Annotated[
+        list[str] | None,
+        typer.Option("--extras", help="Additional repos to clone (e.g. --extras torchtitan)."),
+    ] = None,
 ) -> None:
     """One-time workspace setup: clone PyTorch with submodules, create venv, install build deps.
 
     Use --build to also compile PyTorch from source (needed for C++ edit support).
+    Use --extras to also clone add-on repos (e.g. --extras torchtitan).
     """
     if not machine and not local:
         raise typer.BadParameter("Provide a machine name or use --local.")
@@ -166,6 +171,7 @@ def setup(
         build=build,
         re_cc_jobs=with_re_cc or 0,
         build_env_prefix=load_config().build_env_prefix(),
+        extras=extras or [],
     )
 
 
@@ -214,8 +220,12 @@ def run(
         str | None,
         typer.Option("--name", "-n", help="Display name for this job."),
     ] = None,
+    repo: Annotated[
+        str,
+        typer.Option("--repo", help="Repo the issue is filed in (default: pytorch)."),
+    ] = "pytorch",
 ) -> None:
-    """Launch an AI agent to investigate a PyTorch issue or run an adhoc task.
+    """Launch an AI agent to investigate a GitHub issue or run an adhoc task.
 
     Provide --issue for GitHub issue investigation, or --message for a freeform task.
     Re-run an existing job by passing its JOB_ID (or issue number) as a positional arg.
@@ -254,19 +264,20 @@ def run(
         else:
             message = selected_preset.body
 
-    repo = _repo()
+    job_repo = _repo()
 
     resolved_job_id: str | None = None
     if job_id is not None:
         try:
-            resolved_job_id = repo.resolve_id(job_id)
+            resolved_job_id = job_repo.resolve_id(job_id)
         except PtqError as e:
             _handle_error(e)
-        job = repo.get(resolved_job_id)
+        job = job_repo.get(resolved_job_id)
         issue = issue or job.issue
         machine = machine or job.machine
         local = local or job.local
         workspace = workspace or job.workspace
+        repo = job.repo
         if agent is None:
             agent = job.agent
 
@@ -280,10 +291,14 @@ def run(
     model = cfg.effective_model(agent, model)
     max_turns = max_turns or cfg.default_max_turns
 
+    from ptq.repo_profiles import get_profile
+
+    profile = get_profile(repo)
+
     issue_data = None
     if issue is not None:
-        console.print(f"Fetching issue #{issue}...")
-        issue_data = fetch_issue(issue)
+        console.print(f"Fetching {profile.github_repo}#{issue}...")
+        issue_data = fetch_issue(issue, repo=profile.github_repo)
         console.print(f"[bold]{issue_data['title']}[/bold]")
 
     backend = create_backend(machine=machine, local=local, workspace=workspace)
@@ -300,17 +315,18 @@ def run(
         existing_job_id=resolved_job_id,
         verbose=verbose,
         name=name,
+        repo=repo,
     )
 
     try:
         launched_id = run_service.launch(
-            repo, backend, request, on_progress=lambda msg: console.print(msg)
+            job_repo, backend, request, on_progress=lambda msg: console.print(msg)
         )
     except PtqError as e:
         _handle_error(e)
 
     if follow:
-        job = repo.get(launched_id)
+        job = job_repo.get(launched_id)
         agent_impl = get_agent(job.agent)
         log_file = f"{backend.workspace}/jobs/{launched_id}/{agent_impl.log_filename(job.runs)}"
         _follow_logs(backend, log_file, agent_impl, launched_id)
@@ -780,12 +796,24 @@ def web(
         raise typer.Exit(1)  # noqa: B904
 
     console.print(f"Starting ptq web at http://{host}:{port}")
-    uvicorn.run(
-        create_app(debug=debug),
-        host=host,
-        port=port,
-        log_level="debug" if debug else "info",
-    )
+    if debug:
+        # Use string import so uvicorn can enable auto-reload
+        uvicorn.run(
+            "ptq.web.app:create_debug_app",
+            factory=True,
+            host=host,
+            port=port,
+            log_level="debug",
+            reload=True,
+            reload_dirs=[str(Path(__file__).resolve().parent)],
+        )
+    else:
+        uvicorn.run(
+            create_app(debug=False),
+            host=host,
+            port=port,
+            log_level="info",
+        )
 
 
 @app.command()
@@ -841,8 +869,12 @@ def worktree(
         bool,
         typer.Option("--verbose", "-v", help="Stream build output and show timings."),
     ] = False,
+    repo: Annotated[
+        str,
+        typer.Option("--repo", help="Repo to create a worktree for (default: pytorch)."),
+    ] = "pytorch",
 ) -> None:
-    """Create a named PyTorch worktree with a ready-to-use venv.
+    """Create a named worktree with a ready-to-use venv.
 
     Sets up a git worktree and per-worktree venv without launching an agent.
     Use `ptq run <name>` later to launch an agent in this worktree.
@@ -858,10 +890,12 @@ def worktree(
     from ptq.application.worktree_service import provision_worktree, validate_workspace
     from ptq.domain.policies import make_job_id
     from ptq.infrastructure.backends import create_backend
+    from ptq.repo_profiles import get_profile
     from ptq.workspace import deploy_scripts
 
-    repo = _repo()
-    existing = repo.find_by_name(name)
+    profile = get_profile(repo)
+    job_repo = _repo()
+    existing = job_repo.find_by_name(name)
     if existing:
         console.print(
             f"[yellow]Worktree '{name}' already exists as {existing}[/yellow]"
@@ -870,12 +904,12 @@ def worktree(
 
     backend = create_backend(machine=machine, local=local, workspace=workspace)
     try:
-        validate_workspace(backend, backend.workspace)
+        validate_workspace(backend, backend.workspace, repo=repo)
     except PtqError as e:
         _handle_error(e)
 
-    job_id = make_job_id(message=name)
-    repo.save(
+    job_id = make_job_id(message=name, repo=repo)
+    job_repo.save(
         JobRecord(
             job_id=job_id,
             runs=0,
@@ -885,6 +919,7 @@ def worktree(
             local=local,
             workspace=backend.workspace,
             name=name,
+            repo=repo,
         )
     )
 
@@ -895,21 +930,23 @@ def worktree(
             job_id,
             verbose=verbose,
             progress=lambda msg: console.print(msg),
+            repo=repo,
         )
     except PtqError as e:
         _handle_error(e)
 
     ws = backend.workspace
     job_dir = f"{ws}/jobs/{job_id}"
+    dir_name = profile.dir_name
     console.print()
     console.print(f"[bold green]Worktree '{name}' ready.[/bold green]")
     console.print(f"  Job ID:   {job_id}")
-    console.print(f"  Worktree: {job_dir}/pytorch")
+    console.print(f"  Worktree: {job_dir}/{dir_name}")
     if local:
-        console.print(f"\n  cd {job_dir}/pytorch && source ../.venv/bin/activate")
+        console.print(f"\n  cd {job_dir}/{dir_name} && source ../.venv/bin/activate")
     else:
         console.print(
-            f"\n  ssh -t {machine} 'cd {job_dir}/pytorch && "
+            f"\n  ssh -t {machine} 'cd {job_dir}/{dir_name} && "
             f"source ../.venv/bin/activate && exec $SHELL'"
         )
     console.print(f"\n  To launch an agent: ptq run {name} -m 'your task'")

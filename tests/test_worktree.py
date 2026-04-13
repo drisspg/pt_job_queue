@@ -110,19 +110,27 @@ class TestWorktreeCommand:
         mock_backend.workspace = "/tmp/ws"
         mock_backend.run = MagicMock(return_value=_ok())
 
+        from ptq.repo_profiles import _DEFAULT_PROFILES, _loaded_profiles
+
         with (
             patch("ptq.cli._repo", return_value=repo),
             patch(
                 "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
             ),
             patch("ptq.config.load_config") as mock_cfg,
+            patch(
+                "ptq.repo_profiles._loaded_profiles",
+                return_value=_DEFAULT_PROFILES,
+            ),
         ):
             mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
             result = runner.invoke(app, ["worktree", "my-fix", "--local"])
 
         assert result.exit_code == 0, result.output
-        assert "source ../.venv/bin/activate" in result.output
-        assert "ptq run my-fix" in result.output
+        # Rich may wrap long paths across lines, so normalize whitespace
+        flat = " ".join(result.output.split())
+        assert "source ../.venv/bin/activate" in flat
+        assert "ptq run my-fix" in flat
 
     def test_prints_ssh_command_remote(self, tmp_path, frozen_date):
         repo = _make_repo(tmp_path)
@@ -130,12 +138,18 @@ class TestWorktreeCommand:
         mock_backend.workspace = "/tmp/ws"
         mock_backend.run = MagicMock(return_value=_ok())
 
+        from ptq.repo_profiles import _DEFAULT_PROFILES
+
         with (
             patch("ptq.cli._repo", return_value=repo),
             patch(
                 "ptq.infrastructure.backends.RemoteBackend", return_value=mock_backend
             ),
             patch("ptq.config.load_config") as mock_cfg,
+            patch(
+                "ptq.repo_profiles.get_profile",
+                side_effect=lambda name: _DEFAULT_PROFILES[name],
+            ),
         ):
             mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
             result = runner.invoke(app, ["worktree", "my-fix", "--machine", "gpu-dev"])
@@ -150,12 +164,18 @@ class TestWorktreeCommand:
         mock_backend.run = MagicMock(return_value=_ok())
         mock_backend.launch_background = MagicMock()
 
+        from ptq.repo_profiles import _DEFAULT_PROFILES, _loaded_profiles
+
         with (
             patch("ptq.cli._repo", return_value=repo),
             patch(
                 "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
             ),
             patch("ptq.config.load_config") as mock_cfg,
+            patch(
+                "ptq.repo_profiles._loaded_profiles",
+                return_value=_DEFAULT_PROFILES,
+            ),
         ):
             mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
             result = runner.invoke(app, ["worktree", "my-fix"])
@@ -186,6 +206,8 @@ class TestWorktreeCommand:
 
         mock_backend.run = MagicMock(side_effect=run_side)
 
+        from ptq.repo_profiles import _DEFAULT_PROFILES
+
         with (
             patch("ptq.cli._repo", return_value=repo),
             patch.object(repo, "save", side_effect=tracked_save),
@@ -193,6 +215,10 @@ class TestWorktreeCommand:
                 "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
             ),
             patch("ptq.config.load_config") as mock_cfg,
+            patch(
+                "ptq.repo_profiles._loaded_profiles",
+                return_value=_DEFAULT_PROFILES,
+            ),
         ):
             mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
             result = runner.invoke(app, ["worktree", "my-fix"])
@@ -205,7 +231,10 @@ class TestWorktreeCommand:
 
 class TestWorktreeReuse:
     @patch("ptq.application.run_service.deploy_scripts")
-    def test_run_adopts_precreated_worktree(self, _deploy, repo, frozen_date):
+    @patch("ptq.repo_profiles._loaded_profiles")
+    def test_run_adopts_precreated_worktree(self, mock_profiles, _deploy, repo, frozen_date):
+        from ptq.repo_profiles import _DEFAULT_PROFILES
+        mock_profiles.return_value = _DEFAULT_PROFILES
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend, worktree_exists=True)
 
@@ -238,7 +267,10 @@ class TestWorktreeReuse:
         backend.launch_background.assert_called_once()
 
     @patch("ptq.application.run_service.deploy_scripts")
-    def test_run_reuses_existing_worktree_no_rebuild(self, _deploy, repo, frozen_date):
+    @patch("ptq.repo_profiles._loaded_profiles")
+    def test_run_reuses_existing_worktree_no_rebuild(self, mock_profiles, _deploy, repo, frozen_date):
+        from ptq.repo_profiles import _DEFAULT_PROFILES
+        mock_profiles.return_value = _DEFAULT_PROFILES
         backend = LocalBackend(workspace="/tmp/ws")
         _mock_backend(backend, worktree_exists=True)
 

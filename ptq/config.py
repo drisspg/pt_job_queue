@@ -48,6 +48,23 @@ default = "auto"
 # title = "My Investigation"
 # body = "Investigate with my preferred checklist..."
 
+[repos.pytorch]
+github_repo = "pytorch/pytorch"
+clone_url = "https://github.com/pytorch/pytorch.git"
+dir_name = "pytorch"
+smoke_test_import = "torch"
+repro_import_hint = "import torch"
+uses_custom_worktree_tool = true
+needs_cpp_build = true
+lint_cmd = "spin fixlint"
+
+[repos.torchtitan]
+github_repo = "pytorch/torchtitan"
+clone_url = "https://github.com/pytorch/torchtitan.git"
+dir_name = "torchtitan"
+smoke_test_import = "torchtitan"
+repro_import_hint = "import torchtitan"
+
 [build.env]
 USE_NINJA = "1"
 USE_NNPACK = "0"
@@ -229,6 +246,7 @@ class Config:
     build_env: dict[str, str] = field(
         default_factory=lambda: {"USE_NINJA": "1", "USE_NNPACK": "0"}
     )
+    repos_raw: dict = field(default_factory=dict)
 
     def models_for(self, agent: str) -> AgentModels:
         return self.agent_models.get(agent, AgentModels(available=[], default=""))
@@ -320,6 +338,8 @@ def _parse(data: dict) -> Config:
         ).items()
     }
 
+    repos_raw = data.get("repos", {})
+
     return Config(
         default_agent=defaults.get("agent", "claude"),
         default_model=defaults.get("model", "opus"),
@@ -328,6 +348,7 @@ def _parse(data: dict) -> Config:
         agent_models=agent_models,
         prompt_presets=prompt_presets,
         build_env=build_env,
+        repos_raw=repos_raw,
     )
 
 

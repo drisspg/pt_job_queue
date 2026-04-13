@@ -6,6 +6,7 @@ from collections.abc import Callable
 from ptq.domain.models import PRResult, PtqError
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
+from ptq.repo_profiles import get_profile
 from ptq.ssh import Backend
 
 _HTTPS_TO_SSH = {
@@ -125,7 +126,8 @@ def create_pr(
     job = repo.get(job_id)
     backend = backend_for_job(job)
     job_dir = f"{backend.workspace}/jobs/{job_id}"
-    worktree = f"{job_dir}/pytorch"
+    profile = get_profile(job.repo)
+    worktree = f"{job_dir}/{profile.dir_name}"
     existing_open_pr_url = ""
 
     if job.pr_url:
