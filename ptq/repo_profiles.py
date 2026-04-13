@@ -104,7 +104,10 @@ def _loaded_profiles() -> dict[str, RepoProfile]:
         from ptq.config import load_config
 
         cfg = load_config()
-        _profiles_cache = cfg.repos if cfg.repos else dict(_DEFAULT_PROFILES)
+        if cfg.repos_raw:
+            _profiles_cache = load_profiles_from_config(cfg.repos_raw)
+        else:
+            _profiles_cache = dict(_DEFAULT_PROFILES)
     return _profiles_cache
 
 

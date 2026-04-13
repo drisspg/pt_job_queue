@@ -246,7 +246,7 @@ class Config:
     build_env: dict[str, str] = field(
         default_factory=lambda: {"USE_NINJA": "1", "USE_NNPACK": "0"}
     )
-    repos: dict = field(default_factory=dict)
+    repos_raw: dict = field(default_factory=dict)
 
     def models_for(self, agent: str) -> AgentModels:
         return self.agent_models.get(agent, AgentModels(available=[], default=""))
@@ -338,12 +338,7 @@ def _parse(data: dict) -> Config:
         ).items()
     }
 
-    repos_section = data.get("repos", {})
-    repos: dict = {}
-    if repos_section:
-        from ptq.repo_profiles import load_profiles_from_config
-
-        repos = load_profiles_from_config(repos_section)
+    repos_raw = data.get("repos", {})
 
     return Config(
         default_agent=defaults.get("agent", "claude"),
@@ -353,7 +348,7 @@ def _parse(data: dict) -> Config:
         agent_models=agent_models,
         prompt_presets=prompt_presets,
         build_env=build_env,
-        repos=repos,
+        repos_raw=repos_raw,
     )
 
 
