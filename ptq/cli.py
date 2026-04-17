@@ -193,6 +193,10 @@ def run(
     ] = True,
     model: Annotated[str | None, typer.Option(help="Model to use.")] = None,
     max_turns: Annotated[int | None, typer.Option(help="Max agent turns.")] = None,
+    thinking: Annotated[
+        str | None,
+        typer.Option(help="Reasoning/thinking level when supported by the agent."),
+    ] = None,
     agent: Annotated[
         str | None, typer.Option(help="Agent type: claude, codex, cursor, or pi.")
     ] = None,
@@ -284,6 +288,8 @@ def run(
         repo = job.repo
         if agent is None:
             agent = job.agent
+        if thinking is None:
+            thinking = job.thinking
 
     if issue is None and message is None and job_id is None:
         raise typer.BadParameter(
@@ -293,6 +299,7 @@ def run(
         local = True
     agent = agent or cfg.default_agent
     model = cfg.effective_model(agent, model)
+    thinking = cfg.effective_thinking(agent, thinking)
     max_turns = max_turns or cfg.default_max_turns
 
     from ptq.repo_profiles import get_profile
@@ -314,6 +321,7 @@ def run(
         local=local,
         follow=follow,
         model=model,
+        thinking=thinking,
         max_turns=max_turns,
         agent_type=agent,
         existing_job_id=resolved_job_id,
@@ -788,11 +796,9 @@ def web(
     host: Annotated[str, typer.Option(help="Host to bind to.")] = "127.0.0.1",
     debug: Annotated[bool, typer.Option(help="Enable debug logging.")] = False,
 ) -> None:
-    """Start the web dashboard."""
+    """Start the web dashboard (auto-reloads on code changes)."""
     try:
         import uvicorn
-
-        from ptq.web.app import create_app
     except ModuleNotFoundError:
         console.print(
             "[red]Missing web dependencies.[/red] Install with: [bold]pip install -e .[/bold]"
@@ -800,24 +806,16 @@ def web(
         raise typer.Exit(1)  # noqa: B904
 
     console.print(f"Starting ptq web at http://{host}:{port}")
-    if debug:
-        # Use string import so uvicorn can enable auto-reload
-        uvicorn.run(
-            "ptq.web.app:create_debug_app",
-            factory=True,
-            host=host,
-            port=port,
-            log_level="debug",
-            reload=True,
-            reload_dirs=[str(Path(__file__).resolve().parent)],
-        )
-    else:
-        uvicorn.run(
-            create_app(debug=False),
-            host=host,
-            port=port,
-            log_level="info",
-        )
+    factory = "ptq.web.app:create_debug_app" if debug else "ptq.web.app:create_app"
+    uvicorn.run(
+        factory,
+        factory=True,
+        host=host,
+        port=port,
+        log_level="debug" if debug else "info",
+        reload=True,
+        reload_dirs=[str(Path(__file__).resolve().parent)],
+    )
 
 
 @app.command()

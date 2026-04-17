@@ -127,7 +127,11 @@ class JobRepository:
         return None
 
     def increment_run(
-        self, job_id: str, agent_type: str | None = None, model: str | None = None
+        self,
+        job_id: str,
+        agent_type: str | None = None,
+        model: str | None = None,
+        thinking: str | None = None,
     ) -> int:
         with self._locked(exclusive=True):
             db = self._load_raw_unlocked()
@@ -142,6 +146,7 @@ class JobRepository:
                 job.agent = agent_type
             if model:
                 job.model = model
+            job.thinking = thinking
             db[job_id] = job.to_dict()
             self._save_raw_unlocked(db)
             return job.runs

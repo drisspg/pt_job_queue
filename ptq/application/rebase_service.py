@@ -98,6 +98,7 @@ def _launch_conflict_agent(
         job_dir=job_dir,
         message="Resolve the git rebase conflicts as described in your system prompt. Do not abort the rebase.",
         model=model,
+        thinking=None,
         max_turns=50,
         system_prompt_file=prompt_remote,
         unbuffer_prefix=unbuffer,

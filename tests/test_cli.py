@@ -112,6 +112,77 @@ class TestRunValidation:
         request = mock_launch.call_args.args[2]
         assert request.agent_type == "codex"
 
+    def test_thinking_passed_through(self, tmp_path):
+        repo = _make_repo(tmp_path)
+
+        def fake_launch(r, b, req, **kw):
+            repo.save(JobRecord(job_id="test-job", local=True, workspace="/tmp/ws"))
+            return "test-job"
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.application.run_service.launch", side_effect=fake_launch
+            ) as mock_launch,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "run",
+                    "-m",
+                    "hello",
+                    "--agent",
+                    "pi",
+                    "--thinking",
+                    "high",
+                    "--no-follow",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        request = mock_launch.call_args.args[2]
+        assert request.thinking == "high"
+
+    def test_thinking_uses_agent_default_when_omitted(self, tmp_path):
+        repo = _make_repo(tmp_path)
+
+        def fake_launch(r, b, req, **kw):
+            repo.save(JobRecord(job_id="test-job", local=True, workspace="/tmp/ws"))
+            return "test-job"
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.config.load_config",
+                return_value=type(
+                    "Cfg",
+                    (),
+                    {
+                        "default_agent": "claude",
+                        "default_max_turns": 100,
+                        "effective_model": staticmethod(
+                            lambda agent, model=None: model or "openai-codex/gpt-5.4"
+                        ),
+                        "effective_thinking": staticmethod(
+                            lambda agent, thinking=None: thinking or "high"
+                        ),
+                        "prompt_preset": staticmethod(lambda _x: None),
+                        "prompt_preset_choices": staticmethod(lambda: []),
+                    },
+                )(),
+            ),
+            patch(
+                "ptq.application.run_service.launch", side_effect=fake_launch
+            ) as mock_launch,
+        ):
+            result = runner.invoke(
+                app, ["run", "-m", "hello", "--agent", "pi", "--no-follow"]
+            )
+
+        assert result.exit_code == 0, result.output
+        request = mock_launch.call_args.args[2]
+        assert request.thinking == "high"
+
     def test_rerun_passes_existing_job_id(self, tmp_path):
         repo = _make_repo(
             tmp_path,
@@ -138,6 +209,35 @@ class TestRunValidation:
         request = mock_launch.call_args.args[2]
         assert request.existing_job_id == "20260217-adhoc-abc123"
         assert request.agent_type == "cursor"
+
+    def test_rerun_preserves_saved_thinking(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="20260217-adhoc-abc123",
+                    runs=1,
+                    local=True,
+                    workspace="/tmp/ws",
+                    agent="pi",
+                    model="openai-codex/gpt-5.4",
+                    thinking="high",
+                ),
+            ],
+        )
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch("ptq.application.run_service.launch") as mock_launch,
+        ):
+            mock_launch.return_value = "20260217-adhoc-abc123"
+            result = runner.invoke(
+                app, ["run", "20260217-adhoc-abc123", "-m", "try again"]
+            )
+
+        assert result.exit_code == 0, result.output
+        request = mock_launch.call_args.args[2]
+        assert request.agent_type == "pi"
+        assert request.thinking == "high"
 
 
 def _make_clean_repo(tmp_path: Path) -> JobRepository:

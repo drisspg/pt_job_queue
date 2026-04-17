@@ -104,6 +104,15 @@
         </div>
       </label>
 
+      <label for="thinking">Thinking
+        <select id="thinking" name="thinking">
+          {% for level in thinking_levels %}
+          {% set level_label = level if level else 'agent default' %}
+          <option value="{{ level }}" {{ 'selected' if level == defaults.thinking else '' }}>{{ level_label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
       <label for="max_turns">Max Turns
         <input type="number" id="max_turns" name="max_turns" value="{{ defaults.max_turns }}" min="1">
       </label>
@@ -121,10 +130,14 @@ function toggleTarget(el) {
   document.getElementById('machine-field').hidden = el.value !== 'machine';
 }
 
+var agentModels = {{ agent_models | tojson }};
 document.getElementById('agent').addEventListener('change', function() {
-  fetch('/api/models/' + this.value)
+  var agent = this.value;
+  fetch('/api/models/' + agent)
     .then(r => r.text())
     .then(function(h) { document.getElementById('model-container').innerHTML = h; });
+  var thinking = document.getElementById('thinking');
+  if (thinking) thinking.value = (agentModels[agent] && agentModels[agent].thinking) || '';
 });
 
 function refreshModels(agent) {

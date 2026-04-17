@@ -29,6 +29,7 @@ def ctx() -> RunContext:
         job_dir="/tmp/job",
         message="fix the bug",
         model="opus",
+        thinking=None,
         max_turns=50,
         system_prompt_file="/tmp/job/system_prompt.md",
     )
@@ -90,10 +91,12 @@ class TestBuildCmd:
         assert "--max-turns" not in cmd
 
     def test_pi_cmd_structure(self, ctx):
+        ctx.thinking = "high"
         cmd = PiAgent().build_cmd(ctx)
         assert cmd.startswith("cd /tmp/job && ")
         assert "pi --print --mode json --no-session" in cmd
         assert "--model opus" in cmd
+        assert "--thinking high" in cmd
         assert "--append-system-prompt /tmp/job/system_prompt.md" in cmd
         assert "--tools read,bash,edit,write" in cmd
         assert "--max-turns" not in cmd
@@ -109,6 +112,24 @@ class TestBuildCmd:
         for cls in (ClaudeAgent, CodexAgent, CursorAgent, PiAgent):
             cmd = cls().build_cmd(ctx)
             assert "stdbuf -oL " in cmd
+
+    def test_thinking_flags(self, ctx):
+        ctx.thinking = "high"
+        assert "--effort high" in ClaudeAgent().build_cmd(ctx)
+        assert 'reasoning_effort="high"' in CodexAgent().build_cmd(ctx)
+        assert "--thinking high" in PiAgent().build_cmd(ctx)
+        assert "--thinking" not in CursorAgent().build_cmd(ctx)
+
+    def test_tilde_paths_not_single_quoted(self, ctx):
+        """Single-quoted ~ prevents shell tilde expansion, breaking `cd`."""
+        ctx.job_dir = "~/.ptq_workspace/jobs/job1"
+        ctx.worktree_path = "~/.ptq_workspace/jobs/job1/pytorch"
+        ctx.system_prompt_file = "~/.ptq_workspace/jobs/job1/system_prompt.md"
+        for cls in (ClaudeAgent, CodexAgent, CursorAgent, PiAgent):
+            cmd = cls().build_cmd(ctx)
+            assert "'~/.ptq_workspace" not in cmd, (
+                f"{cls.__name__} single-quotes a ~ path (blocks tilde expansion): {cmd}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -432,15 +453,44 @@ class TestCursorParser:
 
 
 class TestPiParser:
-    def test_text_delta(self):
+    def test_text_delta_is_ignored(self):
         line = json.dumps(
             {
                 "type": "message_update",
                 "assistantMessageEvent": {"type": "text_delta", "delta": "hello"},
             }
         )
+        assert PiAgent().parse_stream_line(line) == []
+
+    def test_message_end_emits_full_assistant_text(self):
+        line = json.dumps(
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Once upon a time, "},
+                        {"type": "text", "text": "there was a process."},
+                    ],
+                },
+            }
+        )
         events = PiAgent().parse_stream_line(line)
-        assert events == [StreamEvent(kind="text", text="hello")]
+        assert events == [
+            StreamEvent(kind="text", text="Once upon a time, there was a process.")
+        ]
+
+    def test_message_end_non_assistant_ignored(self):
+        line = json.dumps(
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "hi"}],
+                },
+            }
+        )
+        assert PiAgent().parse_stream_line(line) == []
 
     def test_tool_execution_start(self):
         line = json.dumps(

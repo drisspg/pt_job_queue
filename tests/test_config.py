@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import textwrap
 
-from ptq.config import AgentModels, Config, _parse, load_config
+from ptq.config import AgentModels, Config, _parse, _parse_pi_models, load_config
 
 
 class TestParse:
@@ -31,7 +31,7 @@ class TestParse:
                 "models": {
                     "claude": {"default": "opus", "available": ["opus", "sonnet"]},
                     "codex": {"default": "o3"},
-                    "pi": {"default": "codex"},
+                    "pi": {"default": "openai-codex/gpt-5.4", "thinking": "high"},
                 }
             }
         )
@@ -39,7 +39,8 @@ class TestParse:
         assert cfg.agent_models["claude"].available == ["opus", "sonnet"]
         assert cfg.agent_models["codex"].default == "o3"
         assert cfg.agent_models["codex"].available == []
-        assert cfg.agent_models["pi"].default == "codex"
+        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.4"
+        assert cfg.agent_models["pi"].thinking == "high"
         assert cfg.agent_models["pi"].available == []
 
     def test_build_env(self):
@@ -75,6 +76,21 @@ class TestParse:
         assert cfg.prompt_presets[-1].title == "Custom Triage"
 
 
+class TestPiModelParsing:
+    def test_parse_pi_models_returns_qualified_provider_model_ids(self):
+        output = textwrap.dedent(
+            """\
+            provider        model                                   context
+            openai-codex    gpt-5.3-codex                           272K
+            amazon-bedrock  us.anthropic.claude-sonnet-4-6          1M
+            """
+        )
+        assert _parse_pi_models(output) == [
+            "openai-codex/gpt-5.3-codex",
+            "amazon-bedrock/us.anthropic.claude-sonnet-4-6",
+        ]
+
+
 class TestConfig:
     def test_effective_model_with_override(self):
         cfg = Config()
@@ -87,6 +103,26 @@ class TestConfig:
     def test_effective_model_fallback(self):
         cfg = Config(default_model="haiku")
         assert cfg.effective_model("unknown") == "haiku"
+
+    def test_effective_thinking_default(self):
+        cfg = Config(
+            agent_models={
+                "pi": AgentModels(
+                    available=[], default="openai-codex/gpt-5.4", thinking="high"
+                )
+            }
+        )
+        assert cfg.effective_thinking("pi") == "high"
+
+    def test_effective_thinking_override(self):
+        cfg = Config(
+            agent_models={
+                "pi": AgentModels(
+                    available=[], default="openai-codex/gpt-5.4", thinking="high"
+                )
+            }
+        )
+        assert cfg.effective_thinking("pi", "low") == "low"
 
     def test_build_env_prefix(self):
         cfg = Config(build_env={"USE_NINJA": "1", "USE_NNPACK": "0"})
@@ -120,7 +156,8 @@ class TestLoadConfig:
         cfg = load_config(path)
         assert path.exists()
         assert cfg.default_agent == "claude"
-        assert cfg.agent_models["pi"].default == "codex"
+        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.4"
+        assert cfg.agent_models["pi"].thinking == "high"
 
     def test_roundtrip(self, tmp_path):
         path = tmp_path / "config.toml"
@@ -137,7 +174,8 @@ class TestLoadConfig:
             default = "o3"
 
             [models.pi]
-            default = "codex"
+            default = "openai-codex/gpt-5.4"
+            thinking = "high"
             """)
         )
         cfg = load_config(path)
@@ -145,4 +183,5 @@ class TestLoadConfig:
         assert cfg.default_max_turns == 50
         assert cfg.machines == ["box-a"]
         assert cfg.agent_models["codex"].default == "o3"
-        assert cfg.agent_models["pi"].default == "codex"
+        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.4"
+        assert cfg.agent_models["pi"].thinking == "high"

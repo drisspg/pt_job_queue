@@ -72,6 +72,7 @@ class JobRecord:
     runs: int = 1
     agent: str = "claude"
     model: str = "opus"
+    thinking: str | None = None
     machine: str | None = None
     local: bool = False
     workspace: str = "~/ptq_workspace"
@@ -101,6 +102,8 @@ class JobRecord:
             "agent": self.agent,
             "model": self.model,
         }
+        if self.thinking:
+            d["thinking"] = self.thinking
         if self.local:
             d["local"] = True
         if self.machine:
@@ -136,6 +139,7 @@ class JobRecord:
             runs=data.get("runs", 1),
             agent=data.get("agent", "claude"),
             model=data.get("model", "opus"),
+            thinking=data.get("thinking"),
             machine=data.get("machine"),
             local=local,
             workspace=data.get(
@@ -161,6 +165,7 @@ class RunRequest:
     local: bool = False
     follow: bool = True
     model: str = "opus"
+    thinking: str | None = None
     max_turns: int = 100
     agent_type: str = "claude"
     existing_job_id: str | None = None

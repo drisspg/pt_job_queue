@@ -116,6 +116,9 @@ ptq run --issue 174923 --machine my-gpu-box -p fix_and_verify -m "focus only on 
 
 # Use a different agent
 uv run ptq run --issue 174923 --machine my-gpu-box --agent cursor --model gpt-5.3-codex-xhigh-fast
+
+# Use first-class thinking control when the backend supports it
+uv run ptq run --agent pi --model openai-codex/gpt-5.4 --thinking high -m "triage the repro"
 ```
 
 The agent will:
@@ -136,7 +139,7 @@ uv run ptq web --port 9000
 ```
 
 The web UI lets you:
-- Launch jobs (issue-based or ad-hoc) with agent/model/machine selection
+- Launch jobs (issue-based or ad-hoc) with agent/model/thinking/machine selection
 - Fill the message box from a built-in prompt library for `Repro Only`, `Diagnose And Plan`, and `Fix And Verify`
 - Monitor live logs via streaming
 - View reports, diffs, and worklogs
@@ -151,6 +154,24 @@ The web UI lets you:
 ![ptq web ui](docs/assets/web-ui.png)
 
 The prompt library is backed by `~/.ptq/config.toml`.
+
+Per-agent model defaults live there too. For backends with first-class reasoning controls, you can set thinking separately from the model:
+
+```toml
+[models.pi]
+default = "openai-codex/gpt-5.4"
+thinking = "high"
+
+[models.claude]
+default = "opus"
+thinking = "high"
+
+[models.codex]
+default = "gpt-5.4"
+thinking = "high"
+```
+
+Cursor currently encodes reasoning level in the model name itself, so PTQ continues to treat Cursor thinking as model-driven.
 
 - Built-ins are always available and can be overridden under `[prompt_library.builtin.<name>]`
 - User presets can be added under `[prompt_library.custom.<name>]`
@@ -238,6 +259,7 @@ Removes job directories and prunes git worktrees.
 | `--follow/--no-follow` | run | follow | Stream agent output to terminal |
 | `--agent` | run | claude | Agent (`claude`, `codex`, `cursor`, `pi`) |
 | `--model` | run | opus | Model name (agent-specific) |
+| `--thinking` | run | agent default | Reasoning/thinking level when supported by the agent |
 | `--max-turns` | run | 100 | Max agent turns |
 | `-m/--message` | run | | Ad-hoc task or extra context for an issue |
 | `-p/--preset` | run | | Prompt preset key/title from prompt library |

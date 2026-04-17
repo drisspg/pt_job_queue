@@ -40,6 +40,12 @@ def _quote(value: str) -> str:
     return shlex.quote(value)
 
 
+def _quote_path(value: str) -> str:
+    if value.startswith("~"):
+        return value
+    return shlex.quote(value)
+
+
 def _pi_tool_name(name: str) -> str:
     match name:
         case "bash":
@@ -79,6 +85,7 @@ class RunContext:
     job_dir: str
     message: str
     model: str
+    thinking: str | None
     max_turns: int
     system_prompt_file: str
     unbuffer_prefix: str = ""
@@ -129,6 +136,7 @@ class ClaudeAgent:
             f"{ctx.unbuffer_prefix}"
             f"claude -p '{escaped}' "
             f"--model {ctx.model} "
+            f"{f'--effort {ctx.thinking} ' if ctx.thinking else ''}"
             f"--max-turns {ctx.max_turns} "
             f"--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' "
             f"--dangerously-skip-permissions "
@@ -225,10 +233,16 @@ class CodexAgent:
 
     def build_cmd(self, ctx: RunContext) -> str:
         escaped = ctx.message.replace("'", "'\\''")
+        thinking = (
+            f"-c {_quote(f'reasoning_effort="{ctx.thinking}"')} "
+            if ctx.thinking
+            else ""
+        )
         return (
             f"{ctx.unbuffer_prefix}"
             f"codex exec '{escaped}' "
             f"--model {ctx.model} "
+            f"{thinking}"
             f"--dangerously-bypass-approvals-and-sandbox "
             f"-C {ctx.job_dir} "
             f"--json"
@@ -406,11 +420,12 @@ class PiAgent:
     def build_cmd(self, ctx: RunContext) -> str:
         escaped = ctx.message.replace("'", "'\\''")
         return (
-            f"cd {_quote(ctx.job_dir)} && "
+            f"cd {_quote_path(ctx.job_dir)} && "
             f"{ctx.unbuffer_prefix}"
             f"pi --print --mode json --no-session "
             f"--model {_quote(ctx.model)} "
-            f"--append-system-prompt {_quote(ctx.system_prompt_file)} "
+            f"{f'--thinking {_quote(ctx.thinking)} ' if ctx.thinking else ''}"
+            f"--append-system-prompt {_quote_path(ctx.system_prompt_file)} "
             f"--tools read,bash,edit,write "
             f"'{escaped}'"
         )
@@ -419,13 +434,16 @@ class PiAgent:
         event = json.loads(line)
         events: list[StreamEvent] = []
         match event.get("type"):
-            case "message_update":
-                assistant_event = event.get("assistantMessageEvent", {})
-                match assistant_event.get("type"):
-                    case "text_delta":
-                        delta = assistant_event.get("delta", "")
-                        if delta:
-                            events.append(StreamEvent(kind="text", text=delta))
+            case "message_end":
+                message = event.get("message", {})
+                if message.get("role") == "assistant":
+                    text = "".join(
+                        block.get("text", "")
+                        for block in message.get("content", [])
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    )
+                    if text:
+                        events.append(StreamEvent(kind="text", text=text))
             case "tool_execution_start":
                 tool_name = event.get("toolName", "")
                 events.append(

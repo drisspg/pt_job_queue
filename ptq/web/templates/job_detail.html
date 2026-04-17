@@ -166,15 +166,25 @@ function toggleRename() {
       <button type="button" class="refresh-models" data-tip="Fetch available models from agent CLI" onclick="refreshModels('{{ agent_name }}')">&#10227;</button>
       </span>
     </div>
+    <select name="thinking" class="rerun-thinking">
+      {% for level in thinking_levels %}
+      {% set level_label = level if level else 'agent default' %}
+      <option value="{{ level }}" {{ 'selected' if level == default_thinking else '' }}>{{ level_label }}</option>
+      {% endfor %}
+    </select>
     <button type="submit" class="outline" data-tip="Launch a new agent run with this steering message">Follow up</button>
   </div>
 </form>
 
 <script>
+var agentModels = {{ agent_models | tojson }};
 document.querySelector('.rerun-agent').addEventListener('change', function() {
-  fetch('/api/models/' + this.value)
+  var agent = this.value;
+  fetch('/api/models/' + agent)
     .then(r => r.text())
     .then(function(h) { document.getElementById('model-container').innerHTML = h; });
+  var thinking = document.querySelector('.rerun-thinking');
+  if (thinking) thinking.value = (agentModels[agent] && agentModels[agent].thinking) || '';
 });
 
 function refreshModels(agent) {

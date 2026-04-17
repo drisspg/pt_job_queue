@@ -14,11 +14,11 @@ from ptq.agent import (
     build_system_prompt,
 )
 from ptq.agents import RunContext, get_agent
+from ptq.application.worktree_service import _setup_lightweight_venv
 from ptq.domain.models import JobRecord, PtqError, RunRequest
 from ptq.domain.policies import make_job_id
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.issue import extract_repro_script
-from ptq.application.worktree_service import _setup_lightweight_venv
 from ptq.repo_profiles import get_profile
 from ptq.ssh import Backend, RemoteBackend
 from ptq.workspace import deploy_scripts
@@ -48,7 +48,9 @@ def _chain_result(
     return next_step()
 
 
-def _validate_workspace(backend: Backend, workspace: str, repo: str = "pytorch") -> None:
+def _validate_workspace(
+    backend: Backend, workspace: str, repo: str = "pytorch"
+) -> None:
     profile = get_profile(repo)
     result = backend.run(f"test -d {workspace}/{profile.dir_name}/.git", check=False)
     if result.returncode != 0:
@@ -227,13 +229,21 @@ def _setup_job_venv(
 
     if not profile.needs_cpp_build:
         _setup_lightweight_venv(
-            backend, job_dir, worktree_path,
-            verbose=verbose, progress=progress, repo=repo,
+            backend,
+            job_dir,
+            worktree_path,
+            verbose=verbose,
+            progress=progress,
+            repo=repo,
         )
         return
 
     if not _try_clone_base_venv(
-        backend, job_dir, worktree_path, verbose=verbose, progress=progress,
+        backend,
+        job_dir,
+        worktree_path,
+        verbose=verbose,
+        progress=progress,
         repo=repo,
     ):
         log.info("slow-path: full editable install for %s", job_dir)
@@ -352,7 +362,10 @@ def launch(
     if request.existing_job_id:
         job_id = request.existing_job_id
         run_number = repo.increment_run(
-            job_id, agent_type=request.agent_type, model=request.model
+            job_id,
+            agent_type=request.agent_type,
+            model=request.model,
+            thinking=request.thinking,
         )
         label = f"issue #{request.issue_number}" if request.issue_number else "adhoc"
         progress(f"Job {job_id} — {label} (run {run_number})")
@@ -365,13 +378,18 @@ def launch(
     else:
         assert issue_number is not None
         existing = repo.find_by_issue(
-            issue_number, machine=request.machine, local=request.local,
+            issue_number,
+            machine=request.machine,
+            local=request.local,
             repo=repo_name,
         )
         if existing:
             job_id = existing
             run_number = repo.increment_run(
-                job_id, agent_type=request.agent_type, model=request.model
+                job_id,
+                agent_type=request.agent_type,
+                model=request.model,
+                thinking=request.thinking,
             )
             progress(f"Job {job_id} — issue #{issue_number} (run {run_number})")
         else:
@@ -395,6 +413,7 @@ def launch(
                 runs=run_number,
                 agent=request.agent_type,
                 model=request.model,
+                thinking=request.thinking,
                 machine=request.machine,
                 local=request.local,
                 workspace=workspace,
@@ -504,6 +523,7 @@ def launch(
         job_dir=job_dir,
         message=agent_message,
         model=request.model,
+        thinking=request.thinking,
         max_turns=request.max_turns,
         system_prompt_file=prompt_remote,
         unbuffer_prefix=unbuffer,

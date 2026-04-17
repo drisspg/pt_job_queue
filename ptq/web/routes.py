@@ -34,6 +34,7 @@ log = logging.getLogger("ptq.web")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\r")
 MAX_RESULT_LINES = 20
 _PENDING_LAUNCH_TTL_SECONDS = 600.0
+THINKING_LEVELS = ["", "off", "minimal", "low", "medium", "high", "xhigh"]
 
 
 @dataclass
@@ -118,6 +119,7 @@ async def _run_pending_launch(launch: PendingLaunch) -> None:
             local=is_local,
             follow=False,
             model=str(params["model"]),
+            thinking=str(params.get("thinking", "")).strip() or None,
             max_turns=int(params["max_turns"]),
             agent_type=str(params["agent"]),
             name=job_name,
@@ -125,9 +127,10 @@ async def _run_pending_launch(launch: PendingLaunch) -> None:
         )
 
         log.info(
-            "creating job: agent=%s model=%s target=%s",
+            "creating job: agent=%s model=%s thinking=%s target=%s",
             params["agent"],
             params["model"],
+            params.get("thinking", ""),
             "local" if is_local else machine_name,
         )
         job_id = await asyncio.to_thread(
@@ -276,7 +279,11 @@ def _form_context(error: str | None = None) -> dict:
     agent_models = {}
     for name, am in cfg.agent_models.items():
         available = am.available or cached_models(name)
-        agent_models[name] = {"available": available, "default": am.default}
+        agent_models[name] = {
+            "available": available,
+            "default": am.default,
+            "thinking": am.thinking,
+        }
     machines = list(dict.fromkeys(cfg.machines + discover_ssh_hosts()))
 
     return {
@@ -285,9 +292,11 @@ def _form_context(error: str | None = None) -> dict:
         "agent_models": agent_models,
         "prompt_presets": _prompt_presets(cfg),
         "repos": [get_profile(r) for r in available_repos()],
+        "thinking_levels": THINKING_LEVELS,
         "defaults": {
             "agent": cfg.default_agent,
             "model": cfg.default_model,
+            "thinking": cfg.effective_thinking(cfg.default_agent) or "",
             "max_turns": cfg.default_max_turns,
         },
         "error": error,
@@ -350,6 +359,7 @@ async def job_create(
     machine: str = Form(""),
     agent: str = Form("claude"),
     model: str = Form("opus"),
+    thinking: str = Form(""),
     max_turns: int = Form(100),
     name: str = Form(""),
     repo: str = Form("pytorch"),
@@ -387,6 +397,7 @@ async def job_create(
             "machine": machine.strip(),
             "agent": agent,
             "model": model,
+            "thinking": thinking,
             "max_turns": max_turns,
             "name": name.strip(),
             "repo": repo.strip(),
@@ -453,8 +464,17 @@ async def job_detail(request: Request, job_id: str):
     status = get_job_status_with_finalize(job_id, job)
     cfg = load_config()
     default_model = job.model or cfg.effective_model(job.agent)
+    default_thinking = job.thinking or cfg.effective_thinking(job.agent) or ""
     am = cfg.models_for(job.agent)
     available_models = am.available or cached_models(job.agent)
+    agent_models = {
+        name: {
+            "available": am.available or cached_models(name),
+            "default": am.default,
+            "thinking": am.thinking,
+        }
+        for name, am in cfg.agent_models.items()
+    }
     pr_state = "unknown"
     if job.pr_url:
         from ptq.application.pr_service import get_pr_state
@@ -479,7 +499,10 @@ async def job_detail(request: Request, job_id: str):
             "issue": job.issue,
             "agent_name": job.agent,
             "default_model": default_model,
+            "default_thinking": default_thinking,
             "available_models": available_models,
+            "thinking_levels": THINKING_LEVELS,
+            "agent_models": agent_models,
             "runs": job.runs,
             "agents": list(AGENTS.keys()),
             "pr_url": job.pr_url,
@@ -521,6 +544,7 @@ async def job_rerun(
     message: str = Form(""),
     agent_type: str = Form(""),
     model: str = Form(""),
+    thinking: str = Form(""),
 ):
     repo = _repo()
     with _catch_error():
@@ -533,12 +557,14 @@ async def job_rerun(
     backend = backend_for_job(job)
     agent_type = agent_type.strip() or job.agent
     model = model.strip() or cfg.effective_model(agent_type)
+    thinking = cfg.effective_thinking(agent_type, thinking.strip() or None)
 
     log.info(
-        "follow-up on %s: agent=%s model=%s message=%r",
+        "follow-up on %s: agent=%s model=%s thinking=%s message=%r",
         job_id,
         agent_type,
         model,
+        thinking,
         message.strip()[:80],
     )
 
@@ -559,6 +585,7 @@ async def job_rerun(
         local=job.local,
         follow=False,
         model=model,
+        thinking=thinking,
         max_turns=cfg.default_max_turns,
         agent_type=agent_type,
         existing_job_id=job_id,
@@ -774,8 +801,12 @@ async def job_diff(job_id: str):
         )
         content = result.stdout.strip() if result.returncode == 0 else None
     if not content:
-        log.warning("Empty diff for job %s (worktree=%s, stderr=%s)",
-                     job_id, worktree, result.stderr.strip() if result.stderr else "")
+        log.warning(
+            "Empty diff for job %s (worktree=%s, stderr=%s)",
+            job_id,
+            worktree,
+            result.stderr.strip() if result.stderr else "",
+        )
         return PlainTextResponse("")
     return PlainTextResponse(content)
 

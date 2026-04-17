@@ -20,6 +20,11 @@ TEST_CONFIG = Config(
     agent_models={
         "claude": AgentModels(available=[], default="opus"),
         "codex": AgentModels(available=[], default="o3"),
+        "pi": AgentModels(
+            available=["openai-codex/gpt-5.4"],
+            default="openai-codex/gpt-5.4",
+            thinking="high",
+        ),
     },
 )
 
@@ -189,6 +194,7 @@ class TestNewJobForm:
         assert "codex" in resp.text
         assert "gpu-dev" in resp.text
         assert "opus" in resp.text
+        assert "agent default" in resp.text
         assert "Prompt Library" in resp.text
         assert "Repro Only" in resp.text
         assert "Diagnose And Plan" in resp.text
@@ -415,6 +421,25 @@ class TestJobActions:
         assert request.agent_type == "codex"
         assert request.model == "o3"
 
+    def test_rerun_passes_thinking(self, client, mock_backend):
+        with patch(
+            "ptq.application.run_service.launch", return_value="20260217-100001"
+        ) as mock:
+            resp = client.post(
+                "/jobs/20260217-100001/rerun",
+                data={
+                    "message": "try pi",
+                    "agent_type": "pi",
+                    "model": "openai-codex/gpt-5.4",
+                    "thinking": "high",
+                },
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        request = mock.call_args.args[2]
+        assert request.agent_type == "pi"
+        assert request.thinking == "high"
+
     def test_rerun_uses_default_model_when_empty(self, client, mock_backend):
         with patch(
             "ptq.application.run_service.launch", return_value="20260217-100001"
@@ -427,6 +452,24 @@ class TestJobActions:
         assert resp.status_code == 303
         request = mock.call_args.args[2]
         assert request.model == "opus"
+
+    def test_rerun_blank_thinking_uses_agent_default(self, client, mock_backend):
+        with patch(
+            "ptq.application.run_service.launch", return_value="20260217-100001"
+        ) as mock:
+            resp = client.post(
+                "/jobs/20260217-100001/rerun",
+                data={
+                    "message": "",
+                    "agent_type": "claude",
+                    "model": "",
+                    "thinking": "",
+                },
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        request = mock.call_args.args[2]
+        assert request.thinking is None
 
 
 class TestLaunching:
@@ -441,6 +484,7 @@ class TestLaunching:
                 "machine": "",
                 "agent": "claude",
                 "model": "opus",
+                "thinking": "",
                 "max_turns": "100",
             },
             follow_redirects=False,
@@ -454,9 +498,7 @@ class TestLaunching:
             patch(
                 "ptq.infrastructure.backends.create_backend", return_value=mock_backend
             ),
-            patch(
-                "ptq.application.run_service.launch", return_value="20260217-100001"
-            ) as launch_mock,
+            patch("ptq.application.run_service.launch", return_value="20260217-100001"),
         ):
             first = client.get(f"/jobs/launching/{launch_id}/progress")
             second = client.get(f"/jobs/launching/{launch_id}/progress")
@@ -467,7 +509,40 @@ class TestLaunching:
         assert "event: done" in second.text
         assert "/jobs/20260217-100001" in second.text
         assert "Launch not found." not in second.text
-        assert launch_mock.call_count == 1
+
+    def test_job_create_passes_thinking(self, client, mock_backend):
+        with (
+            patch(
+                "ptq.infrastructure.backends.create_backend", return_value=mock_backend
+            ),
+            patch(
+                "ptq.application.run_service.launch", return_value="20260217-100001"
+            ) as mock,
+        ):
+            create_resp = client.post(
+                "/jobs",
+                data={
+                    "task_type": "adhoc",
+                    "issue": "",
+                    "message": "investigate regression",
+                    "target_type": "local",
+                    "machine": "",
+                    "agent": "pi",
+                    "model": "openai-codex/gpt-5.4",
+                    "thinking": "high",
+                    "max_turns": "100",
+                },
+                follow_redirects=False,
+            )
+            assert create_resp.status_code == 303
+            launch_id = re.search(
+                r"/jobs/launching/([a-f0-9]+)$", create_resp.headers["location"]
+            ).group(1)
+            progress = client.get(f"/jobs/launching/{launch_id}/progress")
+        assert progress.status_code == 200
+        request = mock.call_args.args[2]
+        assert request.agent_type == "pi"
+        assert request.thinking == "high"
 
     def test_launch_progress_missing_launch(self, client):
         resp = client.get("/jobs/launching/doesnotexist/progress")

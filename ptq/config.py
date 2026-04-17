@@ -26,6 +26,8 @@ names = []
 # Per-agent model defaults. "default" is used when --model is omitted.
 # Add "available" to get a dropdown in the web UI instead of freeform text:
 #   available = ["opus", "sonnet", "haiku"]
+# For agents with a separate reasoning control, set it with:
+#   thinking = "high"
 
 [models.claude]
 default = "opus"
@@ -37,7 +39,8 @@ default = "o3"
 default = "auto"
 
 [models.pi]
-default = "codex"
+default = "openai-codex/gpt-5.4"
+thinking = "high"
 
 # Optional prompt presets.
 # Built-ins always exist, but can be overridden under [prompt_library.builtin.*].
@@ -81,6 +84,7 @@ USE_NNPACK = "0"
 class AgentModels:
     available: list[str]
     default: str
+    thinking: str = ""
 
 
 @dataclass(frozen=True)
@@ -262,6 +266,14 @@ class Config:
             return am.default
         return self.default_model
 
+    def effective_thinking(self, agent: str, thinking: str | None = None) -> str | None:
+        if thinking:
+            return thinking
+        am = self.agent_models.get(agent)
+        if am and am.thinking:
+            return am.thinking
+        return None
+
     def build_env_prefix(self) -> str:
         if not self.build_env:
             return ""
@@ -291,6 +303,7 @@ def _parse(data: dict) -> Config:
         agent_models[agent_name] = AgentModels(
             available=model_data.get("available", []),
             default=model_data.get("default", ""),
+            thinking=model_data.get("thinking", ""),
         )
 
     def _collect_presets(section: dict) -> dict[str, PromptPreset]:
@@ -403,7 +416,7 @@ _PI_LIST_MODELS_SPLIT_RE = re.compile(r"\s{2,}")
 
 _FALLBACK_MODELS: dict[str, list[str]] = {
     "claude": ["opus", "sonnet", "haiku"],
-    "pi": ["codex"],
+    "pi": ["openai-codex/gpt-5.4"],
 }
 
 _EXTERNAL_CACHE_FILES: dict[str, tuple[Path, str]] = {
@@ -462,9 +475,10 @@ def _parse_pi_models(output: str) -> list[str]:
         ]
         if len(columns) < 2:
             continue
-        model = columns[1]
-        if model not in models:
-            models.append(model)
+        provider, model = columns[0], columns[1]
+        qualified = f"{provider}/{model}"
+        if qualified not in models:
+            models.append(qualified)
     return models
 
 
@@ -476,7 +490,7 @@ def discover_models(agent_name: str) -> list[str]:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if agent_name == "pi":
-                models = _parse_pi_models(result.stdout)
+                models = _parse_pi_models(result.stdout + result.stderr)
             else:
                 match = _AVAILABLE_RE.search(result.stdout + result.stderr)
                 if match:
