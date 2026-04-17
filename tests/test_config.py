@@ -14,6 +14,7 @@ class TestParse:
             "repro_only",
             "diagnose_and_plan",
             "fix_and_verify",
+            "simplify",
         ]
 
     def test_custom_agent(self):
@@ -30,6 +31,7 @@ class TestParse:
                 "models": {
                     "claude": {"default": "opus", "available": ["opus", "sonnet"]},
                     "codex": {"default": "o3"},
+                    "pi": {"default": "codex"},
                 }
             }
         )
@@ -37,6 +39,8 @@ class TestParse:
         assert cfg.agent_models["claude"].available == ["opus", "sonnet"]
         assert cfg.agent_models["codex"].default == "o3"
         assert cfg.agent_models["codex"].available == []
+        assert cfg.agent_models["pi"].default == "codex"
+        assert cfg.agent_models["pi"].available == []
 
     def test_build_env(self):
         cfg = _parse({"build": {"env": {"USE_NINJA": "1", "USE_NNPACK": "0"}}})
@@ -116,6 +120,7 @@ class TestLoadConfig:
         cfg = load_config(path)
         assert path.exists()
         assert cfg.default_agent == "claude"
+        assert cfg.agent_models["pi"].default == "codex"
 
     def test_roundtrip(self, tmp_path):
         path = tmp_path / "config.toml"
@@ -130,6 +135,9 @@ class TestLoadConfig:
 
             [models.codex]
             default = "o3"
+
+            [models.pi]
+            default = "codex"
             """)
         )
         cfg = load_config(path)
@@ -137,3 +145,4 @@ class TestLoadConfig:
         assert cfg.default_max_turns == 50
         assert cfg.machines == ["box-a"]
         assert cfg.agent_models["codex"].default == "o3"
+        assert cfg.agent_models["pi"].default == "codex"

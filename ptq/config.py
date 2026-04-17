@@ -36,6 +36,9 @@ default = "o3"
 [models.cursor]
 default = "auto"
 
+[models.pi]
+default = "codex"
+
 # Optional prompt presets.
 # Built-ins always exist, but can be overridden under [prompt_library.builtin.*].
 # Add your own under [prompt_library.custom.*].
@@ -392,12 +395,15 @@ def load_config(path: Path | None = None) -> Config:
 _DISCOVER_CMDS: dict[str, list[str]] = {
     "codex": ["codex", "exec", "x", "--model", "__invalid__"],
     "cursor": ["agent", "-p", "x", "--model", "__invalid__", "--force"],
+    "pi": ["pi", "--list-models"],
 }
 
 _AVAILABLE_RE = re.compile(r"Available models?:\s*(.+)", re.IGNORECASE)
+_PI_LIST_MODELS_SPLIT_RE = re.compile(r"\s{2,}")
 
 _FALLBACK_MODELS: dict[str, list[str]] = {
     "claude": ["opus", "sonnet", "haiku"],
+    "pi": ["codex"],
 }
 
 _EXTERNAL_CACHE_FILES: dict[str, tuple[Path, str]] = {
@@ -443,6 +449,25 @@ def cached_models(agent_name: str) -> list[str]:
     )
 
 
+def _parse_pi_models(output: str) -> list[str]:
+    models: list[str] = []
+    for line in output.splitlines()[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        columns = [
+            col.strip()
+            for col in _PI_LIST_MODELS_SPLIT_RE.split(stripped)
+            if col.strip()
+        ]
+        if len(columns) < 2:
+            continue
+        model = columns[1]
+        if model not in models:
+            models.append(model)
+    return models
+
+
 def discover_models(agent_name: str) -> list[str]:
     models: list[str] = []
 
@@ -450,9 +475,12 @@ def discover_models(agent_name: str) -> list[str]:
     if cmd:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            match = _AVAILABLE_RE.search(result.stdout + result.stderr)
-            if match:
-                models = [m.strip() for m in match.group(1).split(",") if m.strip()]
+            if agent_name == "pi":
+                models = _parse_pi_models(result.stdout)
+            else:
+                match = _AVAILABLE_RE.search(result.stdout + result.stderr)
+                if match:
+                    models = [m.strip() for m in match.group(1).split(",") if m.strip()]
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 

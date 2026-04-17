@@ -168,8 +168,14 @@ def build_pytorch(
         console.print(f"[bold]Using re-cc with MAX_JOBS={re_cc_jobs}[/bold]")
         backend.run(f"echo {re_cc_jobs} > {workspace}/.re-cc-config")
 
+    # Scope PATH/VIRTUAL_ENV to the target venv so CMake subprojects
+    # (notably NNPACK's FIND_PACKAGE(PythonInterp)) don't resolve `python`
+    # from whatever env invoked us (e.g. `uv run` from pt_job_queue/.venv,
+    # which lacks build deps like `six`).
+    env_scope = f"env -u VIRTUAL_ENV PATH={workspace}/.venv/bin:$PATH "
+
     result = backend.run(
-        f"cd {workspace}/pytorch && {build_env_prefix}{pip_cmd}",
+        f"cd {workspace}/pytorch && {build_env_prefix}{env_scope}{pip_cmd}",
         check=False,
         stream=True,
     )

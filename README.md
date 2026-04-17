@@ -1,6 +1,6 @@
 # ptq — PyTorch Job Queue
 
-CLI tool that takes a GitHub issue number, SSHs into a remote GPU machine, and launches an agent (Claude/Codex/Cursor) to autonomously investigate and fix the bug. The agent produces a report and a diff that you can review and turn into a PR.
+CLI tool that takes a GitHub issue number, SSHs into a remote GPU machine, and launches an agent (Claude/Codex/Cursor/pi) to autonomously investigate and fix the bug. The agent produces a report and a diff that you can review and turn into a PR.
 
 ## Install
 
@@ -236,7 +236,7 @@ Removes job directories and prunes git worktrees.
 | `--machine` | run, worktree | | Remote machine hostname |
 | `--local` | setup, run, worktree, clean, prune | | Use local workspace instead of SSH |
 | `--follow/--no-follow` | run | follow | Stream agent output to terminal |
-| `--agent` | run | claude | Agent (`claude`, `codex`, `cursor`) |
+| `--agent` | run | claude | Agent (`claude`, `codex`, `cursor`, `pi`) |
 | `--model` | run | opus | Model name (agent-specific) |
 | `--max-turns` | run | 100 | Max agent turns |
 | `-m/--message` | run | | Ad-hoc task or extra context for an issue |
@@ -281,7 +281,7 @@ pt_job_queue/
 │   ├── ssh.py                          # SSH/SCP + local subprocess backends
 │   ├── issue.py                        # GitHub issue fetching via gh
 │   ├── agent.py                        # Prompt construction + text utilities
-│   ├── agents.py                       # Agent protocol + claude/codex/cursor
+│   ├── agents.py                       # Agent protocol + claude/codex/cursor/pi
 │   ├── config.py                       # Config loading (~/.ptq/config.toml)
 │   ├── workspace.py                    # Remote workspace setup
 │   ├── domain/

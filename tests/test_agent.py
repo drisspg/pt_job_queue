@@ -334,6 +334,7 @@ class TestLaunchAgentType:
             ("claude", "claude -p"),
             ("codex", "codex exec"),
             ("cursor", "agent -p"),
+            ("pi", "pi --print --mode json --no-session"),
         ]:
             _mock_backend(backend)
             launch(
@@ -373,7 +374,7 @@ class TestLaunchAgentType:
     def test_agent_log_filename(self, _deploy, repo, frozen_date):
         backend = LocalBackend(workspace="/tmp/ws")
 
-        for agent_type in ("claude", "codex", "cursor"):
+        for agent_type in ("claude", "codex", "cursor", "pi"):
             _mock_backend(backend)
             launch(
                 repo,
@@ -464,3 +465,30 @@ class TestLaunchAgentType:
             if isinstance(call.args[0], str)
         ]
         assert any(".claude/settings.json" in c for c in run_cmds)
+
+    @patch("ptq.application.run_service.deploy_scripts")
+    def test_pi_setup_does_not_write_agent_specific_files(
+        self, _deploy, repo, frozen_date
+    ):
+        backend = LocalBackend(workspace="/tmp/ws")
+        _mock_backend(backend)
+
+        launch(
+            repo,
+            backend,
+            RunRequest(
+                message="hello",
+                local=True,
+                follow=False,
+                agent_type="pi",
+            ),
+        )
+
+        run_cmds = [
+            call.args[0]
+            for call in backend.run.call_args_list
+            if isinstance(call.args[0], str)
+        ]
+        assert all("/AGENTS.md" not in c for c in run_cmds)
+        assert all("/.cursorrules" not in c for c in run_cmds)
+        assert all(".claude/settings.json" not in c for c in run_cmds)

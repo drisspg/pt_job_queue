@@ -11,6 +11,7 @@ from ptq.agents import (
     ClaudeAgent,
     CodexAgent,
     CursorAgent,
+    PiAgent,
     RunContext,
     StreamEvent,
     get_agent,
@@ -39,11 +40,11 @@ def ctx() -> RunContext:
 
 
 class TestProtocol:
-    @pytest.mark.parametrize("cls", [ClaudeAgent, CodexAgent, CursorAgent])
+    @pytest.mark.parametrize("cls", [ClaudeAgent, CodexAgent, CursorAgent, PiAgent])
     def test_satisfies_agent_protocol(self, cls):
         assert isinstance(cls(), Agent)
 
-    @pytest.mark.parametrize("name", ["claude", "codex", "cursor"])
+    @pytest.mark.parametrize("name", ["claude", "codex", "cursor", "pi"])
     def test_registry_returns_agent(self, name):
         agent = get_agent(name)
         assert isinstance(agent, Agent)
@@ -88,15 +89,24 @@ class TestBuildCmd:
         assert "--output-format stream-json" in cmd
         assert "--max-turns" not in cmd
 
+    def test_pi_cmd_structure(self, ctx):
+        cmd = PiAgent().build_cmd(ctx)
+        assert cmd.startswith("cd /tmp/job && ")
+        assert "pi --print --mode json --no-session" in cmd
+        assert "--model opus" in cmd
+        assert "--append-system-prompt /tmp/job/system_prompt.md" in cmd
+        assert "--tools read,bash,edit,write" in cmd
+        assert "--max-turns" not in cmd
+
     def test_message_quoting(self, ctx):
         ctx.message = "it's broken"
-        for cls in (ClaudeAgent, CodexAgent, CursorAgent):
+        for cls in (ClaudeAgent, CodexAgent, CursorAgent, PiAgent):
             cmd = cls().build_cmd(ctx)
             assert "it'\\''s broken" in cmd
 
     def test_unbuffer_prefix(self, ctx):
         ctx.unbuffer_prefix = "stdbuf -oL "
-        for cls in (ClaudeAgent, CodexAgent, CursorAgent):
+        for cls in (ClaudeAgent, CodexAgent, CursorAgent, PiAgent):
             cmd = cls().build_cmd(ctx)
             assert "stdbuf -oL " in cmd
 
@@ -113,6 +123,7 @@ class TestLogFilename:
             (ClaudeAgent, "agent_logs/claude-3.log"),
             (CodexAgent, "agent_logs/codex-3.log"),
             (CursorAgent, "agent_logs/cursor-3.log"),
+            (PiAgent, "agent_logs/pi-3.log"),
         ],
     )
     def test_log_filename(self, cls, expected):
@@ -416,6 +427,64 @@ class TestCursorParser:
 
 
 # ---------------------------------------------------------------------------
+# parse_stream_line — Pi Agent
+# ---------------------------------------------------------------------------
+
+
+class TestPiParser:
+    def test_text_delta(self):
+        line = json.dumps(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "text_delta", "delta": "hello"},
+            }
+        )
+        events = PiAgent().parse_stream_line(line)
+        assert events == [StreamEvent(kind="text", text="hello")]
+
+    def test_tool_execution_start(self):
+        line = json.dumps(
+            {
+                "type": "tool_execution_start",
+                "toolName": "bash",
+                "args": {"command": "ls"},
+            }
+        )
+        events = PiAgent().parse_stream_line(line)
+        assert events == [
+            StreamEvent(kind="tool_use", tool_name="Bash", tool_input={"command": "ls"})
+        ]
+
+    def test_tool_execution_end(self):
+        line = json.dumps(
+            {
+                "type": "tool_execution_end",
+                "toolName": "read",
+                "result": {"content": [{"type": "text", "text": "hello\n"}]},
+                "isError": False,
+            }
+        )
+        events = PiAgent().parse_stream_line(line)
+        assert events == [StreamEvent(kind="tool_result", text="hello\n")]
+
+    def test_tool_execution_error(self):
+        line = json.dumps(
+            {
+                "type": "tool_execution_end",
+                "toolName": "bash",
+                "result": {"content": [{"type": "text", "text": "boom"}]},
+                "isError": True,
+            }
+        )
+        events = PiAgent().parse_stream_line(line)
+        assert events == [StreamEvent(kind="error", text="boom")]
+
+    def test_non_stream_event_ignored(self):
+        line = json.dumps({"type": "agent_start"})
+        assert PiAgent().parse_stream_line(line) == []
+
+
+# ---------------------------------------------------------------------------
 # Live CLI integration tests — skipped if the binary is not installed
 # ---------------------------------------------------------------------------
 
@@ -485,3 +554,37 @@ class TestCursorLive:
                 if ev.kind == "text":
                     found_text = True
         assert found_text, "Expected at least one text event from cursor agent"
+
+
+@pytest.mark.skipif(not _has_binary("pi"), reason="pi CLI not installed")
+class TestPiLive:
+    def test_simple_prompt(self):
+        result = subprocess.run(
+            [
+                "pi",
+                "--no-session",
+                "--mode",
+                "json",
+                "--print",
+                "--model",
+                "codex",
+                "respond with exactly: PONG",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0 and "No API key found" in result.stderr:
+            pytest.skip("pi is installed but not authenticated for live model tests")
+        assert result.returncode == 0
+
+        agent = PiAgent()
+        found_text = False
+        for line in result.stdout.strip().splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            for ev in agent.parse_stream_line(line):
+                if ev.kind == "text":
+                    found_text = True
+        assert found_text, "Expected at least one text event from pi"

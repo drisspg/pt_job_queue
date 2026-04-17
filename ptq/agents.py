@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
@@ -33,6 +34,43 @@ def _coerce_event_text(value: object) -> str:
             return json.dumps(value, ensure_ascii=False)
         case _:
             return str(value)
+
+
+def _quote(value: str) -> str:
+    return shlex.quote(value)
+
+
+def _pi_tool_name(name: str) -> str:
+    match name:
+        case "bash":
+            return "Bash"
+        case "read":
+            return "Read"
+        case "edit":
+            return "Edit"
+        case "write":
+            return "Write"
+        case "grep":
+            return "Grep"
+        case "find":
+            return "Find"
+        case "ls":
+            return "List"
+        case _:
+            return name
+
+
+def _pi_text_from_content(content: object) -> str:
+    match content:
+        case list() as items:
+            parts = [_pi_text_from_content(item) for item in items]
+            return "".join(part for part in parts if part)
+        case {"type": "text", "text": str(text)}:
+            return text
+        case {"content": inner}:
+            return _pi_text_from_content(inner)
+        case _:
+            return _coerce_event_text(content)
 
 
 @dataclass
@@ -357,6 +395,89 @@ class CursorAgent:
 
 
 # ---------------------------------------------------------------------------
+# Pi
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PiAgent:
+    name: str = "pi"
+
+    def build_cmd(self, ctx: RunContext) -> str:
+        escaped = ctx.message.replace("'", "'\\''")
+        return (
+            f"cd {_quote(ctx.job_dir)} && "
+            f"{ctx.unbuffer_prefix}"
+            f"pi --print --mode json --no-session "
+            f"--model {_quote(ctx.model)} "
+            f"--append-system-prompt {_quote(ctx.system_prompt_file)} "
+            f"--tools read,bash,edit,write "
+            f"'{escaped}'"
+        )
+
+    def parse_stream_line(self, line: str) -> list[StreamEvent]:
+        event = json.loads(line)
+        events: list[StreamEvent] = []
+        match event.get("type"):
+            case "message_update":
+                assistant_event = event.get("assistantMessageEvent", {})
+                match assistant_event.get("type"):
+                    case "text_delta":
+                        delta = assistant_event.get("delta", "")
+                        if delta:
+                            events.append(StreamEvent(kind="text", text=delta))
+            case "tool_execution_start":
+                tool_name = event.get("toolName", "")
+                events.append(
+                    StreamEvent(
+                        kind="tool_use",
+                        tool_name=_pi_tool_name(tool_name),
+                        tool_input=event.get("args", {}),
+                    )
+                )
+            case "tool_execution_end":
+                text = _pi_text_from_content(event.get("result", {}))
+                if event.get("isError"):
+                    events.append(StreamEvent(kind="error", text=text))
+                elif text:
+                    events.append(StreamEvent(kind="tool_result", text=text))
+        return events
+
+    def extract_summary(self, log_content: str) -> str | None:
+        last_text = None
+        for line in log_content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if event.get("type") != "message_end":
+                continue
+            message = event.get("message", {})
+            if message.get("role") != "assistant":
+                continue
+            text = _pi_text_from_content(message.get("content", []))
+            if text:
+                last_text = text
+        return last_text
+
+    def log_filename(self, run_number: int) -> str:
+        return f"agent_logs/pi-{run_number}.log"
+
+    def setup_workspace(
+        self,
+        backend: Backend,
+        worktree_path: str,
+        job_dir: str,
+        workspace: str,
+        prompt_file: str,
+    ) -> None:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Registry
 #
 # Adding a new agent:
@@ -402,10 +523,13 @@ class CursorAgent:
 # No changes needed in agent.py, cli.py, or anywhere else.
 # ---------------------------------------------------------------------------
 
-AGENTS: dict[str, type[ClaudeAgent] | type[CodexAgent] | type[CursorAgent]] = {
+AGENTS: dict[
+    str, type[ClaudeAgent] | type[CodexAgent] | type[CursorAgent] | type[PiAgent]
+] = {
     "claude": ClaudeAgent,
     "codex": CodexAgent,
     "cursor": CursorAgent,
+    "pi": PiAgent,
 }
 
 

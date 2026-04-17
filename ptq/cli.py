@@ -13,7 +13,8 @@ from ptq.agents import StreamEvent, get_agent
 from ptq.domain.models import JobRecord, JobStatus, PtqError, RebaseState, RunRequest
 
 app = typer.Typer(
-    name="ptq", help="PyTorch Job Queue — dispatch AI agents to fix issues in PyTorch and add-on repos."
+    name="ptq",
+    help="PyTorch Job Queue — dispatch AI agents to fix issues in PyTorch and add-on repos.",
 )
 console = Console()
 
@@ -150,7 +151,9 @@ def setup(
     ] = None,
     extras: Annotated[
         list[str] | None,
-        typer.Option("--extras", help="Additional repos to clone (e.g. --extras torchtitan)."),
+        typer.Option(
+            "--extras", help="Additional repos to clone (e.g. --extras torchtitan)."
+        ),
     ] = None,
 ) -> None:
     """One-time workspace setup: clone PyTorch with submodules, create venv, install build deps.
@@ -191,7 +194,7 @@ def run(
     model: Annotated[str | None, typer.Option(help="Model to use.")] = None,
     max_turns: Annotated[int | None, typer.Option(help="Max agent turns.")] = None,
     agent: Annotated[
-        str | None, typer.Option(help="Agent type: claude, codex, or cursor.")
+        str | None, typer.Option(help="Agent type: claude, codex, cursor, or pi.")
     ] = None,
     verbose: Annotated[
         bool,
@@ -236,6 +239,7 @@ def run(
         ptq run -p diagnose_and_plan --issue 174923 --machine gpu-dev
         ptq run -p fix_and_verify -m "focus on stride handling" --issue 174923
         ptq run -i task.md --machine gpu-dev --agent cursor
+        ptq run -m "triage the repro" --agent pi
         ptq run 20260214-174923 -m "look at flex_attention.py instead"
         ptq run 174923 -m "try a different approach"
     """
@@ -871,7 +875,9 @@ def worktree(
     ] = False,
     repo: Annotated[
         str,
-        typer.Option("--repo", help="Repo to create a worktree for (default: pytorch)."),
+        typer.Option(
+            "--repo", help="Repo to create a worktree for (default: pytorch)."
+        ),
     ] = "pytorch",
 ) -> None:
     """Create a named worktree with a ready-to-use venv.
