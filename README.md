@@ -80,7 +80,7 @@ uv run ptq worktree my-fix --local
 uv run ptq worktree stride-fix --machine my-gpu-box -v
 ```
 
-Creates a PyTorch git worktree with a ready-to-use venv, without launching an agent. Useful when you want to work in the worktree yourself or defer agent launch. The command prints the shell command to enter the worktree.
+Creates a PyTorch git worktree with a ready-to-use venv, without launching an agent. Useful when you want to work in the worktree yourself or defer agent launch. Run `ptq setup ...` first — `worktree` assumes the workspace already exists. The command prints the shell command to enter the worktree.
 
 Later, launch an agent in the same worktree by name:
 
@@ -128,7 +128,7 @@ The agent will:
 4. Test the fix by copying edits to site-packages and re-running the repro
 5. Write `report.md` and `fix.diff`
 
-Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees.
+Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees. Fresh workspaces still need an explicit `ptq setup ...` first.
 
 ### 4. Web dashboard
 

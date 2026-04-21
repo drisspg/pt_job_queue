@@ -340,11 +340,18 @@ def run(
     except PtqError as e:
         _handle_error(e)
 
+    job = job_repo.get(launched_id)
     if follow:
-        job = job_repo.get(launched_id)
         agent_impl = get_agent(job.agent)
         log_file = f"{backend.workspace}/jobs/{launched_id}/{agent_impl.log_filename(job.runs)}"
         _follow_logs(backend, log_file, agent_impl, launched_id)
+    else:
+        from ptq.takeover import for_job as takeover_for_job
+
+        console.print()
+        console.print(f"[bold green]Launched {launched_id}.[/bold green]")
+        console.print(f"  Take over: {takeover_for_job(launched_id, job)}")
+        console.print(f"  Results:   ptq results {launched_id}")
 
 
 @app.command("presets")
@@ -660,7 +667,7 @@ def takeover(
     job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
 ) -> None:
     """Print the shell command to drop into a job's worktree."""
-    from ptq.infrastructure.backends import backend_for_job
+    from ptq.takeover import for_job as takeover_for_job
 
     repo = _repo()
     try:
@@ -668,16 +675,7 @@ def takeover(
     except PtqError as e:
         _handle_error(e)
     job = repo.get(job_id)
-    backend = backend_for_job(job)
-    ws = backend.workspace
-    job_dir = f"{ws}/jobs/{job_id}"
-
-    if job.local:
-        cmd = f"cd {job_dir} && source .venv/bin/activate"
-    else:
-        cmd = f"ssh -t {job.machine} 'cd {job_dir} && source .venv/bin/activate && exec $SHELL'"
-
-    console.print(cmd)
+    console.print(takeover_for_job(job_id, job))
 
 
 @app.command()
@@ -898,6 +896,7 @@ def worktree(
     from ptq.domain.policies import make_job_id
     from ptq.infrastructure.backends import create_backend
     from ptq.repo_profiles import get_profile
+    from ptq.takeover import shell_command as takeover_command
     from ptq.workspace import deploy_scripts
 
     profile = get_profile(repo)
@@ -949,17 +948,11 @@ def worktree(
     console.print(f"[bold green]Worktree '{name}' ready.[/bold green]")
     console.print(f"  Job ID:   {job_id}")
     console.print(f"  Worktree: {job_dir}/{dir_name}")
-    if local:
-        console.print(
-            f"\n  cd {job_dir}/{dir_name} && source ../.venv/bin/activate",
-            soft_wrap=True,
-        )
-    else:
-        console.print(
-            f"\n  ssh -t {machine} 'cd {job_dir}/{dir_name} && "
-            f"source ../.venv/bin/activate && exec $SHELL'",
-            soft_wrap=True,
-        )
+    console.print(
+        f"\n  Take over: {takeover_command(workspace=ws, job_id=job_id, repo=repo, local=local, machine=machine)}",
+        soft_wrap=True,
+    )
+    console.print(f"  Shortcut: ptq takeover {job_id}")
     console.print(f"\n  To launch an agent: ptq run {name} -m 'your task'")
 
 
@@ -1016,16 +1009,10 @@ def rebase(
         case RebaseState.NEEDS_HUMAN:
             console.print("\n[bold yellow]Needs human intervention.[/bold yellow]")
             console.print(f"  {result.error}")
+            from ptq.takeover import for_job as takeover_for_job
+
             job = repo.get(job_id)
-            if job.local:
-                console.print(
-                    f"\n  cd {job.workspace}/jobs/{job_id} && source .venv/bin/activate"
-                )
-            else:
-                console.print(
-                    f"\n  ssh -t {job.target} 'cd {job.workspace}/jobs/{job_id} "
-                    f"&& source .venv/bin/activate && exec $SHELL'"
-                )
+            console.print(f"\n  {takeover_for_job(job_id, job)}")
         case _:
             console.print(f"\n[red]Rebase failed: {result.error}[/red]")
 

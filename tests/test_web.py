@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 from ptq.config import AgentModels, Config
 from ptq.domain.models import JobRecord
 from ptq.infrastructure.job_repository import JobRepository
+from ptq.takeover import shell_command
 from ptq.web.app import create_app
 
 TEST_CONFIG = Config(
@@ -117,20 +119,32 @@ class TestJobDetail:
     def test_takeover_command_uses_worktree_and_parent_venv_for_local_job(self, client):
         resp = client.get("/jobs/20260218-adhoc-abc123")
         assert resp.status_code == 200
+        text = html.unescape(resp.text)
         assert (
-            "cd ~/.ptq_workspace/jobs/20260218-adhoc-abc123/pytorch && "
+            "cd $HOME/.ptq_workspace/jobs/20260218-adhoc-abc123/pytorch && "
             "source ../.venv/bin/activate"
-        ) in resp.text
+        ) in text
 
     def test_takeover_command_uses_worktree_and_parent_venv_for_remote_job(
         self, client
     ):
         resp = client.get("/jobs/20260217-100001")
         assert resp.status_code == 200
+        text = html.unescape(resp.text)
         assert (
-            "ssh -t gpu-dev 'cd ~/ptq_workspace/jobs/20260217-100001/pytorch && "
+            "ssh -t gpu-dev 'cd $HOME/ptq_workspace/jobs/20260217-100001/pytorch && "
             "source ../.venv/bin/activate && exec $SHELL'"
-        ) in resp.text
+        ) in text
+
+    def test_takeover_command_quotes_home_workspace_with_spaces(self):
+        assert (
+            shell_command(
+                workspace="~/ptq workspace",
+                job_id="job1",
+                local=True,
+            )
+            == "cd $HOME/'ptq workspace/jobs/job1/pytorch' && source ../.venv/bin/activate"
+        )
 
     def test_unknown_job_404(self, client):
         resp = client.get("/jobs/nonexistent-job")

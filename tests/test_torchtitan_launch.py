@@ -16,7 +16,7 @@ def _ok(cmd="", **kwargs):
 
 def _mock_backend(backend):
     def run_side_effect(cmd: str, check: bool = True, **kw):
-        if "test -d" in cmd or "test -f" in cmd:
+        if "test -x" in cmd or "test -d" in cmd or "test -f" in cmd:
             return CompletedProcess(args="", returncode=1, stdout="", stderr="")
         return _ok()
 

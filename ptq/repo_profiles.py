@@ -104,10 +104,9 @@ def _loaded_profiles() -> dict[str, RepoProfile]:
         from ptq.config import load_config
 
         cfg = load_config()
-        if cfg.repos_raw:
-            _profiles_cache = load_profiles_from_config(cfg.repos_raw)
-        else:
-            _profiles_cache = dict(_DEFAULT_PROFILES)
+        repos_raw = cfg.repos_raw if isinstance(cfg.repos_raw, dict) else {}
+        loaded = load_profiles_from_config(repos_raw) if repos_raw else {}
+        _profiles_cache = loaded or dict(_DEFAULT_PROFILES)
     return _profiles_cache
 
 
@@ -115,9 +114,7 @@ def get_profile(name: str) -> RepoProfile:
     profiles = _loaded_profiles()
     profile = profiles.get(name)
     if profile is None:
-        raise ValueError(
-            f"Unknown repo '{name}'. Available: {', '.join(profiles)}"
-        )
+        raise ValueError(f"Unknown repo '{name}'. Available: {', '.join(profiles)}")
     return profile
 
 

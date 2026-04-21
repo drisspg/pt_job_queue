@@ -73,6 +73,26 @@ def _render_md(text: str) -> str:
     return md_lib.markdown(text, extensions=["fenced_code", "tables", "nl2br"])
 
 
+def _render_diff_html(content: str) -> str:
+    lines: list[str] = []
+    for line in content.splitlines():
+        css_class = "diff-context"
+        if line.startswith("+++") or line.startswith("---"):
+            css_class = "diff-file"
+        elif line.startswith("@@"):
+            css_class = "diff-hunk"
+        elif line.startswith("+"):
+            css_class = "diff-add"
+        elif line.startswith("-"):
+            css_class = "diff-del"
+        lines.append(f'<span class="{css_class}">{html.escape(line)}</span>')
+    return (
+        '<pre class="log-viewer diff-viewer"><code>'
+        + "\n".join(lines)
+        + "</code></pre>"
+    )
+
+
 def _repo() -> JobRepository:
     return JobRepository()
 
@@ -484,6 +504,7 @@ async def job_detail(request: Request, job_id: str):
         )
 
     profile = get_profile(job.repo)
+    from ptq.takeover import for_job as takeover_for_job
 
     rb = job.rebase_info
     if rb.state == RebaseState.SUCCEEDED:
@@ -511,6 +532,7 @@ async def job_detail(request: Request, job_id: str):
             "pr_title": job.pr_title or "",
             "workspace": job.workspace,
             "is_local": job.local,
+            "takeover_command": takeover_for_job(job_id, job),
             "rebase_state": rb.state.value,
             "rebase_target": rb.target_ref,
             "rebase_before": rb.before_sha,
@@ -776,7 +798,7 @@ async def job_report(job_id: str):
 
 
 @router.get("/jobs/{job_id}/diff")
-async def job_diff(job_id: str):
+async def job_diff(job_id: str, request: Request):
     repo = _repo()
     with _catch_error():
         job = repo.get(job_id)
@@ -807,8 +829,12 @@ async def job_diff(job_id: str):
             worktree,
             result.stderr.strip() if result.stderr else "",
         )
-        return PlainTextResponse("")
-    return PlainTextResponse(content)
+        if request.query_params.get("raw") == "1":
+            return PlainTextResponse("")
+        return HTMLResponse('<p class="muted">No diff yet.</p>')
+    if request.query_params.get("raw") == "1":
+        return PlainTextResponse(content)
+    return HTMLResponse(_render_diff_html(content))
 
 
 @router.get("/jobs/{job_id}/repro", response_class=HTMLResponse)

@@ -49,6 +49,27 @@ class TestRunValidation:
         request = mock_launch.call_args.args[2]
         assert request.local is True
 
+    def test_no_follow_prints_takeover_command(self, tmp_path):
+        repo = _make_repo(tmp_path)
+
+        def fake_launch(r, b, req, **kw):
+            repo.save(JobRecord(job_id="test-job", local=True, workspace="/tmp/ws"))
+            return "test-job"
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch("ptq.application.run_service.launch", side_effect=fake_launch),
+        ):
+            result = runner.invoke(app, ["run", "-m", "hello", "--no-follow"])
+
+        assert result.exit_code == 0, result.output
+        flat = " ".join(result.output.split())
+        assert (
+            "Take over: cd /tmp/ws/jobs/test-job/pytorch && source ../.venv/bin/activate"
+            in flat
+        )
+        assert "Results: ptq results test-job" in flat
+
     def test_input_and_message_mutually_exclusive(self):
         result = runner.invoke(app, ["run", "-i", "f.md", "-m", "hello", "--local"])
         assert result.exit_code != 0

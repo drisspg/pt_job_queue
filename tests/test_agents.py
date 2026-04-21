@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 
@@ -609,7 +610,10 @@ def _has_binary(name: str) -> bool:
 
 @pytest.mark.skipif(not _has_binary("codex"), reason="codex CLI not installed")
 class TestCodexLive:
-    def test_simple_prompt(self):
+    def test_simple_prompt(self, tmp_path):
+        codex_home = tmp_path / "codex-home"
+        codex_home.mkdir()
+        env = os.environ | {"HOME": str(codex_home)}
         result = subprocess.run(
             [
                 "codex",
@@ -623,6 +627,7 @@ class TestCodexLive:
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
         assert result.returncode == 0
 
