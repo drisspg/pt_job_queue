@@ -947,11 +947,15 @@ def worktree(
     console.print(f"  Job ID:   {job_id}")
     console.print(f"  Worktree: {job_dir}/{dir_name}")
     if local:
-        console.print(f"\n  cd {job_dir}/{dir_name} && source ../.venv/bin/activate")
+        console.print(
+            f"\n  cd {job_dir}/{dir_name} && source ../.venv/bin/activate",
+            soft_wrap=True,
+        )
     else:
         console.print(
             f"\n  ssh -t {machine} 'cd {job_dir}/{dir_name} && "
-            f"source ../.venv/bin/activate && exec $SHELL'"
+            f"source ../.venv/bin/activate && exec $SHELL'",
+            soft_wrap=True,
         )
     console.print(f"\n  To launch an agent: ptq run {name} -m 'your task'")
 
