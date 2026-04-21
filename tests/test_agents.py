@@ -505,6 +505,38 @@ class TestPiParser:
             StreamEvent(kind="tool_use", tool_name="Bash", tool_input={"command": "ls"})
         ]
 
+    def test_tool_execution_update_emits_delta(self):
+        agent = PiAgent()
+        start = json.dumps(
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "call-1",
+                "toolName": "bash",
+                "args": {"command": "echo hi"},
+            }
+        )
+        update1 = json.dumps(
+            {
+                "type": "tool_execution_update",
+                "toolCallId": "call-1",
+                "partialResult": {"content": [{"type": "text", "text": "hi\n"}]},
+            }
+        )
+        update2 = json.dumps(
+            {
+                "type": "tool_execution_update",
+                "toolCallId": "call-1",
+                "partialResult": {"content": [{"type": "text", "text": "hi\nthere\n"}]},
+            }
+        )
+        agent.parse_stream_line(start)
+        assert agent.parse_stream_line(update1) == [
+            StreamEvent(kind="tool_result", text="hi\n")
+        ]
+        assert agent.parse_stream_line(update2) == [
+            StreamEvent(kind="tool_result", text="there\n")
+        ]
+
     def test_tool_execution_end(self):
         line = json.dumps(
             {
@@ -516,6 +548,38 @@ class TestPiParser:
         )
         events = PiAgent().parse_stream_line(line)
         assert events == [StreamEvent(kind="tool_result", text="hello\n")]
+
+    def test_tool_execution_end_after_update_emits_remaining_delta(self):
+        agent = PiAgent()
+        start = json.dumps(
+            {
+                "type": "tool_execution_start",
+                "toolCallId": "call-2",
+                "toolName": "bash",
+                "args": {"command": "echo hi"},
+            }
+        )
+        update = json.dumps(
+            {
+                "type": "tool_execution_update",
+                "toolCallId": "call-2",
+                "partialResult": {"content": [{"type": "text", "text": "hi\n"}]},
+            }
+        )
+        end = json.dumps(
+            {
+                "type": "tool_execution_end",
+                "toolCallId": "call-2",
+                "toolName": "bash",
+                "result": {"content": [{"type": "text", "text": "hi\nthere\n"}]},
+                "isError": False,
+            }
+        )
+        agent.parse_stream_line(start)
+        agent.parse_stream_line(update)
+        assert agent.parse_stream_line(end) == [
+            StreamEvent(kind="tool_result", text="there\n")
+        ]
 
     def test_tool_execution_error(self):
         line = json.dumps(

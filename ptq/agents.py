@@ -416,6 +416,7 @@ class CursorAgent:
 @dataclass
 class PiAgent:
     name: str = "pi"
+    _tool_output_progress: dict[str, str] = field(default_factory=dict)
 
     def build_cmd(self, ctx: RunContext) -> str:
         escaped = ctx.message.replace("'", "'\\''")
@@ -446,6 +447,9 @@ class PiAgent:
                         events.append(StreamEvent(kind="text", text=text))
             case "tool_execution_start":
                 tool_name = event.get("toolName", "")
+                tool_call_id = event.get("toolCallId")
+                if isinstance(tool_call_id, str):
+                    self._tool_output_progress[tool_call_id] = ""
                 events.append(
                     StreamEvent(
                         kind="tool_use",
@@ -453,12 +457,27 @@ class PiAgent:
                         tool_input=event.get("args", {}),
                     )
                 )
+            case "tool_execution_update":
+                tool_call_id = event.get("toolCallId")
+                if not isinstance(tool_call_id, str):
+                    return events
+                text = _pi_text_from_content(event.get("partialResult", {}))
+                previous = self._tool_output_progress.get(tool_call_id, "")
+                delta = text[len(previous) :] if text.startswith(previous) else text
+                self._tool_output_progress[tool_call_id] = text
+                if delta:
+                    events.append(StreamEvent(kind="tool_result", text=delta))
             case "tool_execution_end":
+                tool_call_id = event.get("toolCallId")
                 text = _pi_text_from_content(event.get("result", {}))
+                previous = ""
+                if isinstance(tool_call_id, str):
+                    previous = self._tool_output_progress.pop(tool_call_id, "")
+                delta = text[len(previous) :] if text.startswith(previous) else text
                 if event.get("isError"):
-                    events.append(StreamEvent(kind="error", text=text))
-                elif text:
-                    events.append(StreamEvent(kind="tool_result", text=text))
+                    events.append(StreamEvent(kind="error", text=delta or text))
+                elif delta:
+                    events.append(StreamEvent(kind="tool_result", text=delta))
         return events
 
     def extract_summary(self, log_content: str) -> str | None:

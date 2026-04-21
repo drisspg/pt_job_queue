@@ -125,10 +125,11 @@ class TestConfig:
         assert cfg.effective_thinking("pi", "low") == "low"
 
     def test_build_env_prefix(self):
-        cfg = Config(build_env={"USE_NINJA": "1", "USE_NNPACK": "0"})
+        cfg = Config(build_env={"USE_NINJA": "1", "USE_NNPACK": "0", "BUILD_TEST": "0"})
         prefix = cfg.build_env_prefix()
         assert "USE_NINJA=1" in prefix
         assert "USE_NNPACK=0" in prefix
+        assert "BUILD_TEST=0" in prefix
         assert prefix.endswith(" ")
 
     def test_build_env_prefix_empty(self):

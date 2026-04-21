@@ -251,7 +251,11 @@ class Config:
     agent_models: dict[str, AgentModels] = field(default_factory=dict)
     prompt_presets: list[PromptPreset] = field(default_factory=_default_prompt_presets)
     build_env: dict[str, str] = field(
-        default_factory=lambda: {"USE_NINJA": "1", "USE_NNPACK": "0"}
+        default_factory=lambda: {
+            "USE_NINJA": "1",
+            "USE_NNPACK": "0",
+            "BUILD_TEST": "0",
+        }
     )
     repos_raw: dict = field(default_factory=dict)
 

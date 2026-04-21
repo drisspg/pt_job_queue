@@ -14,7 +14,7 @@ BUILD_ENV="$WORKSPACE/scripts/.build-env"
 unset VIRTUAL_ENV
 export PATH="$JOB_DIR/.venv/bin:$PATH"
 
-export CCACHE_NOHASHDIR=true USE_NINJA="${USE_NINJA:-1}"
+export CCACHE_NOHASHDIR=true USE_NINJA="${USE_NINJA:-1}" BUILD_TEST="${BUILD_TEST:-0}"
 
 # Fast-path cloned worktrees may still have hardlinked .so files that
 # setuptools won't overwrite.  Break them before the editable install.
