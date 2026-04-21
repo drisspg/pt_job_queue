@@ -85,7 +85,10 @@ def _follow_logs(backend, log_file: str, agent, job_id: str) -> None:
         console.print(
             "\n[bold yellow]Detached. Agent still running on remote.[/bold yellow]"
         )
-        console.print(f"  ptq results {job_id}")
+        console.print(f"  ptq results {job_id}      [dim]# view results[/dim]")
+        console.print(
+            f"  $(ptq takeover {job_id})   [dim]# ssh into remote worktree[/dim]"
+        )
         return
     tail.wait()
     console.print("\n[bold]Agent finished.[/bold]")
