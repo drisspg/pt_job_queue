@@ -38,13 +38,13 @@ uv run ptq run -m "tell me a story" --agent codex
 
 ```bash
 # Remote GPU machine (auto-detects CUDA version)
-uv run ptq setup my-gpu-box
+uv run ptq setup my-gpu-box --build
 
 # Remote with explicit CUDA version
-uv run ptq setup my-gpu-box --cuda cu130
+uv run ptq setup my-gpu-box --cuda cu130 --build
 
 # Local (for testing/development)
-uv run ptq setup --local --cpu
+uv run ptq setup --local --cpu --build
 ```
 
 This creates a workspace with:
