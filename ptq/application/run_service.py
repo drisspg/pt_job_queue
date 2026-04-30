@@ -12,6 +12,7 @@ from ptq.agent import (
     build_system_prompt,
 )
 from ptq.agents import RunContext, get_agent
+from ptq.application.job_context import write_job_context
 from ptq.application.venv_service import ProgressCallback, _noop_progress, _setup_job_venv
 from ptq.domain.models import JobRecord, PtqError, RunRequest
 from ptq.domain.policies import make_job_id
@@ -216,6 +217,14 @@ def launch(
                 build_env_prefix=load_config().build_env_prefix(),
                 repo=repo_name,
             )
+
+    write_job_context(
+        backend,
+        job_id=job_id,
+        workspace=workspace,
+        repo=repo_name,
+        name=request.name,
+    )
 
     if is_adhoc:
         system_prompt = build_adhoc_prompt(

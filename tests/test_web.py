@@ -116,24 +116,24 @@ class TestJobDetail:
         assert "rerun-message-preset" in resp.text
         assert "Fix And Verify" in resp.text
 
-    def test_takeover_command_uses_worktree_and_parent_venv_for_local_job(self, client):
+    def test_takeover_command_uses_job_home_and_venv_for_local_job(self, client):
         resp = client.get("/jobs/20260218-adhoc-abc123")
         assert resp.status_code == 200
         text = html.unescape(resp.text)
         assert (
-            "cd $HOME/.ptq_workspace/jobs/20260218-adhoc-abc123/pytorch && "
-            "source ../.venv/bin/activate"
+            "cd $HOME/.ptq_workspace/jobs/20260218-adhoc-abc123 && "
+            "source .venv/bin/activate"
         ) in text
 
-    def test_takeover_command_uses_worktree_and_parent_venv_for_remote_job(
+    def test_takeover_command_uses_job_home_and_venv_for_remote_job(
         self, client
     ):
         resp = client.get("/jobs/20260217-100001")
         assert resp.status_code == 200
         text = html.unescape(resp.text)
         assert (
-            "ssh -t gpu-dev 'cd $HOME/ptq_workspace/jobs/20260217-100001/pytorch && "
-            "source ../.venv/bin/activate && exec $SHELL'"
+            "ssh -t gpu-dev 'cd $HOME/ptq_workspace/jobs/20260217-100001 && "
+            "source .venv/bin/activate && exec $SHELL'"
         ) in text
 
     def test_takeover_command_quotes_home_workspace_with_spaces(self):
@@ -143,7 +143,7 @@ class TestJobDetail:
                 job_id="job1",
                 local=True,
             )
-            == "cd $HOME/'ptq workspace/jobs/job1/pytorch' && source ../.venv/bin/activate"
+            == "cd $HOME/'ptq workspace/jobs/job1' && source .venv/bin/activate"
         )
 
     def test_unknown_job_404(self, client):

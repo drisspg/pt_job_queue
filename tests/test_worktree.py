@@ -129,7 +129,8 @@ class TestWorktreeCommand:
         assert result.exit_code == 0, result.output
         flat = " ".join(result.output.split())
         assert "Take over: cd /tmp/ws/jobs/" in flat
-        assert "/pytorch && source ../.venv/bin/activate" in flat
+        assert "&& source .venv/bin/activate" in flat
+        assert "/pytorch && source" not in flat
         assert "Shortcut: ptq takeover 20260217-pytorch-adhoc-" in flat
         assert "ptq run my-fix" in flat
 
@@ -183,6 +184,39 @@ class TestWorktreeCommand:
 
         assert result.exit_code == 0, result.output
         mock_backend.launch_background.assert_not_called()
+
+    def test_writes_manual_agent_context(self, tmp_path, frozen_date):
+        repo = _make_repo(tmp_path)
+        mock_backend = MagicMock()
+        mock_backend.workspace = "/tmp/ws"
+        mock_backend.run = MagicMock(return_value=_ok())
+
+        from ptq.repo_profiles import _DEFAULT_PROFILES
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
+            ),
+            patch("ptq.config.load_config") as mock_cfg,
+            patch(
+                "ptq.repo_profiles._loaded_profiles",
+                return_value=_DEFAULT_PROFILES,
+            ),
+        ):
+            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
+            result = runner.invoke(app, ["worktree", "my-fix"])
+
+        assert result.exit_code == 0, result.output
+        run_cmds = [
+            call.args[0]
+            for call in mock_backend.run.call_args_list
+            if isinstance(call.args[0], str)
+        ]
+        assert any("PTQ_CONTEXT.md" in c for c in run_cmds)
+        assert any("/jobs/20260217-pytorch-adhoc-" in c and "/AGENTS.md" in c for c in run_cmds)
+        assert any("/jobs/20260217-pytorch-adhoc-" in c and "/CLAUDE.md" in c for c in run_cmds)
+        assert any("/pytorch/agent_space/PTQ_CONTEXT.md" in c for c in run_cmds)
 
     def test_record_created_before_worktree(self, tmp_path, frozen_date):
         repo = _make_repo(tmp_path)

@@ -892,6 +892,7 @@ def worktree(
     if not machine and not local:
         local = True
 
+    from ptq.application.job_context import write_job_context
     from ptq.application.worktree_service import provision_worktree, validate_workspace
     from ptq.domain.policies import make_job_id
     from ptq.infrastructure.backends import create_backend
@@ -937,6 +938,13 @@ def worktree(
             verbose=verbose,
             progress=lambda msg: console.print(msg),
             repo=repo,
+        )
+        write_job_context(
+            backend,
+            job_id=job_id,
+            workspace=backend.workspace,
+            repo=repo,
+            name=name,
         )
     except PtqError as e:
         _handle_error(e)

@@ -64,10 +64,7 @@ class TestRunValidation:
 
         assert result.exit_code == 0, result.output
         flat = " ".join(result.output.split())
-        assert (
-            "Take over: cd /tmp/ws/jobs/test-job/pytorch && source ../.venv/bin/activate"
-            in flat
-        )
+        assert "Take over: cd /tmp/ws/jobs/test-job && source .venv/bin/activate" in flat
         assert "Results: ptq results test-job" in flat
 
     def test_input_and_message_mutually_exclusive(self):

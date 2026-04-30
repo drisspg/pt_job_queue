@@ -6,9 +6,13 @@ from ptq.domain.models import JobRecord
 from ptq.repo_profiles import get_profile
 
 
+def job_dir_path(workspace: str, job_id: str) -> str:
+    return f"{workspace}/jobs/{job_id}"
+
+
 def worktree_path(workspace: str, job_id: str, repo: str = "pytorch") -> str:
     profile = get_profile(repo)
-    return f"{workspace}/jobs/{job_id}/{profile.dir_name}"
+    return f"{job_dir_path(workspace, job_id)}/{profile.dir_name}"
 
 
 def _shell_path(path: str) -> str:
@@ -27,10 +31,10 @@ def shell_command(
     local: bool,
     machine: str | None = None,
 ) -> str:
-    worktree = _shell_path(worktree_path(workspace, job_id, repo))
+    job_dir = _shell_path(job_dir_path(workspace, job_id))
     if local:
-        return f"cd {worktree} && source ../.venv/bin/activate"
-    remote_cmd = f"cd {worktree} && source ../.venv/bin/activate && exec $SHELL"
+        return f"cd {job_dir} && source .venv/bin/activate"
+    remote_cmd = f"cd {job_dir} && source .venv/bin/activate && exec $SHELL"
     return f"ssh -t {shlex.quote(machine or '')} {shlex.quote(remote_cmd)}"
 
 
