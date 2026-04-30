@@ -3,7 +3,7 @@ from __future__ import annotations
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock
 
-from ptq.application.run_service import _try_clone_base_venv
+from ptq.application.venv_service import _try_clone_base_venv
 
 
 def _cp(returncode: int = 0, stdout: str = "") -> CompletedProcess[str]:
@@ -18,10 +18,13 @@ JOB_VENV = f"{JOB_DIR}/.venv"
 OLD_SRC = f"{WORKSPACE}/pytorch"
 NEW_SRC = WORKTREE
 SP_DIR = f"{JOB_VENV}/lib/python3.12/site-packages"
+BASE_GIT = "b1095249e3c7c000000000000000000000000000"
 SMOKE_STDOUT = f"{NEW_SRC}/torch/__init__.py 2.7.0 True"
 
 
-def _make_backend(*, torch_import_ok: bool = True) -> MagicMock:
+def _make_backend(
+    *, torch_import_ok: bool = True, torch_git_version: str = BASE_GIT
+) -> MagicMock:
     backend = MagicMock()
     backend.workspace = WORKSPACE
 
@@ -30,6 +33,10 @@ def _make_backend(*, torch_import_ok: bool = True) -> MagicMock:
             return _cp(stdout=f"{OLD_SRC}\n")
         if f"realpath {WORKTREE}" in cmd:
             return _cp(stdout=f"{NEW_SRC}\n")
+        if "torch.version.git_version" in cmd:
+            return _cp(stdout=f"{torch_git_version}\n")
+        if f"cd {OLD_SRC} && git rev-parse HEAD" in cmd:
+            return _cp(stdout=f"{BASE_GIT}\n")
         if "import torch; print" in cmd:
             return _cp(stdout=SMOKE_STDOUT)
         if "import torch" in cmd:
@@ -158,6 +165,15 @@ class TestFastPathSkips:
 
         assert _try_clone_base_venv(backend, JOB_DIR, OLD_SRC) is False
 
+    def test_skips_when_base_torch_does_not_match_base_source(self):
+        backend = _make_backend(torch_git_version="c194562000000000000000000000000000000000")
+        assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is False
+
+        cmds = _all_cmds(backend)
+        assert any("torch.version.git_version" in c for c in cmds)
+        assert any("git rev-parse HEAD" in c for c in cmds)
+        assert not any(c.startswith("cp ") for c in cmds)
+
 
 class TestCloneSuccess:
     def test_returns_true_on_success(self):
@@ -173,6 +189,10 @@ class TestCloneSuccess:
                 return _cp(stdout=f"{OLD_SRC}\n")
             if f"realpath {WORKTREE}" in cmd:
                 return _cp(stdout=f"{NEW_SRC}\n")
+            if "torch.version.git_version" in cmd:
+                return _cp(stdout=f"{BASE_GIT}\n")
+            if f"cd {OLD_SRC} && git rev-parse HEAD" in cmd:
+                return _cp(stdout=f"{BASE_GIT}\n")
             if "import torch" in cmd and "print" not in cmd and "sysconfig" not in cmd:
                 return _cp(0)
             if "cp " in cmd:

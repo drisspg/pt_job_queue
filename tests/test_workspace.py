@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ptq.workspace import detect_cuda_version
+from ptq.workspace import detect_cuda_version, setup_workspace
 
 
 def _make_backend(stdout: str = "", returncode: int = 0) -> MagicMock:
@@ -13,6 +13,19 @@ def _make_backend(stdout: str = "", returncode: int = 0) -> MagicMock:
     result.stdout = stdout
     result.returncode = returncode
     backend.run.return_value = result
+    return backend
+
+
+def _setup_backend(existing_checkout: bool = True) -> MagicMock:
+    backend = MagicMock()
+    backend.workspace = "/workspace"
+
+    def run_side(cmd: str, check: bool = True, **kw):
+        if cmd == "test -d /workspace/pytorch/.git":
+            return MagicMock(returncode=0 if existing_checkout else 1, stdout="")
+        return MagicMock(returncode=0, stdout="")
+
+    backend.run = MagicMock(side_effect=run_side)
     return backend
 
 
@@ -51,3 +64,19 @@ class TestDetectCudaVersion:
         )
         with pytest.raises(SystemExit, match="too old"):
             detect_cuda_version(backend)
+
+
+class TestSetupWorkspace:
+    def test_existing_checkout_is_not_reset_without_build(self):
+        backend = _setup_backend()
+        setup_workspace(backend, build=False)
+
+        cmds = [call.args[0] for call in backend.run.call_args_list]
+        assert not any("git reset --hard origin/main" in cmd for cmd in cmds)
+
+    def test_existing_checkout_is_reset_with_build(self):
+        backend = _setup_backend()
+        setup_workspace(backend, build=True)
+
+        cmds = [call.args[0] for call in backend.run.call_args_list]
+        assert any("git reset --hard origin/main" in cmd for cmd in cmds)

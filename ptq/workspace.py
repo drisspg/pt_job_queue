@@ -77,7 +77,7 @@ def setup_workspace(
         if name != "pytorch" and name not in extras_set:
             continue
         profile = get_profile(name)
-        _clone_repo(backend, workspace, profile)
+        _clone_repo(backend, workspace, profile, reset=build)
 
     console.print("Installing Python 3.12 via uv...")
     backend.run("uv python install 3.12", check=False)
@@ -106,11 +106,17 @@ def setup_workspace(
     console.print("[bold green]Workspace setup complete.[/bold green]")
 
 
-def _clone_repo(backend: Backend, workspace: str, profile: RepoProfile) -> None:
+def _clone_repo(
+    backend: Backend, workspace: str, profile: RepoProfile, *, reset: bool
+) -> None:
     repo_dir = f"{workspace}/{profile.dir_name}"
     existing = backend.run(f"test -d {repo_dir}/.git", check=False)
 
     if existing.returncode == 0:
+        if not reset:
+            console.print(f"{profile.name} checkout already exists, keeping it.")
+            return
+
         console.print(f"{profile.name} checkout already exists, resetting to latest...")
         backend.run(
             f"cd {repo_dir} && git fetch origin && git reset --hard origin/main",
