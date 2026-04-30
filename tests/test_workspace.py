@@ -16,12 +16,12 @@ def _make_backend(stdout: str = "", returncode: int = 0) -> MagicMock:
     return backend
 
 
-def _setup_backend(existing_checkout: bool = True) -> MagicMock:
+def _setup_backend(workspace: str, existing_checkout: bool = True) -> MagicMock:
     backend = MagicMock()
-    backend.workspace = "/workspace"
+    backend.workspace = workspace
 
     def run_side(cmd: str, check: bool = True, **kw):
-        if cmd == "test -d /workspace/pytorch/.git":
+        if cmd == f"test -d {workspace}/pytorch/.git":
             return MagicMock(returncode=0 if existing_checkout else 1, stdout="")
         return MagicMock(returncode=0, stdout="")
 
@@ -67,15 +67,15 @@ class TestDetectCudaVersion:
 
 
 class TestSetupWorkspace:
-    def test_existing_checkout_is_not_reset_without_build(self):
-        backend = _setup_backend()
+    def test_existing_checkout_is_not_reset_without_build(self, tmp_path):
+        backend = _setup_backend(str(tmp_path))
         setup_workspace(backend, build=False)
 
         cmds = [call.args[0] for call in backend.run.call_args_list]
         assert not any("git reset --hard origin/main" in cmd for cmd in cmds)
 
-    def test_existing_checkout_is_reset_with_build(self):
-        backend = _setup_backend()
+    def test_existing_checkout_is_reset_with_build(self, tmp_path):
+        backend = _setup_backend(str(tmp_path))
         setup_workspace(backend, build=True)
 
         cmds = [call.args[0] for call in backend.run.call_args_list]

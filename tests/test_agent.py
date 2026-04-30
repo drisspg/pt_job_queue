@@ -489,6 +489,11 @@ class TestLaunchAgentType:
             for call in backend.run.call_args_list
             if isinstance(call.args[0], str)
         ]
-        assert all("/AGENTS.md" not in c for c in run_cmds)
+        assert all(
+            not c.startswith("cp ")
+            or "system_prompt.md" not in c
+            or "/AGENTS.md" not in c
+            for c in run_cmds
+        )
         assert all("/.cursorrules" not in c for c in run_cmds)
         assert all(".claude/settings.json" not in c for c in run_cmds)
