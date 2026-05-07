@@ -179,7 +179,7 @@ class TestRunValidation:
                         "default_agent": "claude",
                         "default_max_turns": 100,
                         "effective_model": staticmethod(
-                            lambda agent, model=None: model or "openai-codex/gpt-5.4"
+                            lambda agent, model=None: model or "openai-codex/gpt-5.5"
                         ),
                         "effective_thinking": staticmethod(
                             lambda agent, thinking=None: thinking or "high"
@@ -238,7 +238,7 @@ class TestRunValidation:
                     local=True,
                     workspace="/tmp/ws",
                     agent="pi",
-                    model="openai-codex/gpt-5.4",
+                    model="openai-codex/gpt-5.5",
                     thinking="high",
                 ),
             ],

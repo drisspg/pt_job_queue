@@ -31,7 +31,7 @@ class TestParse:
                 "models": {
                     "claude": {"default": "opus", "available": ["opus", "sonnet"]},
                     "codex": {"default": "o3"},
-                    "pi": {"default": "openai-codex/gpt-5.4", "thinking": "high"},
+                    "pi": {"default": "openai-codex/gpt-5.5", "thinking": "high"},
                 }
             }
         )
@@ -39,7 +39,7 @@ class TestParse:
         assert cfg.agent_models["claude"].available == ["opus", "sonnet"]
         assert cfg.agent_models["codex"].default == "o3"
         assert cfg.agent_models["codex"].available == []
-        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.4"
+        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.5"
         assert cfg.agent_models["pi"].thinking == "high"
         assert cfg.agent_models["pi"].available == []
 
@@ -108,7 +108,7 @@ class TestConfig:
         cfg = Config(
             agent_models={
                 "pi": AgentModels(
-                    available=[], default="openai-codex/gpt-5.4", thinking="high"
+                    available=[], default="openai-codex/gpt-5.5", thinking="high"
                 )
             }
         )
@@ -118,7 +118,7 @@ class TestConfig:
         cfg = Config(
             agent_models={
                 "pi": AgentModels(
-                    available=[], default="openai-codex/gpt-5.4", thinking="high"
+                    available=[], default="openai-codex/gpt-5.5", thinking="high"
                 )
             }
         )
@@ -157,7 +157,7 @@ class TestLoadConfig:
         cfg = load_config(path)
         assert path.exists()
         assert cfg.default_agent == "claude"
-        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.4"
+        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.5"
         assert cfg.agent_models["pi"].thinking == "high"
 
     def test_roundtrip(self, tmp_path):
@@ -175,7 +175,7 @@ class TestLoadConfig:
             default = "o3"
 
             [models.pi]
-            default = "openai-codex/gpt-5.4"
+            default = "openai-codex/gpt-5.5"
             thinking = "high"
             """)
         )
@@ -184,5 +184,5 @@ class TestLoadConfig:
         assert cfg.default_max_turns == 50
         assert cfg.machines == ["box-a"]
         assert cfg.agent_models["codex"].default == "o3"
-        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.4"
+        assert cfg.agent_models["pi"].default == "openai-codex/gpt-5.5"
         assert cfg.agent_models["pi"].thinking == "high"

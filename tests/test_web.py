@@ -23,8 +23,8 @@ TEST_CONFIG = Config(
         "claude": AgentModels(available=[], default="opus"),
         "codex": AgentModels(available=[], default="o3"),
         "pi": AgentModels(
-            available=["openai-codex/gpt-5.4"],
-            default="openai-codex/gpt-5.4",
+            available=["openai-codex/gpt-5.5"],
+            default="openai-codex/gpt-5.5",
             thinking="high",
         ),
     },
@@ -444,7 +444,7 @@ class TestJobActions:
                 data={
                     "message": "try pi",
                     "agent_type": "pi",
-                    "model": "openai-codex/gpt-5.4",
+                    "model": "openai-codex/gpt-5.5",
                     "thinking": "high",
                 },
                 follow_redirects=False,
@@ -542,7 +542,7 @@ class TestLaunching:
                     "target_type": "local",
                     "machine": "",
                     "agent": "pi",
-                    "model": "openai-codex/gpt-5.4",
+                    "model": "openai-codex/gpt-5.5",
                     "thinking": "high",
                     "max_turns": "100",
                 },

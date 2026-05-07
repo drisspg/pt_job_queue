@@ -118,7 +118,7 @@ ptq run --issue 174923 --machine my-gpu-box -p fix_and_verify -m "focus only on 
 uv run ptq run --issue 174923 --machine my-gpu-box --agent cursor --model gpt-5.3-codex-xhigh-fast
 
 # Use first-class thinking control when the backend supports it
-uv run ptq run --agent pi --model openai-codex/gpt-5.4 --thinking high -m "triage the repro"
+uv run ptq run --agent pi --model openai-codex/gpt-5.5 --thinking high -m "triage the repro"
 ```
 
 The agent will:
@@ -159,7 +159,7 @@ Per-agent model defaults live there too. For backends with first-class reasoning
 
 ```toml
 [models.pi]
-default = "openai-codex/gpt-5.4"
+default = "openai-codex/gpt-5.5"
 thinking = "high"
 
 [models.claude]

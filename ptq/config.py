@@ -39,7 +39,7 @@ default = "o3"
 default = "auto"
 
 [models.pi]
-default = "openai-codex/gpt-5.4"
+default = "openai-codex/gpt-5.5"
 thinking = "high"
 
 # Optional prompt presets.
@@ -420,7 +420,7 @@ _PI_LIST_MODELS_SPLIT_RE = re.compile(r"\s{2,}")
 
 _FALLBACK_MODELS: dict[str, list[str]] = {
     "claude": ["opus", "sonnet", "haiku"],
-    "pi": ["openai-codex/gpt-5.4"],
+    "pi": ["openai-codex/gpt-5.5"],
 }
 
 _EXTERNAL_CACHE_FILES: dict[str, tuple[Path, str]] = {
