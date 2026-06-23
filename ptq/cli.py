@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.console import Console
+from rich.console import Console, Group
 
 from ptq.agent import _clean, _indent, _truncate
 from ptq.agents import StreamEvent, get_agent
@@ -646,31 +646,53 @@ def _render_monitor_table(rows) -> object:
     return table
 
 
-def _render_monitor_rows(rows, *, include_all: bool) -> None:
-    """Render monitor rows plus the commands that drive Herdr and CI triage."""
+def _monitor_renderable(rows, *, include_all: bool) -> Group:
+    """Build the monitor view as one live-updatable renderable region."""
     from datetime import datetime
 
+    from rich.text import Text
+
     if not rows:
-        console.print("No PTQ PR jobs to monitor.")
-        console.print("Use [bold]uv run ptq pr JOB_ID[/bold] to create a PR first.")
+        lines = [
+            Text("No PTQ PR jobs to monitor."),
+            Text.from_markup("Use [bold]uv run ptq pr JOB_ID[/bold] to create a PR first."),
+        ]
         if not include_all:
-            console.print("Pass [bold]--all[/bold] to include jobs without PRs.")
-        return
-    console.print(_render_monitor_table(rows))
-    console.print(f"[dim]Updated {datetime.now().strftime('%H:%M:%S')}[/dim]")
-    console.print(
+            lines.append(
+                Text.from_markup("Pass [bold]--all[/bold] to include jobs without PRs.")
+            )
+        return Group(*lines)
+
+    summary = Text.from_markup(
+        f"[dim]Updated {datetime.now().strftime('%H:%M:%S')}[/dim]\n"
         "[dim]Use takeover commands as the source of truth for where Herdr job panes should start.[/dim]"
     )
-    console.print()
-    console.print("[bold]Herdr workspace entry commands[/bold]")
+
+    entry_commands = Text()
+    entry_commands.append("Herdr workspace entry commands\n", style="bold")
     for row in rows:
-        console.print(f"  [cyan]{row.job_id}[/cyan]: {row.takeover_command}")
+        entry_commands.append("  ")
+        entry_commands.append(row.job_id, style="cyan")
+        entry_commands.append(f": {row.takeover_command}\n")
+    entry_commands.rstrip()
+
+    renderables = [_render_monitor_table(rows), summary, entry_commands]
     failing_rows = [row for row in rows if row.phase == "needs fix"]
     if failing_rows:
-        console.print()
-        console.print("[bold]Failing CI triage[/bold]")
+        triage_commands = Text()
+        triage_commands.append("Failing CI triage\n", style="bold")
         for row in failing_rows:
-            console.print(f"  [cyan]{row.job_id}[/cyan]: {row.ci_triage_command}")
+            triage_commands.append("  ")
+            triage_commands.append(row.job_id, style="cyan")
+            triage_commands.append(f": {row.ci_triage_command}\n")
+        triage_commands.rstrip()
+        renderables.append(triage_commands)
+    return Group(*renderables)
+
+
+def _render_monitor_rows(rows, *, include_all: bool) -> None:
+    """Render monitor rows plus the commands that drive Herdr and CI triage."""
+    console.print(_monitor_renderable(rows, include_all=include_all))
 
 
 @app.command()
@@ -726,18 +748,35 @@ def monitor(
         )
         return
 
+    from rich.live import Live
+
     try:
-        while True:
-            console.clear()
-            _render_monitor_rows(
+        with Live(
+            _monitor_renderable(
                 collect_monitor_rows(
                     repo,
                     include_without_pr=include_all,
                     force_refresh=True,
                 ),
                 include_all=include_all,
-            )
-            time.sleep(interval)
+            ),
+            console=console,
+            refresh_per_second=4,
+            transient=False,
+            vertical_overflow="visible",
+        ) as live:
+            while True:
+                time.sleep(interval)
+                live.update(
+                    _monitor_renderable(
+                        collect_monitor_rows(
+                            repo,
+                            include_without_pr=include_all,
+                            force_refresh=True,
+                        ),
+                        include_all=include_all,
+                    )
+                )
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Stopped monitor.[/bold yellow]")
 
