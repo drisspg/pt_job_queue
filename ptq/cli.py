@@ -592,9 +592,154 @@ def list_jobs() -> None:
     console.print(
         "[dim]  ptq clean MACHINE                     # bulk clean stopped jobs[/dim]"
     )
+    console.print("[dim]  ptq monitor                           # watch PR/CI jobs[/dim]")
     console.print(
         "[dim]  ptq web                               # start web dashboard[/dim]"
     )
+
+
+def _monitor_phase_style(phase: str) -> str:
+    match phase:
+        case "agent working" | "waiting on CI":
+            return "green"
+        case "ready to merge" | "ready for PR":
+            return "yellow"
+        case "needs fix" | "needs rebase" | "needs human review":
+            return "orange3"
+        case "merged/closed":
+            return "cyan"
+        case _:
+            return "red"
+
+
+def _render_monitor_table(rows) -> object:
+    """Render the mergedog-style PR monitor table for PTQ jobs."""
+    from rich.table import Table
+
+    table = Table(
+        title="PTQ PR Monitor",
+        show_header=True,
+        header_style="bold",
+        show_lines=False,
+        pad_edge=False,
+    )
+    table.add_column("Phase")
+    table.add_column("Job")
+    table.add_column("Issue", style="cyan")
+    table.add_column("PR")
+    table.add_column("CI")
+    table.add_column("Agent")
+    table.add_column("Target")
+    table.add_column("Next action")
+
+    for row in rows:
+        table.add_row(
+            f"[{_monitor_phase_style(row.phase)}]{row.phase}[/]",
+            row.job_id,
+            row.issue,
+            row.pr_state,
+            row.ci.label,
+            f"{row.agent} r{row.runs}",
+            row.target,
+            row.next_action,
+        )
+    return table
+
+
+def _render_monitor_rows(rows, *, include_all: bool) -> None:
+    """Render monitor rows plus the commands that drive Herdr and CI triage."""
+    from datetime import datetime
+
+    if not rows:
+        console.print("No PTQ PR jobs to monitor.")
+        console.print("Use [bold]uv run ptq pr JOB_ID[/bold] to create a PR first.")
+        if not include_all:
+            console.print("Pass [bold]--all[/bold] to include jobs without PRs.")
+        return
+    console.print(_render_monitor_table(rows))
+    console.print(f"[dim]Updated {datetime.now().strftime('%H:%M:%S')}[/dim]")
+    console.print(
+        "[dim]Use takeover commands as the source of truth for where Herdr job panes should start.[/dim]"
+    )
+    console.print()
+    console.print("[bold]Herdr workspace entry commands[/bold]")
+    for row in rows:
+        console.print(f"  [cyan]{row.job_id}[/cyan]: {row.takeover_command}")
+    failing_rows = [row for row in rows if row.phase == "needs fix"]
+    if failing_rows:
+        console.print()
+        console.print("[bold]Failing CI triage[/bold]")
+        for row in failing_rows:
+            console.print(f"  [cyan]{row.job_id}[/cyan]: {row.ci_triage_command}")
+
+
+@app.command()
+def monitor(
+    watch: Annotated[
+        bool, typer.Option("--watch", "-w", help="Refresh continuously.")
+    ] = False,
+    interval: Annotated[
+        float, typer.Option(help="Refresh interval in seconds when watching.")
+    ] = 30.0,
+    include_all: Annotated[
+        bool,
+        typer.Option("--all", help="Include jobs without a recorded PR URL."),
+    ] = False,
+    refresh: Annotated[
+        bool, typer.Option(help="Bypass cached PR state for this render.")
+    ] = False,
+    herdr: Annotated[
+        bool,
+        typer.Option("--herdr", help="Open a two-pane Herdr monitor workspace."),
+    ] = False,
+) -> None:
+    """Show a mergedog-style monitor for PTQ PR jobs."""
+    from ptq.application.monitor_service import collect_monitor_rows
+
+    repo = _repo()
+
+    if herdr:
+        from ptq.application.herdr_service import open_monitor_workspace
+
+        command = f"uv run ptq monitor --watch --interval {interval:g}"
+        if include_all:
+            command += " --all"
+        try:
+            workspace = open_monitor_workspace(cwd=str(Path.cwd()), visual_command=command)
+        except RuntimeError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        console.print("[bold green]Opened PTQ monitor Herdr workspace.[/bold green]")
+        console.print(f"  workspace: {workspace.workspace_id}")
+        console.print(f"  visual pane: {workspace.visual_pane_id}")
+        console.print(f"  operator pane: {workspace.operator_pane_id}")
+        return
+
+    if not watch:
+        _render_monitor_rows(
+            collect_monitor_rows(
+                repo,
+                include_without_pr=include_all,
+                force_refresh=refresh,
+            ),
+            include_all=include_all,
+        )
+        return
+
+    try:
+        while True:
+            console.clear()
+            _render_monitor_rows(
+                collect_monitor_rows(
+                    repo,
+                    include_without_pr=include_all,
+                    force_refresh=True,
+                ),
+                include_all=include_all,
+            )
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]Stopped monitor.[/bold yellow]")
 
 
 @app.command()
@@ -676,6 +821,42 @@ def takeover(
         _handle_error(e)
     job = repo.get(job_id)
     console.print(takeover_for_job(job_id, job))
+
+
+@app.command("open")
+def open_job(
+    job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
+    no_focus: Annotated[
+        bool, typer.Option("--no-focus", help="Create the workspace without focusing it."),
+    ] = False,
+) -> None:
+    """Open an interactive Herdr workspace for a PTQ job."""
+    from ptq.application.herdr_service import open_job_workspace
+    from ptq.takeover import for_job as takeover_for_job
+
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+    except PtqError as e:
+        _handle_error(e)
+    job = repo.get(job_id)
+    label = f"ptq #{job.issue}" if job.issue is not None else f"ptq {job.name or job_id}"
+    takeover_command = takeover_for_job(job_id, job)
+    try:
+        workspace = open_job_workspace(
+            job_id,
+            takeover_command,
+            label=label,
+            focus=not no_focus,
+        )
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    console.print("[bold green]Opened PTQ job Herdr workspace.[/bold green]")
+    console.print(f"  job: {job_id}")
+    console.print(f"  workspace: {workspace.workspace_id}")
+    console.print(f"  pane: {workspace.pane_id}")
+    console.print(f"  entry: {takeover_command}")
 
 
 @app.command()

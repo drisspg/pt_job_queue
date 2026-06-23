@@ -4,3 +4,4 @@ dist/
 .venv/
 .claude/
 .cursorrules
+agent_space/

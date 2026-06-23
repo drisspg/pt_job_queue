@@ -216,9 +216,29 @@ uv run ptq peek 174923 --log 30
 
 # List all jobs with running/stopped status
 uv run ptq list
+
+# Watch PR jobs and CI follow-up status
+uv run ptq monitor
+uv run ptq monitor --watch
+
+# Open the monitor in a two-pane Herdr workspace
+uv run ptq monitor --herdr
+
+# Open an interactive Herdr workspace for a job
+uv run ptq open JOB_ID
 ```
 
 The agent maintains a `worklog.md` with entries after each significant step, so you can check progress without streaming the full output.
+
+`ptq monitor` is a mergedog-style PR monitor for PTQ-created PR jobs and stopped jobs that look ready for PR creation. It shows one row per relevant job, classifies the next phase, prints `ptq takeover JOB_ID`-equivalent shell-entry commands for opening Herdr workspaces, and points failing CI rows at the local triage helper:
+
+```bash
+~/dotfiles/scripts/github_ci_triage PR_URL
+```
+
+Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
+
+The monitor operator skill lives at `.agents/skills/monitor/SKILL.md`, and the repo prompt template `.pi/prompts/monitor.md` provides `/monitor` in interactive Pi. In the operator pane, use `/monitor` or start Pi with `--skill .agents/skills/monitor` so it uses the PTQ monitor workflow, CI triage helper, and optional HUD checks.
 
 ### 6. View results
 
