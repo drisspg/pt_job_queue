@@ -90,10 +90,13 @@ Then summarize by priority:
 After `uv run ptq open JOB_ID`, the job workspace should be grounded by:
 
 ```bash
+prime.md
 PTQ_CONTEXT.md
 worklog.md
 pytorch/AGENTS.md
 ```
+
+`prime.md` is the manual Pi handoff file. When opening a fresh Pi in a job workspace, start it from the job directory and load `@prime.md`; that file tells the subagent what context files to read, how to work, where to edit, and how to keep `worklog.md`/`report.md` current.
 
 Actual code edits, test runs, CI fix commits, PR creation, and cleanup should happen in the job workspace or via explicit PTQ commands, not silently in the driver pane.
 
@@ -114,5 +117,5 @@ Done:
 - Opened workspace WORKSPACE_ID / pane PANE_ID.
 
 Next:
-- In the job workspace, read PTQ_CONTEXT.md and worklog.md, then proceed interactively.
+- In the job workspace, open Pi with `@prime.md`, then proceed interactively.
 ```

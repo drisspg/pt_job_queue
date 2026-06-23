@@ -351,6 +351,7 @@ def run(
         console.print()
         console.print(f"[bold green]Launched {launched_id}.[/bold green]")
         console.print(f"  Take over: {takeover_for_job(launched_id, job)}")
+        console.print("  Manual Pi: @prime.md")
         console.print(f"  Results:   ptq results {launched_id}")
 
 
@@ -907,6 +908,7 @@ def open_job(
     console.print(f"  workspace: {workspace.workspace_id}")
     console.print(f"  pane: {workspace.pane_id}")
     console.print(f"  entry: {takeover_command}")
+    console.print("  prime: @prime.md")
 
 
 @app.command()
@@ -1192,6 +1194,7 @@ def worktree(
         soft_wrap=True,
     )
     console.print(f"  Shortcut: ptq takeover {job_id}")
+    console.print("  Manual Pi: open from the job directory with @prime.md")
     console.print(f"\n  To launch an agent: ptq run {name} -m 'your task'")
 
 

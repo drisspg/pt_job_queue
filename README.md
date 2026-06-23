@@ -244,6 +244,8 @@ gh pr comment PR_URL --body '@pytorchbot merge -i'
 
 Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
 
+Each PTQ job also gets a `prime.md` handoff file in the job directory. For a fresh manual Pi in an opened job workspace, start from the job directory and load `@prime.md`; it points the subagent at `PTQ_CONTEXT.md`, `system_prompt.md`, `worklog.md`, `report.md`, and the source repo `AGENTS.md` before editing.
+
 The main driver skill lives at `.agents/skills/driver/SKILL.md`, and `.pi/prompts/driver.md` provides `/driver` in interactive Pi. Use `/driver` in your primary Herdr driver pane to coordinate PTQ workspaces.
 
 The monitor operator skill lives at `.agents/skills/monitor/SKILL.md`, and `.pi/prompts/monitor.md` provides `/monitor` in interactive Pi. In the operator pane, use `/monitor` or start Pi with `--skill .agents/skills/monitor` so it uses the PTQ monitor workflow, CI triage helper, and optional HUD checks.

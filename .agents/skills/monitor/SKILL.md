@@ -55,7 +55,7 @@ uv run ptq open JOB_ID
 
 `ptq open` uses `uv run ptq takeover JOB_ID` as the source of truth for the Herdr workspace entry command. Do not reconstruct job/worktree paths by hand when `ptq takeover` is available.
 
-Inside a job workspace, the job agent should read:
+Inside a job workspace, a fresh manual Pi should load `@prime.md`. That file primes the subagent to read:
 
 ```bash
 PTQ_CONTEXT.md

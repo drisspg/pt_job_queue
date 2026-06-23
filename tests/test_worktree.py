@@ -214,9 +214,11 @@ class TestWorktreeCommand:
             if isinstance(call.args[0], str)
         ]
         assert any("PTQ_CONTEXT.md" in c for c in run_cmds)
+        assert any("prime.md" in c for c in run_cmds)
         assert any("/jobs/20260217-pytorch-adhoc-" in c and "/AGENTS.md" in c for c in run_cmds)
         assert any("/jobs/20260217-pytorch-adhoc-" in c and "/CLAUDE.md" in c for c in run_cmds)
         assert any("/pytorch/agent_space/PTQ_CONTEXT.md" in c for c in run_cmds)
+        assert any("/pytorch/agent_space/prime.md" in c for c in run_cmds)
 
     def test_record_created_before_worktree(self, tmp_path, frozen_date):
         repo = _make_repo(tmp_path)
