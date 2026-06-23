@@ -35,7 +35,8 @@
 
 # Herdr/Pi Driver Workflow
 
-- Treat the user's current Pi session as the main driver/orchestrator. When asked to create, open, or continue a PTQ workspace, prefer creating or focusing a separate Herdr workspace for that PTQ job instead of keeping all work in the driver pane.
+- Treat the user's current Pi session as the main driver/orchestrator. The repo-local driver skill lives at `.agents/skills/driver/SKILL.md`; interactive Pi can use the `/driver` prompt template from `.pi/prompts/driver.md`, and command-line Pi can use `--skill .agents/skills/driver`.
+- When asked to create, open, or continue a PTQ workspace, prefer creating or focusing a separate Herdr workspace for that PTQ job instead of keeping all work in the driver pane.
 - Before creating a workspace, run `uv run ptq list` and reuse an existing matching job when present.
 - For a new fast local PyTorch issue job, use the fast PTQ path, then open the job in Herdr: `ISSUE=123456; uv run ptq run --issue "$ISSUE" --local --agent pi --no-follow; uv run ptq open "$ISSUE"`.
 - After PTQ creates or identifies the job, run `uv run ptq takeover JOB_ID` and treat its output as the authoritative shell-entry command for where the Herdr job workspace should go. Do not reconstruct worktree paths by hand when the takeover command is available.

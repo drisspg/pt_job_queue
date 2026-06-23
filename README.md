@@ -238,7 +238,9 @@ The agent maintains a `worklog.md` with entries after each significant step, so 
 
 Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
 
-The monitor operator skill lives at `.agents/skills/monitor/SKILL.md`, and the repo prompt template `.pi/prompts/monitor.md` provides `/monitor` in interactive Pi. In the operator pane, use `/monitor` or start Pi with `--skill .agents/skills/monitor` so it uses the PTQ monitor workflow, CI triage helper, and optional HUD checks.
+The main driver skill lives at `.agents/skills/driver/SKILL.md`, and `.pi/prompts/driver.md` provides `/driver` in interactive Pi. Use `/driver` in your primary Herdr driver pane to coordinate PTQ workspaces.
+
+The monitor operator skill lives at `.agents/skills/monitor/SKILL.md`, and `.pi/prompts/monitor.md` provides `/monitor` in interactive Pi. In the operator pane, use `/monitor` or start Pi with `--skill .agents/skills/monitor` so it uses the PTQ monitor workflow, CI triage helper, and optional HUD checks.
 
 ### 6. View results
 
