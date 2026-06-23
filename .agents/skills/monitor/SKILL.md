@@ -33,6 +33,8 @@ uv run ptq monitor --watch
 
 For each row:
 
+- `landing`: the PR is actively being merged; keep it under waiting/monitoring even if the CI column is red.
+- `unrelated CI`: Dr. CI/HUD indicates red checks are unrelated, flaky, or broken trunk. Suggest `gh pr comment PR_URL --body '@pytorchbot merge -i'`, but do not post it without user approval.
 - `needs fix`: treat this as a provisional `open PR + failing CI` signal only; triage CI before suggesting fixes, and state whether failures appear related, unrelated, flaky, infra, or uncertain.
 - `adhoc` issue rows with `open` PRs and failed CI: assume this is a high-risk false-positive queue label until proven otherwise. Read `uv run ptq peek JOB_ID` to recover the real issue/worklog context, then compare failing checks against the worklog's changed area before calling it actionable.
 - `ready for PR`: summarize why it appears ready and suggest `uv run ptq pr JOB_ID`.
@@ -60,6 +62,18 @@ PTQ_CONTEXT.md
 worklog.md
 pytorch/AGENTS.md
 ```
+
+## Landing and red-CI decision flow
+
+Use this order when a PR is open and CI is red:
+
+1. If the PR is actively landing, report `landing` and do not triage unless landing stops. Signals include the monitor's `landing` phase, a `merging` label, or a recent `pytorchmergebot` "Merge started" comment.
+2. If landing stopped or the PR is red but not landing, do quick triage before suggesting code fixes.
+3. If Dr. CI/HUD says the failures are unrelated, flaky, or broken trunk, report `unrelated CI` and propose `gh pr comment PR_URL --body '@pytorchbot merge -i'`.
+4. If the evidence is unclear, report `needs human review` and ask whether to inspect deeper or retry landing.
+5. Only keep `needs fix` when the failure appears related to the PR's changed subsystem or the triage evidence shows a real regression.
+
+Do not post `@pytorchbot merge -i`, rerun CI, push changes, or open a fixer workspace without user approval.
 
 ## Failing CI triage
 

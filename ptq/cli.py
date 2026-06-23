@@ -600,9 +600,9 @@ def list_jobs() -> None:
 
 def _monitor_phase_style(phase: str) -> str:
     match phase:
-        case "agent working" | "waiting on CI":
+        case "agent working" | "waiting on CI" | "landing":
             return "green"
-        case "ready to merge" | "ready for PR":
+        case "ready to merge" | "ready for PR" | "unrelated CI":
             return "yellow"
         case "needs fix" | "needs rebase" | "needs human review":
             return "orange3"
@@ -687,6 +687,17 @@ def _monitor_renderable(rows, *, include_all: bool) -> Group:
             triage_commands.append(f": {row.ci_triage_command}\n")
         triage_commands.rstrip()
         renderables.append(triage_commands)
+
+    merge_ignore_rows = [row for row in rows if row.phase == "unrelated CI"]
+    if merge_ignore_rows:
+        merge_ignore_commands = Text()
+        merge_ignore_commands.append("PyTorchBot merge-ignore commands\n", style="bold")
+        for row in merge_ignore_rows:
+            merge_ignore_commands.append("  ")
+            merge_ignore_commands.append(row.job_id, style="cyan")
+            merge_ignore_commands.append(f": {row.merge_ignore_command}\n")
+        merge_ignore_commands.rstrip()
+        renderables.append(merge_ignore_commands)
     return Group(*renderables)
 
 

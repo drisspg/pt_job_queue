@@ -230,10 +230,16 @@ uv run ptq open JOB_ID
 
 The agent maintains a `worklog.md` with entries after each significant step, so you can check progress without streaming the full output.
 
-`ptq monitor` is a mergedog-style PR monitor for PTQ-created PR jobs and stopped jobs that look ready for PR creation. It shows one row per relevant job, classifies the next phase, prints `ptq takeover JOB_ID`-equivalent shell-entry commands for opening Herdr workspaces, and points failing CI rows at the local triage helper:
+`ptq monitor` is a mergedog-style PR monitor for PTQ-created PR jobs and stopped jobs that look ready for PR creation. It shows one row per relevant job, classifies the next phase, prints `ptq takeover JOB_ID`-equivalent shell-entry commands for opening Herdr workspaces, marks actively merging PRs as `landing` even if checks are red, and points failing CI rows at the local triage helper:
 
 ```bash
 ~/dotfiles/scripts/github_ci_triage PR_URL
+```
+
+When Dr. CI clearly reports only unrelated, flaky, or broken-trunk failures, the monitor prints a PyTorchBot merge-ignore command instead:
+
+```bash
+gh pr comment PR_URL --body '@pytorchbot merge -i'
 ```
 
 Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
