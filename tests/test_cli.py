@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 
 from ptq.cli import app
-from ptq.domain.models import JobRecord, RebaseInfo, RebaseState
+from ptq.domain.models import JobRecord, PRResult, RebaseInfo, RebaseState
 from ptq.infrastructure.job_repository import JobRepository
 
 runner = CliRunner()
@@ -256,6 +256,64 @@ class TestRunValidation:
         request = mock_launch.call_args.args[2]
         assert request.agent_type == "pi"
         assert request.thinking == "high"
+
+
+class TestPrCommand:
+    def test_reuses_saved_human_note_when_note_omitted(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="job-with-pr",
+                    issue=187801,
+                    local=True,
+                    workspace="/tmp/ws",
+                    human_note="Saved reviewer note",
+                )
+            ],
+        )
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch("ptq.application.pr_service.create_pr") as mock_create_pr,
+        ):
+            mock_create_pr.return_value = PRResult(
+                url="https://github.com/pytorch/pytorch/pull/187966",
+                branch="ptq/187801",
+            )
+            result = runner.invoke(app, ["pr", "job-with-pr"])
+
+        assert result.exit_code == 0, result.output
+        assert "Reusing saved human note" in result.output
+        assert mock_create_pr.call_args.kwargs["human_note"] == "Saved reviewer note"
+
+    def test_note_option_overrides_saved_human_note(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="job-with-pr",
+                    issue=187801,
+                    local=True,
+                    workspace="/tmp/ws",
+                    human_note="Saved reviewer note",
+                )
+            ],
+        )
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch("ptq.application.pr_service.create_pr") as mock_create_pr,
+        ):
+            mock_create_pr.return_value = PRResult(
+                url="https://github.com/pytorch/pytorch/pull/187966",
+                branch="ptq/187801",
+            )
+            result = runner.invoke(app, ["pr", "job-with-pr", "-n", "Fresh note"])
+
+        assert result.exit_code == 0, result.output
+        assert "Reusing saved human note" not in result.output
+        assert mock_create_pr.call_args.kwargs["human_note"] == "Fresh note"
 
 
 def _make_clean_repo(tmp_path: Path) -> JobRepository:

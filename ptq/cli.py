@@ -980,6 +980,12 @@ def pr(
         _handle_error(e)
 
     if not note:
+        saved_note = repo.get(job_id).human_note
+        if saved_note:
+            note = saved_note
+            console.print("[dim]Reusing saved human note.[/dim]")
+
+    if not note:
         import os
         import tempfile
 
