@@ -6,9 +6,10 @@
 
 # Common PTQ Commands
 
-- List jobs and named worktrees: `uv run ptq list`
-- Create a local named PyTorch worktree with a ready venv: `uv run ptq worktree NAME --local -v`
-- Create one on a remote machine: `uv run ptq worktree NAME --machine MACHINE -v`
+- List jobs and named worktrees before creating anything new: `uv run ptq list`
+- For a new PyTorch issue, use an issue-scoped workspace and then take it over: `ISSUE=143260; WS="$HOME/.ptq_workspaces/pytorch-$ISSUE"; uv run ptq setup --local --workspace "$WS" --build; uv run ptq run --issue "$ISSUE" --local --workspace "$WS" --agent pi --no-follow; uv run ptq takeover "$ISSUE"`
+- Create a local named PyTorch worktree with a ready venv: `uv run ptq worktree NAME --local`
+- Create one on a remote machine: `uv run ptq worktree NAME --machine MACHINE`
 - Launch an agent in a named worktree: `uv run ptq run NAME -m 'task message' --agent pi`
 - Follow up on an existing job with more instructions: `uv run ptq run JOB_ID -m 'follow-up message' --agent pi`
 - Peek progress/worklog: `uv run ptq peek JOB_ID`
@@ -21,6 +22,9 @@
 
 # Worktree Layout Notes
 
-- PTQ-managed worktrees live under `~/.ptq_workspace/jobs/<job-id>/<repo-dir>` and have a per-job venv at `~/.ptq_workspace/jobs/<job-id>/.venv`.
-- Raw PyTorch worktrees directly under `~/.ptq_workspace/<name>` are not PTQ-managed unless they are also registered in `~/.ptq/jobs.json`.
+- PTQ-managed worktrees live under `<workspace>/jobs/<job-id>/<repo-dir>` and have a per-job venv at `<workspace>/jobs/<job-id>/.venv`.
+- For new PyTorch issues, prefer a fresh issue-scoped workspace under `~/.ptq_workspaces/pytorch-<issue>` and enter it via `uv run ptq takeover JOB_ID` after PTQ records the job.
+- Reuse existing issue jobs with `uv run ptq takeover JOB_ID`; do not create a second checkout just to inspect or continue work.
+- Do not pass `-v/--verbose` to routine `ptq worktree` commands. It only streams provisioning output and can hide an accidental fallback build behind a wall of logs.
+- Raw PyTorch worktrees directly under a workspace root are not PTQ-managed unless they are also registered in `~/.ptq/jobs.json`.
 - Before deleting or recreating any worktree, check for uncommitted work with `git -C PATH status --short`.

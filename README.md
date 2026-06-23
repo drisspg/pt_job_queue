@@ -18,19 +18,40 @@ uv run --extra dev pytest
 uv run ptq web
 ```
 
-### UBER SPEED MODE GETING STARTED
-Assumes you have uv installed otherwise: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+### Uber speed mode getting started
+
+Assumes you have uv installed; otherwise run `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
 ```bash
 git clone git@github.com:drisspg/pt_job_queue.git
 
-# This will take a second
+# This is the one intentional local PyTorch build for the seed workspace.
 uv run ptq setup --local --build
 uv run ptq run -m "tell me a story" --agent codex
 ```
 
+### New issue isolation workflow
 
+For new PyTorch issues, prefer an issue-scoped workspace instead of reusing the shared local seed workspace. This keeps ghstack/rebase/build work for one issue from mutating generated ignored files that another issue's fast-path provisioning expects to match.
 
+```bash
+ISSUE=143260
+WS="$HOME/.ptq_workspaces/pytorch-$ISSUE"
+uv run ptq setup --local --workspace "$WS" --build
+uv run ptq run --issue "$ISSUE" --local --workspace "$WS" --agent pi --no-follow
+uv run ptq takeover "$ISSUE"
+```
+
+Use `--build` intentionally for a fresh isolated PyTorch workspace: it creates the built base venv that later worktree provisioning relies on for the fast clone path. Do not let an unprepared or mismatched workspace discover that problem by falling back during `ptq worktree`.
+
+If the issue job/worktree already exists, skip setup and worktree creation; enter the recorded workspace instead:
+
+```bash
+uv run ptq list
+uv run ptq takeover JOB_ID
+```
+
+`ptq takeover` reads the workspace from the job record, so you do not repeat `--workspace` there.
 
 ## Usage
 
@@ -76,11 +97,13 @@ uv run ptq worktree flex-attn --machine my-gpu-box
 # Locally (default when no --machine)
 uv run ptq worktree my-fix --local
 
-# With verbose build output
+# Only when debugging provisioning output
 uv run ptq worktree stride-fix --machine my-gpu-box -v
 ```
 
-Creates a PyTorch git worktree with a ready-to-use venv, without launching an agent. Useful when you want to work in the worktree yourself or defer agent launch. Run `ptq setup ...` first — `worktree` assumes the workspace already exists. The command prints the shell command to enter the worktree.
+Creates a PyTorch git worktree with a ready-to-use venv, without launching an agent. Useful when you want to work in the worktree yourself or defer agent launch. Run `ptq setup ...` first — `worktree` assumes the workspace already exists and has a compatible built base venv. The command prints the shell command to enter the worktree.
+
+Before creating a new worktree, run `uv run ptq list`; if a job or named worktree already exists for the issue, use `uv run ptq takeover JOB_ID` instead. `-v/--verbose` only streams provisioning output. It does not make worktree creation faster and should not be part of the default new-issue path.
 
 Later, launch an agent in the same worktree by name:
 

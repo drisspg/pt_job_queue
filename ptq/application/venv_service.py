@@ -186,13 +186,14 @@ def _try_clone_base_venv(
             progress(f"fast-path bail: rsync failed (rc={r.returncode})")
             return _bail()
 
-    # rsync --link-dest hardlinks .so files to the base workspace.  A later
-    # rebuild.sh (pip install -e .) may skip overwriting them if setuptools
-    # sees matching size/mtime, leaving the job on stale native code.
-    # Break hardlinks now so rebuilds always produce independent copies.
+    # rsync --link-dest hardlinks copied artifacts to the base workspace. Later
+    # rebuilds can mutate generated version metadata or leave stale native code,
+    # so detach files that are expected to differ per checkout.
     backend.run(
-        f"find {new_src}/torch -name '*.so' -links +1 "
-        f"-exec cp --remove-destination {{}} {{}}.tmp \\; "
+        f"find {new_src}/torch "
+        f"\\( -name '*.so' -o -path '{new_src}/torch/version.py' "
+        f"-o -path '{new_src}/torch/headeronly/version.h' \\) "
+        f"-links +1 -exec cp --remove-destination {{}} {{}}.tmp \\; "
         f"-exec mv -f {{}}.tmp {{}} \\;",
         check=False,
     )

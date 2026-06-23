@@ -127,7 +127,7 @@ class TestEditableInstallRewrite:
 
 
 class TestHardlinkBreaking:
-    def test_breaks_so_hardlinks_after_rsync(self):
+    def test_breaks_mutable_artifact_hardlinks_after_rsync(self):
         backend = _make_backend()
         _try_clone_base_venv(backend, JOB_DIR, WORKTREE)
         cmds = _all_cmds(backend)
@@ -136,6 +136,8 @@ class TestHardlinkBreaking:
         assert len(find_cmds) == 1
         cmd = find_cmds[0]
         assert f"{NEW_SRC}/torch" in cmd
+        assert f"{NEW_SRC}/torch/version.py" in cmd
+        assert f"{NEW_SRC}/torch/headeronly/version.h" in cmd
         assert "--remove-destination" in cmd
 
         rsync_idx = next(i for i, c in enumerate(cmds) if "rsync" in c)
