@@ -172,6 +172,67 @@ def test_collect_monitor_rows_suggests_merge_ignore_for_obvious_unrelated_ci(tmp
     )
 
 
+def test_collect_monitor_rows_keeps_new_failures_actionable_with_unrelated_ci(tmp_path):
+    repo = _repo(
+        tmp_path,
+        [
+            JobRecord(
+                job_id="job-new-failures",
+                issue=127,
+                local=True,
+                workspace="/tmp/ws",
+                agent="pi",
+                pr_url="https://github.com/pytorch/pytorch/pull/127",
+            )
+        ],
+    )
+    backend = MagicMock()
+    drci_comment = (
+        "<!-- drci-comment-start -->\n"
+        "## :x: 11 New Failures, 27 Pending, 5 Unrelated Failures\n"
+        "<details open><summary><b>NEW FAILURES</b></summary></details>\n"
+        "<details><summary><b>FLAKY</b></summary></details>\n"
+        "<details><summary><b>BROKEN TRUNK</b></summary></details>"
+    )
+
+    def run(command, check=False):
+        if "gh pr checks" in command:
+            return MagicMock(
+                returncode=8,
+                stdout='[{"bucket":"fail","name":"linux test","state":"FAILURE"}]',
+            )
+        if "gh pr view" in command:
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "labels": [],
+                        "mergeStateStatus": "BLOCKED",
+                        "comments": [
+                            {
+                                "author": {"login": "pytorch-bot"},
+                                "body": drci_comment,
+                            }
+                        ],
+                    }
+                ),
+            )
+        return MagicMock(returncode=0, stdout="")
+
+    backend.run.side_effect = run
+
+    with (
+        patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
+        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
+        patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
+    ):
+        rows = collect_monitor_rows(repo)
+
+    assert len(rows) == 1
+    assert rows[0].phase == "needs fix"
+    assert rows[0].next_action == "triage failing CI"
+
+
 def test_collect_monitor_rows_parses_checks_from_nonzero_gh_exit(tmp_path):
     repo = _repo(
         tmp_path,

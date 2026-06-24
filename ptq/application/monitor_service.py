@@ -115,11 +115,14 @@ def latest_drci_comment(comments: list[dict]) -> str:
     return ""
 
 
+DRCI_NEW_FAILURE_MARKERS = ("<b>NEW FAILURE</b>", "<b>NEW FAILURES</b>")
+
+
 def drci_reports_obvious_unrelated_failures(body: str) -> bool:
     """Classify red CI as skip-worthy only when Dr. CI reports no new failures."""
     if not body or "## :x:" not in body:
         return False
-    return "<b>NEW FAILURE</b>" not in body and any(
+    return not drci_reports_new_failures(body) and any(
         marker in body
         for marker in (
             "Unrelated Failure",
@@ -132,7 +135,7 @@ def drci_reports_obvious_unrelated_failures(body: str) -> bool:
 
 def drci_reports_new_failures(body: str) -> bool:
     """Detect Dr. CI's explicit new-failure bucket for human triage."""
-    return "<b>NEW FAILURE</b>" in body
+    return any(marker in body for marker in DRCI_NEW_FAILURE_MARKERS)
 
 
 def summarize_pr_signals(job: JobRecord) -> PRSignals:
