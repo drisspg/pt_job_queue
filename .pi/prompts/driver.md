@@ -6,7 +6,16 @@ Load and follow the repo-local driver skill at `.agents/skills/driver/SKILL.md`.
 
 User driver request: $ARGUMENTS
 
-Start by reconstructing state with:
+If running inside Herdr, rename the current Herdr workspace/namespace to `ptq driver` first:
+
+```bash
+if [ -n "${HERDR_PANE_ID:-}" ]; then
+  WORKSPACE_ID="$(herdr pane get "$HERDR_PANE_ID" | python -c 'import json, sys; print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')"
+  herdr workspace rename "$WORKSPACE_ID" "ptq driver"
+fi
+```
+
+Then reconstruct state with:
 
 ```bash
 uv run ptq list

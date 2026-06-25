@@ -6,7 +6,16 @@ Load and follow the repo-local monitor skill at `.agents/skills/monitor/SKILL.md
 
 User monitor request: $ARGUMENTS
 
-Start by running:
+If running inside Herdr, rename the current Herdr workspace/namespace to `ptq monitor` first:
+
+```bash
+if [ -n "${HERDR_PANE_ID:-}" ]; then
+  WORKSPACE_ID="$(herdr pane get "$HERDR_PANE_ID" | python -c 'import json, sys; print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')"
+  herdr workspace rename "$WORKSPACE_ID" "ptq monitor"
+fi
+```
+
+Then run:
 
 ```bash
 uv run ptq monitor

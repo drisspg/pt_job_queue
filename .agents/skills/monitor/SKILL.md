@@ -19,6 +19,15 @@ You are the interactive PTQ monitor operator. Stay in `/home/drisspg/meta/pt_job
 
 ## Monitor loop
 
+If running inside Herdr, rename the current Herdr workspace/namespace to `ptq monitor` before monitoring:
+
+```bash
+if [ -n "${HERDR_PANE_ID:-}" ]; then
+  WORKSPACE_ID="$(herdr pane get "$HERDR_PANE_ID" | python -c 'import json, sys; print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')"
+  herdr workspace rename "$WORKSPACE_ID" "ptq monitor"
+fi
+```
+
 Run this for the current snapshot:
 
 ```bash

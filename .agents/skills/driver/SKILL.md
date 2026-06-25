@@ -17,7 +17,16 @@ You are the user's main PTQ driver/orchestrator. Stay in `/home/drisspg/meta/pt_
 
 ## First checks
 
-Before creating or opening workspaces, reconstruct state:
+If running inside Herdr, rename the current Herdr workspace/namespace to `ptq driver` before creating or opening workspaces:
+
+```bash
+if [ -n "${HERDR_PANE_ID:-}" ]; then
+  WORKSPACE_ID="$(herdr pane get "$HERDR_PANE_ID" | python -c 'import json, sys; print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')"
+  herdr workspace rename "$WORKSPACE_ID" "ptq driver"
+fi
+```
+
+Then reconstruct state:
 
 ```bash
 uv run ptq list
