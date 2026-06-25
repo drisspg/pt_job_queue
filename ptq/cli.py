@@ -774,8 +774,9 @@ def monitor(
             ),
             console=console,
             refresh_per_second=4,
+            screen=True,
             transient=False,
-            vertical_overflow="visible",
+            vertical_overflow="ellipsis",
         ) as live:
             while True:
                 time.sleep(interval)
@@ -787,7 +788,8 @@ def monitor(
                             force_refresh=True,
                         ),
                         include_all=include_all,
-                    )
+                    ),
+                    refresh=True,
                 )
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Stopped monitor.[/bold yellow]")

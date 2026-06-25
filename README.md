@@ -242,7 +242,7 @@ When Dr. CI clearly reports only unrelated, flaky, or broken-trunk failures, the
 gh pr comment PR_URL --body '@pytorchbot merge -i'
 ```
 
-Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
+Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq monitor --watch` uses Rich's alternate-screen live view so resizing a Herdr pane or terminal redraws cleanly instead of leaving wrapped table fragments in scrollback. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
 
 Each PTQ job also gets a `prime.md` handoff file in the job directory. For a fresh manual Pi in an opened job workspace, start from the job directory and load `@prime.md`; it points the subagent at `PTQ_CONTEXT.md`, `system_prompt.md`, `worklog.md`, `report.md`, and the source repo `AGENTS.md` before editing.
 

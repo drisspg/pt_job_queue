@@ -405,6 +405,25 @@ def test_monitor_cli_prints_merge_ignore_command_for_unrelated_ci(tmp_path):
     assert "@pytorchbot merge -i" in result.output
 
 
+def test_monitor_watch_uses_resize_safe_live_screen(tmp_path):
+    repo = _repo(tmp_path, [])
+    live_context = MagicMock()
+    live_context.__enter__.return_value = MagicMock()
+    live_context.__exit__.return_value = False
+
+    with (
+        patch("ptq.cli._repo", return_value=repo),
+        patch("ptq.application.monitor_service.collect_monitor_rows", return_value=[]),
+        patch("rich.live.Live", return_value=live_context) as live_cls,
+        patch("ptq.cli.time.sleep", side_effect=KeyboardInterrupt),
+    ):
+        result = runner.invoke(app, ["monitor", "--watch"])
+
+    assert result.exit_code == 0, result.output
+    assert live_cls.call_args.kwargs["screen"] is True
+    assert live_cls.call_args.kwargs["vertical_overflow"] == "ellipsis"
+
+
 def test_monitor_cli_handles_no_pr_jobs(tmp_path):
     repo = _repo(tmp_path, [])
     with patch("ptq.cli._repo", return_value=repo):
