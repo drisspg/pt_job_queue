@@ -795,6 +795,107 @@ def monitor(
         console.print("\n[bold yellow]Stopped monitor.[/bold yellow]")
 
 
+def _render_supervisor_verdicts(verdicts, *, include_prompts: bool) -> None:
+    """Render supervisor verdicts grouped by operator action."""
+    from rich.markdown import Markdown
+    from rich.table import Table
+
+    if not verdicts:
+        console.print("[green]No PTQ jobs need supervisor attention.[/green]")
+        return
+
+    table = Table(title="PTQ CI Supervisor", show_header=True, header_style="bold")
+    table.add_column("Status")
+    table.add_column("Job")
+    table.add_column("Monitor phase")
+    table.add_column("PR")
+    table.add_column("Summary")
+    table.add_column("Suggested action")
+    for verdict in verdicts:
+        table.add_row(
+            verdict.status,
+            verdict.job_id,
+            verdict.phase,
+            verdict.pr_url or "-",
+            verdict.summary,
+            verdict.suggested_action,
+        )
+    console.print(table)
+
+    evidence_lines = []
+    for verdict in verdicts:
+        if verdict.evidence:
+            evidence_lines.append(
+                f"- {verdict.job_id}: " + ", ".join(verdict.evidence)
+            )
+    if evidence_lines:
+        console.print("[bold]Evidence[/bold]")
+        console.print("\n".join(evidence_lines))
+
+    if include_prompts:
+        for verdict in verdicts:
+            if verdict.phase in {"needs fix", "unrelated CI"}:
+                console.print(
+                    Markdown(
+                        f"### Worker prompt for {verdict.job_id}\n"
+                        f"```text\n{verdict.worker_prompt}\n```"
+                    )
+                )
+
+
+@app.command()
+def supervise(
+    watch: Annotated[
+        bool, typer.Option("--watch", "-w", help="Refresh continuously.")
+    ] = False,
+    interval: Annotated[
+        float, typer.Option(help="Refresh interval in seconds when watching.")
+    ] = 300.0,
+    include_all: Annotated[
+        bool,
+        typer.Option("--all", help="Include jobs without a recorded PR URL."),
+    ] = False,
+    refresh: Annotated[
+        bool, typer.Option(help="Bypass cached PR state for this render."),
+    ] = True,
+    no_triage: Annotated[
+        bool, typer.Option("--no-triage", help="Skip github_ci_triage calls."),
+    ] = False,
+    prompts: Annotated[
+        bool, typer.Option("--prompts", help="Print worker triage prompts."),
+    ] = False,
+) -> None:
+    """Run a read-only CI supervisor over PTQ monitor rows."""
+    from ptq.application.supervisor_service import collect_supervisor_verdicts
+
+    repo = _repo()
+    output_root = Path("agent_space/supervisor")
+
+    def render_once() -> None:
+        _render_supervisor_verdicts(
+            collect_supervisor_verdicts(
+                repo,
+                include_without_pr=include_all,
+                force_refresh=refresh,
+                run_triage=not no_triage,
+                output_root=output_root,
+            ),
+            include_prompts=prompts,
+        )
+
+    if not watch:
+        render_once()
+        return
+
+    try:
+        while True:
+            console.clear()
+            render_once()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]Stopped supervisor.[/bold yellow]")
+
+
 @app.command()
 def peek(
     job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],

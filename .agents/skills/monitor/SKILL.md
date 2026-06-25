@@ -40,6 +40,14 @@ Use this for a visual watch pane:
 uv run ptq monitor --watch
 ```
 
+Use the read-only supervisor layer when failing CI rows are present or when the user asks what action to take:
+
+```bash
+uv run ptq supervise --prompts
+```
+
+`ptq supervise` fetches the latest Dr. CI comment, runs `~/dotfiles/scripts/github_ci_triage PR_URL`, saves transcripts under `agent_space/supervisor/JOB_ID/`, and classifies rows as `needs fix`, `merge-ignore candidate`, or `needs human review`. Use `uv run ptq supervise --no-triage` for a quick/offline render that does not call the triage helper.
+
 For each row:
 
 - `landing`: the PR is actively being merged; keep it under waiting/monitoring even if the CI column is red.
@@ -90,13 +98,19 @@ Do not post `@pytorchbot merge -i`, rerun CI, push changes, or open a fixer work
 
 Common false-positive pattern: an `adhoc` row such as `20260622-pytorch-adhoc-73da6c / adhoc / open / fail N / claude r0 / local` can be an issue-derived PR whose monitor row lost the issue context. For these, start from `uv run ptq peek JOB_ID` and the worklog/report, not the phase name. If triage failures are broad CI, runner, package, unrelated benchmark, or unrelated platform failures that do not touch the changed subsystem, place the row under waiting/human-judgment/skip rather than needs-action.
 
-For `needs fix` rows, first run the printed command:
+For `needs fix` rows, prefer a supervisor sweep first:
+
+```bash
+uv run ptq supervise --prompts
+```
+
+If you need to triage one PR manually or the supervisor output is insufficient, run the printed command:
 
 ```bash
 ~/dotfiles/scripts/github_ci_triage PR_URL
 ```
 
-Read the markdown summary first. Report:
+Read the markdown summary or saved `agent_space/supervisor/JOB_ID/` transcript first. Report:
 
 - PTQ job id
 - PR URL

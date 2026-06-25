@@ -221,6 +221,11 @@ uv run ptq list
 uv run ptq monitor
 uv run ptq monitor --watch
 
+# Run bounded CI supervision over monitor rows and print worker prompts
+uv run ptq supervise
+uv run ptq supervise --prompts
+uv run ptq supervise --watch --interval 300
+
 # Open the monitor in a two-pane Herdr workspace
 uv run ptq monitor --herdr
 
@@ -243,6 +248,8 @@ gh pr comment PR_URL --body '@pytorchbot merge -i'
 ```
 
 Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq monitor --watch` uses Rich's alternate-screen live view so resizing a Herdr pane or terminal redraws cleanly instead of leaving wrapped table fragments in scrollback. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
+
+`uv run ptq supervise` adds a read-only triage layer above the raw monitor table. For failing CI rows it fetches the latest Dr. CI comment, runs `~/dotfiles/scripts/github_ci_triage PR_URL`, saves the transcript under `agent_space/supervisor/JOB_ID/`, and classifies the row as `needs fix`, `merge-ignore candidate`, or `needs human review`. Use `uv run ptq supervise --prompts` to print a worker prompt that tells a Pi/subagent exactly how to gather logs, apply the trust boundary, and classify each failure without editing code or posting comments.
 
 Each PTQ job also gets a `prime.md` handoff file in the job directory. For a fresh manual Pi in an opened job workspace, start from the job directory and load `@prime.md`; it points the subagent at `PTQ_CONTEXT.md`, `system_prompt.md`, `worklog.md`, `report.md`, and the source repo `AGENTS.md` before editing.
 

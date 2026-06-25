@@ -21,4 +21,10 @@ Then run:
 uv run ptq monitor
 ```
 
-Then summarize actionable PR/job states. For failing CI, run the printed `~/dotfiles/scripts/github_ci_triage PR_URL` command first, and use `hud` checks only when available or when the triage output includes job ids worth cross-checking. Do not make code changes from the monitor pane; use `uv run ptq open JOB_ID` for interactive job workspaces.
+If failing CI rows are present or the user asks for an action decision, run the read-only supervisor layer:
+
+```bash
+uv run ptq supervise --prompts
+```
+
+Then summarize actionable PR/job states from the monitor table plus supervisor verdicts. Use the saved `agent_space/supervisor/JOB_ID/` triage transcript as evidence, and use `hud` checks only when available or when the triage output includes job ids worth cross-checking. Do not make code changes from the monitor pane; use `uv run ptq open JOB_ID` for interactive job workspaces.

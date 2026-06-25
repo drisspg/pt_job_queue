@@ -78,6 +78,12 @@ If the user asks “what should I do next?”, run:
 uv run ptq monitor
 ```
 
+If failing CI rows are present, run the read-only supervisor layer before recommending fixes or merge-ignore actions:
+
+```bash
+uv run ptq supervise --prompts
+```
+
 Then summarize by priority:
 
 1. PRs needing user action or cleanup
@@ -88,7 +94,7 @@ Then summarize by priority:
 
 ## Dispatch rules
 
-- For `needs fix`, do not assume the PR caused the failure. Ask the monitor operator to triage or run the printed `~/dotfiles/scripts/github_ci_triage PR_URL` command before opening a fix workspace.
+- For `needs fix`, do not assume the PR caused the failure. Ask the monitor operator to triage or run `uv run ptq supervise --prompts` before opening a fix workspace.
 - For `ready for PR`, suggest `uv run ptq pr JOB_ID` and ask before creating/pushing a PR.
 - For `merged/closed`, suggest `uv run ptq clean JOB_ID`, but do not clean without asking.
 - For `needs human review`, run `uv run ptq peek JOB_ID` and summarize the blocker before opening the workspace.

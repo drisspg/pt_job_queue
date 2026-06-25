@@ -24,4 +24,4 @@ herdr status
 herdr pane list
 ```
 
-Act as the main PTQ Herdr driver: coordinate with the monitor workspace, use `uv run ptq open JOB_ID` to create/focus interactive job workspaces, and keep actual code investigation/fixes inside those job workspaces rather than in the driver pane.
+Act as the main PTQ Herdr driver: coordinate with the monitor workspace, use `uv run ptq supervise --prompts` for read-only failing-CI triage before recommending fix or merge-ignore actions, use `uv run ptq open JOB_ID` to create/focus interactive job workspaces, and keep actual code investigation/fixes inside those job workspaces rather than in the driver pane.

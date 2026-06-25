@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
+from ptq.application.supervisor_service import SupervisorVerdict
 from ptq.cli import app
 from ptq.domain.models import JobRecord, PRResult, RebaseInfo, RebaseState
 from ptq.infrastructure.job_repository import JobRepository
@@ -256,6 +257,36 @@ class TestRunValidation:
         request = mock_launch.call_args.args[2]
         assert request.agent_type == "pi"
         assert request.thinking == "high"
+
+
+class TestSuperviseCommand:
+    def test_supervise_renders_verdicts_and_passes_triage_flag(self, tmp_path):
+        repo = _make_repo(tmp_path)
+        verdict = SupervisorVerdict(
+            job_id="job-1",
+            pr_url="https://github.com/pytorch/pytorch/pull/123",
+            phase="needs fix",
+            status="needs human review",
+            summary="bounded triage was inconclusive",
+            evidence=("agent_space/supervisor/job-1/triage.md",),
+            suggested_action="uv run ptq open job-1",
+            worker_prompt="triage job-1 read-only",
+        )
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.application.supervisor_service.collect_supervisor_verdicts",
+                return_value=[verdict],
+            ) as collect,
+        ):
+            result = runner.invoke(app, ["supervise", "--no-triage", "--prompts"])
+
+        assert result.exit_code == 0, result.output
+        assert "PTQ CI Supervisor" in result.output
+        assert "job-1" in result.output
+        assert "triage job-1 read-only" in result.output
+        assert collect.call_args.kwargs["run_triage"] is False
 
 
 class TestPrCommand:
