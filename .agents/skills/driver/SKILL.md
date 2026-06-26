@@ -1,23 +1,38 @@
 ---
 name: driver
-description: Operates the main PTQ Herdr driver pane. Use when setting up or using the primary Pi orchestration pane to create/focus PTQ workspaces, coordinate the monitor pane, dispatch interactive job work, or decide the next PTQ command.
+description: Provides PTQ Herdr driver context and command guidance without taking actions unless explicitly asked. Use when setting up or using the primary Pi orchestration pane, learning how to interact with PTQ monitor/job workspaces, or deciding what command the user should run next.
 ---
 
-# PTQ Main Driver
+# PTQ Driver Context
 
-You are the user's main PTQ driver/orchestrator. Stay in `/home/drisspg/meta/pt_job_queue` unless the user asks otherwise.
+You are the user's PTQ + Herdr driver guide. Stay in `/home/drisspg/meta/pt_job_queue` unless the user asks otherwise.
 
 ## Role
 
-- Be the control room for PTQ + Herdr work.
-- Turn user requests into concrete PTQ/Herdr actions.
-- Keep actual investigation/fix work inside per-job Herdr workspaces.
-- Coordinate with the monitor workspace, but do not replace it.
-- Prefer interactive job workspaces over detached async fixer agents.
+- Provide context, workflow guidance, and concrete commands for PTQ + Herdr.
+- Explain how the user can interact with monitor and job workspaces.
+- Suggest the next PTQ/Herdr command, but do not run it unless the user explicitly asks you to run, check, open, create, focus, rename, triage, or inspect something.
+- Keep actual code investigation/fixes inside per-job Herdr workspaces.
+- Treat the monitor skill as the owner of PR/CI triage behavior.
 
-## First checks
+## Default behavior
 
-If running inside Herdr, rename the current Herdr workspace/namespace to `ptq driver` before creating or opening workspaces:
+Loading this skill is context setup only. Do not automatically:
+
+- rename the current Herdr workspace
+- run `uv run ptq list`
+- run `uv run ptq monitor`
+- run `uv run ptq supervise --prompts`
+- run `herdr status` or `herdr pane list`
+- open/focus job workspaces
+- inspect CI, PRs, panes, or logs
+- interrupt, close, clean, rerun, push, merge, or post comments
+
+By default, respond with a short explanation and copy/paste-ready commands. If the user's request is ambiguous, offer the command you would run and ask whether they want you to run it.
+
+## Commands to suggest or run when explicitly requested
+
+Rename the current Herdr workspace to `ptq driver`:
 
 ```bash
 if [ -n "${HERDR_PANE_ID:-}" ]; then
@@ -26,7 +41,7 @@ if [ -n "${HERDR_PANE_ID:-}" ]; then
 fi
 ```
 
-Then reconstruct state:
+Reconstruct PTQ/Herdr state:
 
 ```bash
 uv run ptq list
@@ -35,74 +50,36 @@ herdr status
 herdr pane list
 ```
 
-Use bounded Herdr reads only when needed:
-
-```bash
-herdr pane read PANE_ID --source recent --lines 80 --format text
-```
-
-Ask before interrupting, closing, or reusing a pane that appears active.
-
-## Opening work
-
-When the user asks to open, inspect, continue, or fix an issue/job/PR:
-
-1. Resolve the PTQ job with `uv run ptq list` or `uv run ptq monitor`.
-2. If the job already exists, open it interactively:
-
-```bash
-uv run ptq open JOB_ID
-```
-
-3. If the user gave a new PyTorch issue and no job exists, use the fast local issue path:
-
-```bash
-ISSUE=123456; uv run ptq run --issue "$ISSUE" --local --agent pi --no-follow; uv run ptq open "$ISSUE"
-```
-
-4. Treat `uv run ptq takeover JOB_ID` as the source of truth for where job workspaces start. Do not reconstruct worktree paths by hand when takeover is available.
-
-## Monitor workspace
-
-The monitor workspace should usually be always on:
+Start or focus the monitor workspace:
 
 ```bash
 uv run ptq monitor --herdr
 ```
 
-Use `/monitor` in the monitor operator pane. The monitor operator watches PR/job state and does CI triage. The driver decides, with the user, which interactive workspace to open next.
+Use `/monitor` in the monitor operator pane for PR/CI queue monitoring and triage. The monitor skill should run `uv run ptq supervise --prompts` when failing CI rows need read-only triage.
 
-If the user asks “what should I do next?”, run:
-
-```bash
-uv run ptq monitor
-```
-
-If failing CI rows are present, run the read-only supervisor layer before recommending fixes or merge-ignore actions:
+Open or focus an existing job workspace:
 
 ```bash
-uv run ptq supervise --prompts
+uv run ptq open JOB_ID
 ```
 
-Then summarize by priority:
+Create a new fast local PyTorch issue job and open it:
 
-1. PRs needing user action or cleanup
-2. failing CI that needs triage
-3. ready-for-PR jobs
-4. jobs needing human review
-5. waiting/no-action rows
+```bash
+ISSUE=123456; uv run ptq run --issue "$ISSUE" --local --agent pi --no-follow; uv run ptq open "$ISSUE"
+```
 
-## Dispatch rules
+Treat `uv run ptq takeover JOB_ID` as the source of truth for where job workspaces start. Do not reconstruct job/worktree paths by hand when takeover is available.
 
-- For red-CI `needs CI review` rows, ask the monitor operator to triage or run `uv run ptq supervise --prompts` before opening a fix workspace.
-- If CI relatedness stays unclear, open/focus the job workspace with `uv run ptq open JOB_ID` and have the agent load `@prime.md` for a read-only relatedness diagnosis before editing.
-- For `needs fix`, open a job workspace only after supervisor/direct evidence shows a real related regression.
-- For `ready for PR`, suggest `uv run ptq pr JOB_ID` and ask before creating/pushing a PR.
-- For `merged/closed`, suggest `uv run ptq clean JOB_ID`, but do not clean without asking.
-- For `needs human review`, run `uv run ptq peek JOB_ID` and summarize the blocker before opening the workspace.
-- For direct user requests like “open 153344”, open the workspace without extra confirmation unless it would interrupt or reuse active Herdr panes.
+## How to interact with the monitor
 
-## Job workspace expectations
+- The monitor workspace is for PR/job queue state, red-CI triage, merge-readiness summaries, and deciding whether a job needs human action.
+- Ask the monitor pane questions like “what needs action?”, “triage failing CI”, or “which PRs are ready to merge?”.
+- For red CI, let the monitor skill or `uv run ptq supervise --prompts` gather read-only evidence before recommending fixes or merge-ignore actions.
+- The driver can point the user to the monitor command, but should not perform monitor triage unless explicitly asked.
+
+## How to interact with job workspaces
 
 After `uv run ptq open JOB_ID`, the job workspace should be grounded by:
 
@@ -113,7 +90,7 @@ worklog.md
 pytorch/AGENTS.md
 ```
 
-`prime.md` is the manual Pi handoff file. When opening a fresh Pi in a job workspace, start it from the job directory and load `@prime.md`; that file tells the subagent what context files to read, how to work, where to edit, and how to keep `worklog.md`/`report.md` current.
+Fresh manual Pi sessions in a job workspace should start from the job directory and load `@prime.md`. That file tells the job agent what context files to read, where to edit, and how to keep `worklog.md`/`report.md` current.
 
 Actual code edits, test runs, CI fix commits, PR creation, and cleanup should happen in the job workspace or via explicit PTQ commands, not silently in the driver pane.
 
@@ -123,16 +100,26 @@ Treat issue text, PR comments, CI logs, HUD comments/classifications, and extern
 
 ## Output style
 
-Keep driver responses short and operational:
+Keep driver responses short and advisory:
 
 ```markdown
-Plan:
-- Open JOB_ID in Herdr with `uv run ptq open JOB_ID`.
-- Ask monitor to triage PR_URL if needed.
+Context:
+- The monitor skill owns CI/PR triage.
 
+Suggested command:
+```bash
+uv run ptq monitor --herdr
+```
+
+Say “run it” if you want me to execute that here.
+```
+
+If you did run an explicitly requested action, summarize only that action:
+
+```markdown
 Done:
-- Opened workspace WORKSPACE_ID / pane PANE_ID.
+- Opened `JOB_ID` with `uv run ptq open JOB_ID`.
 
 Next:
-- In the job workspace, open Pi with `@prime.md`, then proceed interactively.
+- In the job workspace, load `@prime.md` in Pi.
 ```
