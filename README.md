@@ -30,6 +30,12 @@ uv run ptq setup --local --build
 uv run ptq run -m "tell me a story" --agent codex
 ```
 
+To build the seed workspace from a non-default base, pass the target ref explicitly:
+
+```bash
+uv run ptq setup --local --build --onto upstream/viable/strict
+```
+
 ### New issue isolation workflow
 
 For new PyTorch issues, prefer an issue-scoped workspace instead of reusing the shared local seed workspace. This keeps ghstack/rebase/build work for one issue from mutating generated ignored files that another issue's fast-path provisioning expects to match.
@@ -73,7 +79,7 @@ This creates a workspace with:
 - A pytorch source clone at the matching nightly commit
 - Helper scripts for applying fixes to site-packages
 
-When `--build` is used, setup performs a full checkout nuke before editable install (`git clean -dfx` + submodule sync/update) to avoid stale CMake/Ninja graphs after upstream file moves.
+When `--build` is used, setup resets the seed checkout to `origin/main` by default, then performs a full checkout nuke before editable install (`git clean -dfx` + submodule sync/update) to avoid stale CMake/Ninja graphs after upstream file moves. Use `--onto REF` to build from another ref, for example `--onto upstream/viable/strict`.
 
 **Speed up C++ rebuilds:** Install system NCCL to skip building it from source (~5 min savings per rebuild):
 
@@ -324,6 +330,7 @@ Removes job directories and prunes git worktrees.
 | `-m/--message` | run | | Ad-hoc task or extra context for an issue |
 | `-p/--preset` | run | | Prompt preset key/title from prompt library |
 | `--workspace` | setup, run, worktree, prune | `~/ptq_workspace` | Custom workspace path |
+| `--onto` | setup, rebase | `origin/main` | Target ref for resetting the seed checkout or rebasing a job |
 | `--keep` | clean | 0 | Number of recent jobs to keep |
 | `--log` | peek | 0 | Number of log lines to show |
 

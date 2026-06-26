@@ -79,4 +79,17 @@ class TestSetupWorkspace:
         setup_workspace(backend, build=True)
 
         cmds = [call.args[0] for call in backend.run.call_args_list]
-        assert any("git reset --hard origin/main" in cmd for cmd in cmds)
+        assert any("git -C" in cmd and "fetch origin" in cmd for cmd in cmds)
+        assert any("git -C" in cmd and "reset --hard origin/main" in cmd for cmd in cmds)
+
+    def test_existing_checkout_can_reset_to_custom_ref(self, tmp_path):
+        backend = _setup_backend(str(tmp_path))
+        setup_workspace(backend, build=True, target_ref="upstream/viable/strict")
+
+        cmds = [call.args[0] for call in backend.run.call_args_list]
+        assert any("remote add upstream" in cmd for cmd in cmds)
+        assert any("git -C" in cmd and "fetch upstream" in cmd for cmd in cmds)
+        assert any(
+            "git -C" in cmd and "reset --hard upstream/viable/strict" in cmd
+            for cmd in cmds
+        )

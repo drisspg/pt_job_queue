@@ -153,6 +153,13 @@ def setup(
     workspace: Annotated[
         str | None, typer.Option(help="Custom workspace path.")
     ] = None,
+    onto: Annotated[
+        str,
+        typer.Option(
+            "--onto",
+            help="Target ref for resetting the seed PyTorch checkout.",
+        ),
+    ] = "origin/main",
     extras: Annotated[
         list[str] | None,
         typer.Option(
@@ -179,6 +186,7 @@ def setup(
         re_cc_jobs=with_re_cc or 0,
         build_env_prefix=load_config().build_env_prefix(),
         extras=extras or [],
+        target_ref=onto,
     )
 
 

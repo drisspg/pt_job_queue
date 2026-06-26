@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Callable
 from subprocess import CompletedProcess
 
@@ -57,6 +58,7 @@ def setup_workspace(
     re_cc_jobs: int = 0,
     build_env_prefix: str = "USE_NINJA=1 ",
     extras: list[str] | None = None,
+    target_ref: str = "origin/main",
 ) -> None:
     workspace = backend.workspace
 
@@ -77,7 +79,15 @@ def setup_workspace(
         if name != "pytorch" and name not in extras_set:
             continue
         profile = get_profile(name)
-        _clone_repo(backend, workspace, profile, reset=build)
+        repo_target_ref = target_ref if name == "pytorch" else "origin/main"
+        reset_checkout = build or repo_target_ref != "origin/main"
+        _clone_repo(
+            backend,
+            workspace,
+            profile,
+            reset=reset_checkout,
+            target_ref=repo_target_ref,
+        )
 
     console.print("Installing Python 3.12 via uv...")
     backend.run("uv python install 3.12", check=False)
@@ -107,7 +117,12 @@ def setup_workspace(
 
 
 def _clone_repo(
-    backend: Backend, workspace: str, profile: RepoProfile, *, reset: bool
+    backend: Backend,
+    workspace: str,
+    profile: RepoProfile,
+    *,
+    reset: bool,
+    target_ref: str,
 ) -> None:
     repo_dir = f"{workspace}/{profile.dir_name}"
     existing = backend.run(f"test -d {repo_dir}/.git", check=False)
@@ -117,11 +132,8 @@ def _clone_repo(
             console.print(f"{profile.name} checkout already exists, keeping it.")
             return
 
-        console.print(f"{profile.name} checkout already exists, resetting to latest...")
-        backend.run(
-            f"cd {repo_dir} && git fetch origin && git reset --hard origin/main",
-            stream=True,
-        )
+        console.print(f"{profile.name} checkout already exists, resetting to {target_ref}...")
+        _reset_checkout(backend, repo_dir, profile, target_ref)
         if profile.uses_custom_worktree_tool:
             backend.run(
                 f"cd {repo_dir} && git submodule sync && git submodule update --init --recursive --progress",
@@ -134,11 +146,48 @@ def _clone_repo(
         f"git clone --progress {profile.clone_url} {repo_dir}",
         stream=True,
     )
+    if reset:
+        _reset_checkout(backend, repo_dir, profile, target_ref)
     if profile.uses_custom_worktree_tool:
         backend.run(
             f"cd {repo_dir} && git submodule update --init --recursive --progress",
             stream=True,
         )
+
+
+def _remote_for_target_ref(target_ref: str) -> str | None:
+    """Identify remote-tracking refs that setup can fetch before reset."""
+    if target_ref.startswith("origin/"):
+        return "origin"
+    if target_ref.startswith("upstream/"):
+        return "upstream"
+    return None
+
+
+def _reset_checkout(
+    backend: Backend, repo_dir: str, profile: RepoProfile, target_ref: str
+) -> None:
+    """Reset the seed checkout to a verified commit-ish before dependency setup."""
+    remote = _remote_for_target_ref(target_ref)
+    if remote == "upstream":
+        remote_url = shlex.quote(profile.clone_url)
+        backend.run(
+            f"git -C {repo_dir} remote get-url upstream >/dev/null 2>&1 || "
+            f"git -C {repo_dir} remote add upstream {remote_url}"
+        )
+    if remote is not None:
+        backend.run(f"git -C {repo_dir} fetch {shlex.quote(remote)}", stream=True)
+    else:
+        backend.run(f"git -C {repo_dir} fetch origin", stream=True)
+
+    target_commit = shlex.quote(f"{target_ref}^{{commit}}")
+    target = shlex.quote(target_ref)
+    exists = backend.run(
+        f"git -C {repo_dir} rev-parse --verify {target_commit}", check=False
+    )
+    if exists.returncode != 0:
+        raise SystemExit(f"Target ref not found: {target_ref}")
+    backend.run(f"git -C {repo_dir} reset --hard {target}", stream=True)
 
 
 def _install_triton(backend: Backend, workspace: str) -> CompletedProcess[str]:
