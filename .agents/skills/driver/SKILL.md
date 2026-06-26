@@ -1,6 +1,6 @@
 ---
 name: driver
-description: Provides PTQ Herdr driver context and command guidance without taking actions unless explicitly asked. Use when setting up or using the primary Pi orchestration pane, learning how to interact with PTQ monitor/job workspaces, or deciding what command the user should run next.
+description: Provides PTQ Herdr driver context and command guidance, auto-renaming the current workspace to ptq driver on load. Use when setting up or using the primary Pi orchestration pane, learning how to interact with PTQ monitor/job workspaces, or deciding what command the user should run next.
 ---
 
 # PTQ Driver Context
@@ -11,15 +11,25 @@ You are the user's PTQ + Herdr driver guide. Stay in `/home/drisspg/meta/pt_job_
 
 - Provide context, workflow guidance, and concrete commands for PTQ + Herdr.
 - Explain how the user can interact with monitor and job workspaces.
-- Suggest the next PTQ/Herdr command, but do not run it unless the user explicitly asks you to run, check, open, create, focus, rename, triage, or inspect something.
+- Suggest the next PTQ/Herdr command, but do not run it unless it is the load-time driver workspace rename or the user explicitly asks you to run, check, open, create, focus, rename, triage, or inspect something.
 - Keep actual code investigation/fixes inside per-job Herdr workspaces.
 - Treat the monitor skill as the owner of PR/CI triage behavior.
 
 ## Default behavior
 
-Loading this skill is context setup only. Do not automatically:
+Loading this skill is context setup only except for renaming the current Herdr workspace to `ptq driver` when `HERDR_PANE_ID` is available.
 
-- rename the current Herdr workspace
+On load, automatically run:
+
+```bash
+if [ -n "${HERDR_PANE_ID:-}" ]; then
+  WORKSPACE_ID="$(herdr pane get "$HERDR_PANE_ID" | python -c 'import json, sys; print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')"
+  herdr workspace rename "$WORKSPACE_ID" "ptq driver"
+fi
+```
+
+Do not automatically:
+
 - run `uv run ptq list`
 - run `uv run ptq monitor`
 - run `uv run ptq supervise --prompts`
@@ -28,18 +38,9 @@ Loading this skill is context setup only. Do not automatically:
 - inspect CI, PRs, panes, or logs
 - interrupt, close, clean, rerun, push, merge, or post comments
 
-By default, respond with a short explanation and copy/paste-ready commands. If the user's request is ambiguous, offer the command you would run and ask whether they want you to run it.
+By default, rename the workspace if possible, then respond with a short explanation and copy/paste-ready commands. If the user's request is ambiguous, offer the command you would run and ask whether they want you to run it.
 
 ## Commands to suggest or run when explicitly requested
-
-Rename the current Herdr workspace to `ptq driver`:
-
-```bash
-if [ -n "${HERDR_PANE_ID:-}" ]; then
-  WORKSPACE_ID="$(herdr pane get "$HERDR_PANE_ID" | python -c 'import json, sys; print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')"
-  herdr workspace rename "$WORKSPACE_ID" "ptq driver"
-fi
-```
 
 Reconstruct PTQ/Herdr state:
 
