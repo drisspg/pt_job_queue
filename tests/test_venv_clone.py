@@ -3,7 +3,11 @@ from __future__ import annotations
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock
 
-from ptq.application.venv_service import _try_clone_base_venv
+from ptq.application.venv_service import (
+    TRANSFORMER_NUGGETS_REQUIREMENT,
+    _try_clone_base_venv,
+    install_transformer_nuggets,
+)
 
 
 def _cp(returncode: int = 0, stdout: str = "") -> CompletedProcess[str]:
@@ -168,7 +172,9 @@ class TestFastPathSkips:
         assert _try_clone_base_venv(backend, JOB_DIR, OLD_SRC) is False
 
     def test_skips_when_base_torch_does_not_match_base_source(self):
-        backend = _make_backend(torch_git_version="c194562000000000000000000000000000000000")
+        backend = _make_backend(
+            torch_git_version="c194562000000000000000000000000000000000"
+        )
         assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is False
 
         cmds = _all_cmds(backend)
@@ -181,6 +187,20 @@ class TestCloneSuccess:
     def test_returns_true_on_success(self):
         backend = _make_backend()
         assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is True
+
+    def test_installs_transformer_nuggets_after_torch_smoke(self):
+        backend = _make_backend()
+        assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is True
+
+        cmds = _all_cmds(backend)
+        smoke_idx = next(i for i, c in enumerate(cmds) if "torch.__file__" in c)
+        install_idx = next(
+            i for i, c in enumerate(cmds) if TRANSFORMER_NUGGETS_REQUIREMENT in c
+        )
+        assert install_idx > smoke_idx
+        install_cmd = cmds[install_idx]
+        assert f"uv pip install --python {JOB_VENV}/bin/python" in install_cmd
+        assert "--reinstall-package transformer_nuggets" in install_cmd
 
     def test_bails_when_smoke_test_fails(self):
         backend = MagicMock()
@@ -211,3 +231,15 @@ class TestCloneSuccess:
 
         backend.run = MagicMock(side_effect=run_side)
         assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is False
+
+
+class TestTransformerNuggetsInstall:
+    def test_skips_when_torch_is_not_importable(self):
+        backend = MagicMock()
+        backend.run = MagicMock(return_value=_cp(returncode=1))
+
+        assert install_transformer_nuggets(backend, JOB_VENV) is False
+
+        cmds = _all_cmds(backend)
+        assert any("import torch" in c for c in cmds)
+        assert not any(TRANSFORMER_NUGGETS_REQUIREMENT in c for c in cmds)

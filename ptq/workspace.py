@@ -7,6 +7,7 @@ from subprocess import CompletedProcess
 
 from rich.console import Console
 
+from ptq.application.venv_service import install_transformer_nuggets
 from ptq.repo_profiles import RepoProfile, available_repos, get_profile
 from ptq.ssh import Backend, RemoteBackend
 
@@ -110,6 +111,13 @@ def setup_workspace(
     if build:
         build_pytorch(backend, re_cc_jobs=re_cc_jobs, build_env_prefix=build_env_prefix)
 
+    install_transformer_nuggets(
+        backend,
+        f"{workspace}/.venv/bin/python",
+        verbose=True,
+        progress=console.print,
+    )
+
     console.print("Deploying helper scripts...")
     deploy_scripts(backend)
 
@@ -132,7 +140,9 @@ def _clone_repo(
             console.print(f"{profile.name} checkout already exists, keeping it.")
             return
 
-        console.print(f"{profile.name} checkout already exists, resetting to {target_ref}...")
+        console.print(
+            f"{profile.name} checkout already exists, resetting to {target_ref}..."
+        )
         _reset_checkout(backend, repo_dir, profile, target_ref)
         if profile.uses_custom_worktree_tool:
             backend.run(

@@ -76,6 +76,8 @@ uv run ptq setup --local --cpu --build
 
 This creates a workspace with:
 - A `uv`-managed venv with PyTorch nightly
+- `transformer_nuggets` installed from
+  `https://github.com/drisspg/transformer_nuggets` once torch is importable
 - A pytorch source clone at the matching nightly commit
 - Helper scripts for applying fixes to site-packages
 

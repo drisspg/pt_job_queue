@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -12,6 +13,10 @@ from ptq.ssh import Backend
 log = logging.getLogger("ptq.venv")
 
 ProgressCallback = Callable[[str], None]
+TRANSFORMER_NUGGETS_PACKAGE = "transformer_nuggets"
+TRANSFORMER_NUGGETS_REQUIREMENT = (
+    "transformer_nuggets @ git+https://github.com/drisspg/transformer_nuggets.git"
+)
 
 
 def _noop_progress(_msg: str) -> None:
@@ -32,6 +37,38 @@ def _chain_result(
     if result.returncode != 0:
         return result
     return next_step()
+
+
+def install_transformer_nuggets(
+    backend: Backend,
+    python_executable: str,
+    *,
+    verbose: bool = False,
+    progress: ProgressCallback = _noop_progress,
+) -> bool:
+    """Install transformer_nuggets only after the target venv can import torch."""
+    torch_check = backend.run(
+        f"cd /tmp && {python_executable} -c 'import torch' 2>/dev/null",
+        check=False,
+    )
+    if torch_check.returncode != 0:
+        progress("Skipping transformer_nuggets install — torch is not importable yet.")
+        return False
+
+    progress("Installing transformer_nuggets...")
+    with _timed("transformer_nuggets install", progress):
+        result = backend.run(
+            f"uv pip install --python {python_executable} "
+            f"--reinstall-package {TRANSFORMER_NUGGETS_PACKAGE} "
+            f"{shlex.quote(TRANSFORMER_NUGGETS_REQUIREMENT)}",
+            check=False,
+            stream=verbose,
+        )
+    if result.returncode != 0:
+        progress("transformer_nuggets install failed — agent can install manually.")
+        return False
+    progress("transformer_nuggets install complete.")
+    return True
 
 
 def _setup_lightweight_venv(
@@ -100,6 +137,12 @@ def _setup_lightweight_venv(
         progress("Editable install failed — agent can install manually.")
     else:
         progress("Editable install complete.")
+    install_transformer_nuggets(
+        backend,
+        job_python,
+        verbose=verbose,
+        progress=progress,
+    )
 
 
 def _try_clone_base_venv(
@@ -267,6 +310,13 @@ def _try_clone_base_venv(
         progress("Falling back to full install.")
         return _bail()
 
+    install_transformer_nuggets(
+        backend,
+        job_python,
+        verbose=verbose,
+        progress=progress,
+    )
+
     log.info("fast-path complete: %s", smoke.stdout.strip())
     progress(f"Editable install complete (cloned) — {smoke.stdout.strip()}")
     return True
@@ -346,3 +396,9 @@ def _setup_job_venv(
             progress("Editable install failed — agent will need to build manually.")
         else:
             progress("Editable install complete.")
+        install_transformer_nuggets(
+            backend,
+            job_python,
+            verbose=verbose,
+            progress=progress,
+        )

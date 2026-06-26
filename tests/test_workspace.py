@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ptq.application.venv_service import TRANSFORMER_NUGGETS_REQUIREMENT
 from ptq.workspace import detect_cuda_version, setup_workspace
 
 
@@ -80,7 +81,9 @@ class TestSetupWorkspace:
 
         cmds = [call.args[0] for call in backend.run.call_args_list]
         assert any("git -C" in cmd and "fetch origin" in cmd for cmd in cmds)
-        assert any("git -C" in cmd and "reset --hard origin/main" in cmd for cmd in cmds)
+        assert any(
+            "git -C" in cmd and "reset --hard origin/main" in cmd for cmd in cmds
+        )
 
     def test_existing_checkout_can_reset_to_custom_ref(self, tmp_path):
         backend = _setup_backend(str(tmp_path))
@@ -91,5 +94,17 @@ class TestSetupWorkspace:
         assert any("git -C" in cmd and "fetch upstream" in cmd for cmd in cmds)
         assert any(
             "git -C" in cmd and "reset --hard upstream/viable/strict" in cmd
+            for cmd in cmds
+        )
+
+    def test_installs_transformer_nuggets_when_torch_is_available(self, tmp_path):
+        backend = _setup_backend(str(tmp_path))
+        setup_workspace(backend, build=True)
+
+        cmds = [call.args[0] for call in backend.run.call_args_list]
+        assert any(TRANSFORMER_NUGGETS_REQUIREMENT in cmd for cmd in cmds)
+        assert any(
+            f"uv pip install --python {tmp_path}/.venv/bin/python" in cmd
+            and "--reinstall-package transformer_nuggets" in cmd
             for cmd in cmds
         )
