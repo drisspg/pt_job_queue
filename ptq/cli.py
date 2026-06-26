@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console, Group
+from rich.markup import escape
 
 from ptq.agent import _clean, _indent, _truncate
 from ptq.agents import StreamEvent, get_agent
@@ -601,16 +602,77 @@ def list_jobs() -> None:
 
 def _monitor_phase_style(phase: str) -> str:
     match phase:
-        case "agent working" | "waiting on CI" | "landing":
+        case "ready to merge" | "ready for PR":
             return "green"
-        case "ready to merge" | "ready for PR" | "unrelated CI":
+        case "agent working" | "waiting on CI" | "landing":
+            return "cyan"
+        case "unrelated CI":
             return "yellow"
-        case "needs fix" | "needs rebase" | "needs human review":
+        case "needs fix" | "needs rebase" | "needs human review" | "needs CI review":
             return "orange3"
         case "merged/closed":
             return "cyan"
         case _:
             return "red"
+
+
+def _monitor_text_attr(row, name: str) -> str:
+    """Read monitor row strings without letting MagicMock placeholders become labels."""
+    value = getattr(row, name, "")
+    return value if isinstance(value, str) else ""
+
+
+def _monitor_link_markup(label: str, style: str, url: str = "") -> str:
+    """Build Rich markup that stays readable when OSC-8 links are unsupported."""
+    escaped_label = escape(label)
+    if not url:
+        return f"[{style}]{escaped_label}[/]" if style else escaped_label
+    if not style:
+        return f"[link={url}]{escaped_label}[/]"
+    return f"[{style} link={url}]{escaped_label}[/]"
+
+
+def _github_url_number(url: str, kind: str) -> str:
+    """Extract the issue or pull number from a GitHub URL for compact labels."""
+    marker = f"/{kind}/"
+    if marker not in url:
+        return ""
+    number = url.rsplit(marker, 1)[1].split("/", 1)[0]
+    return number if number.isdigit() else ""
+
+
+def _monitor_issue_markup(row) -> str:
+    """Render issue labels as terminal hyperlinks when an issue number is known."""
+    issue = _monitor_text_attr(row, "issue")
+    if issue.startswith("#") and issue[1:].isdigit():
+        return _monitor_link_markup(
+            issue,
+            "cyan",
+            f"https://github.com/pytorch/pytorch/issues/{issue[1:]}",
+        )
+    return escape(issue)
+
+
+def _monitor_pr_markup(row) -> str:
+    """Render PR state with a visible PR number and an optional terminal hyperlink."""
+    pr_state = _monitor_text_attr(row, "pr_state")
+    pr_url = _monitor_text_attr(row, "pr_url")
+    pr_number = _github_url_number(pr_url, "pull")
+    label_prefix = f"#{pr_number} " if pr_number else ""
+
+    if getattr(row, "pr_is_draft", False) is True and pr_state == "open":
+        return _monitor_link_markup(f"{label_prefix}draft", "blue", pr_url)
+    match pr_state:
+        case "open":
+            return _monitor_link_markup(f"{label_prefix}open", "green", pr_url)
+        case "merged":
+            return _monitor_link_markup(f"{label_prefix}merged", "cyan", pr_url)
+        case "closed":
+            return _monitor_link_markup(f"{label_prefix}closed", "red", pr_url)
+        case "-":
+            return "-"
+        case _:
+            return _monitor_link_markup(f"{label_prefix}{pr_state}", "dim", pr_url)
 
 
 def _render_monitor_table(rows) -> object:
@@ -629,19 +691,15 @@ def _render_monitor_table(rows) -> object:
     table.add_column("Issue", style="cyan")
     table.add_column("PR")
     table.add_column("CI")
-    table.add_column("Agent")
-    table.add_column("Target")
     table.add_column("Next action")
 
     for row in rows:
         table.add_row(
             f"[{_monitor_phase_style(row.phase)}]{row.phase}[/]",
             row.job_id,
-            row.issue,
-            row.pr_state,
+            _monitor_issue_markup(row),
+            _monitor_pr_markup(row),
             row.ci.label,
-            f"{row.agent} r{row.runs}",
-            row.target,
             row.next_action,
         )
     return table
@@ -678,10 +736,14 @@ def _monitor_renderable(rows, *, include_all: bool) -> Group:
     entry_commands.rstrip()
 
     renderables = [_render_monitor_table(rows), summary, entry_commands]
-    failing_rows = [row for row in rows if row.phase == "needs fix"]
+    failing_rows = [
+        row
+        for row in rows
+        if row.ci.failing and row.phase not in {"landing", "unrelated CI"}
+    ]
     if failing_rows:
         triage_commands = Text()
-        triage_commands.append("Failing CI triage\n", style="bold")
+        triage_commands.append("Failing CI review\n", style="bold")
         for row in failing_rows:
             triage_commands.append("  ")
             triage_commands.append(row.job_id, style="cyan")
@@ -689,7 +751,9 @@ def _monitor_renderable(rows, *, include_all: bool) -> Group:
         triage_commands.rstrip()
         renderables.append(triage_commands)
 
-    merge_ignore_rows = [row for row in rows if row.phase == "unrelated CI"]
+    merge_ignore_rows = [
+        row for row in rows if row.phase == "unrelated CI" and row.can_merge_ignore
+    ]
     if merge_ignore_rows:
         merge_ignore_commands = Text()
         merge_ignore_commands.append("PyTorchBot merge-ignore commands\n", style="bold")
@@ -833,8 +897,20 @@ def _render_supervisor_verdicts(verdicts, *, include_prompts: bool) -> None:
         console.print("\n".join(evidence_lines))
 
     if include_prompts:
+        prompt_statuses = {
+            "needs fix",
+            "needs CI review",
+            "needs human review",
+            "merge-ignore candidate",
+        }
+        prompt_phases = {
+            "needs fix",
+            "needs CI review",
+            "needs human review",
+            "unrelated CI",
+        }
         for verdict in verdicts:
-            if verdict.phase in {"needs fix", "unrelated CI"}:
+            if verdict.status in prompt_statuses or verdict.phase in prompt_phases:
                 console.print(
                     Markdown(
                         f"### Worker prompt for {verdict.job_id}\n"

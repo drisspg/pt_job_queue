@@ -94,7 +94,9 @@ Then summarize by priority:
 
 ## Dispatch rules
 
-- For `needs fix`, do not assume the PR caused the failure. Ask the monitor operator to triage or run `uv run ptq supervise --prompts` before opening a fix workspace.
+- For red-CI `needs CI review` rows, ask the monitor operator to triage or run `uv run ptq supervise --prompts` before opening a fix workspace.
+- If CI relatedness stays unclear, open/focus the job workspace with `uv run ptq open JOB_ID` and have the agent load `@prime.md` for a read-only relatedness diagnosis before editing.
+- For `needs fix`, open a job workspace only after supervisor/direct evidence shows a real related regression.
 - For `ready for PR`, suggest `uv run ptq pr JOB_ID` and ask before creating/pushing a PR.
 - For `merged/closed`, suggest `uv run ptq clean JOB_ID`, but do not clean without asking.
 - For `needs human review`, run `uv run ptq peek JOB_ID` and summarize the blocker before opening the workspace.

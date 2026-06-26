@@ -265,7 +265,7 @@ class TestSuperviseCommand:
         verdict = SupervisorVerdict(
             job_id="job-1",
             pr_url="https://github.com/pytorch/pytorch/pull/123",
-            phase="needs fix",
+            phase="needs human review",
             status="needs human review",
             summary="bounded triage was inconclusive",
             evidence=("agent_space/supervisor/job-1/triage.md",),

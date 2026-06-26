@@ -235,13 +235,13 @@ uv run ptq open JOB_ID
 
 The agent maintains a `worklog.md` with entries after each significant step, so you can check progress without streaming the full output.
 
-`ptq monitor` is a mergedog-style PR monitor for PTQ-created PR jobs and stopped jobs that look ready for PR creation. It shows one row per relevant job, classifies the next phase, prints `ptq takeover JOB_ID`-equivalent shell-entry commands for opening Herdr workspaces, marks actively merging PRs as `landing` even if checks are red, and points failing CI rows at the local triage helper:
+`ptq monitor` is a mergedog-style PR monitor for PTQ-created PR jobs and stopped jobs that look ready for PR creation. It shows one row per relevant job, classifies the next phase, colors the PR column as open/draft/closed state, prints `ptq takeover JOB_ID`-equivalent shell-entry commands for opening Herdr workspaces, marks actively merging PRs as `landing` even if checks are red, and points failing CI review rows at the local triage helper. On terminals with OSC-8 hyperlink support, the Issue and PR cells are clickable GitHub links:
 
 ```bash
 ~/dotfiles/scripts/github_ci_triage PR_URL
 ```
 
-When Dr. CI clearly reports only unrelated, flaky, or broken-trunk failures, the monitor prints a PyTorchBot merge-ignore command instead:
+When a landing attempt stopped and Dr. CI clearly reports only unrelated, flaky, or broken-trunk failures, the monitor prints a PyTorchBot merge-ignore command instead:
 
 ```bash
 gh pr comment PR_URL --body '@pytorchbot merge -i'
@@ -249,7 +249,7 @@ gh pr comment PR_URL --body '@pytorchbot merge -i'
 
 Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq monitor --watch` uses Rich's alternate-screen live view so resizing a Herdr pane or terminal redraws cleanly instead of leaving wrapped table fragments in scrollback. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
 
-`uv run ptq supervise` adds a read-only triage layer above the raw monitor table. For failing CI rows it fetches the latest Dr. CI comment, runs `~/dotfiles/scripts/github_ci_triage PR_URL`, saves the transcript under `agent_space/supervisor/JOB_ID/`, and classifies the row as `needs fix`, `merge-ignore candidate`, or `needs human review`. Use `uv run ptq supervise --prompts` to print a worker prompt that tells a Pi/subagent exactly how to gather logs, apply the trust boundary, and classify each failure without editing code or posting comments.
+`uv run ptq supervise` adds a read-only triage layer above the raw monitor table. For failing CI rows it fetches the latest Dr. CI comment, runs `~/dotfiles/scripts/github_ci_triage PR_URL`, saves the transcript under `agent_space/supervisor/JOB_ID/`, and classifies the row as `needs fix`, `unrelated CI`, `merge-ignore candidate`, or `needs human review`. `merge-ignore candidate` only implies `@pytorchbot merge -i` for PRs that are actively landing or whose landing attempt just stopped. The monitor/supervisor use explicit Dr. CI/HUD AI verdict text when available, but not badge images alone. Use `uv run ptq supervise --prompts` to print a worker prompt that tells a Pi/subagent exactly how to gather logs, apply the trust boundary, and classify each failure without editing code or posting comments.
 
 Each PTQ job also gets a `prime.md` handoff file in the job directory. For a fresh manual Pi in an opened job workspace, start from the job directory and load `@prime.md`; it points the subagent at `PTQ_CONTEXT.md`, `system_prompt.md`, `worklog.md`, `report.md`, and the source repo `AGENTS.md` before editing.
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import html
 import json
+import re
 import shlex
 from dataclasses import dataclass
 
@@ -27,6 +29,9 @@ class PRSignals:
     landing_stopped: bool = False
     obvious_unrelated_failures: bool = False
     has_new_failures: bool = False
+    ai_unrelated_new_failures: bool = False
+    draft: bool = False
+    review_decision: str = ""
 
 
 @dataclass
@@ -46,6 +51,9 @@ class MonitorRow:
     ci_triage_command: str
     merge_ignore_command: str
     pr_url: str
+    pr_is_draft: bool = False
+    can_merge_ignore: bool = False
+    review_decision: str = ""
 
 
 def summarize_pr_checks(job: JobRecord) -> CheckSummary:
@@ -118,6 +126,61 @@ def latest_drci_comment(comments: list[dict]) -> str:
 DRCI_NEW_FAILURE_MARKERS = ("<b>NEW FAILURE</b>", "<b>NEW FAILURES</b>")
 
 
+def drci_new_failure_section(body: str) -> str:
+    """Extract Dr. CI's new-failure details for conservative verdict parsing."""
+    match = re.search(
+        r"(?:<details\b[^>]*>\s*)?"
+        r"<summary><b>NEW FAILURES?</b>"
+        r".*?"
+        r"(?:</details>|(?=<details\b[^>]*>\s*<summary><b>|"
+        r"This comment was automatically generated|<!-- drci-comment-end -->|\Z))",
+        body,
+        flags=re.DOTALL,
+    )
+    return match.group(0) if match else ""
+
+
+def strip_html(text: str) -> str:
+    """Reduce Dr. CI's HTML snippets to text so simple verdict phrases are stable."""
+    return html.unescape(re.sub(r"<[^>]+>", " ", text))
+
+
+def drci_reports_ai_unrelated_new_failures(body: str) -> bool:
+    """Trust only explicit Dr. CI/HUD AI verdict text, not badge images alone."""
+    section = drci_new_failure_section(body)
+    if not section or "AI verdict" not in section:
+        return False
+
+    verdict_blocks = re.findall(
+        r"AI verdict:.*?<blockquote>(.*?)</blockquote>",
+        section,
+        flags=re.DOTALL,
+    )
+    if not verdict_blocks or section.count("AI verdict") != len(verdict_blocks):
+        return False
+
+    unrelated_markers = (
+        "already existed at the merge base",
+        "existed at the merge base",
+        "same job, same error",
+        "unrelated to this patch",
+        "not related",
+        "no behavioral change",
+    )
+    related_markers = (
+        "directly modifies",
+        "exact test is the one failing",
+        "same test passed at the merge base",
+    )
+    for block in verdict_blocks:
+        lower = strip_html(block).lower()
+        if any(marker in lower for marker in related_markers):
+            return False
+        if not any(marker in lower for marker in unrelated_markers):
+            return False
+    return True
+
+
 def drci_reports_obvious_unrelated_failures(body: str) -> bool:
     """Classify red CI as skip-worthy only when Dr. CI reports no new failures."""
     if not body or "## :x:" not in body:
@@ -146,7 +209,7 @@ def summarize_pr_signals(job: JobRecord) -> PRSignals:
     result = backend_for_job(job).run(
         "gh pr view "
         f"{shlex.quote(job.pr_url)} "
-        "--json labels,comments,mergeStateStatus",
+        "--json labels,comments,mergeStateStatus,isDraft,reviewDecision",
         check=False,
     )
     if not result.stdout.strip():
@@ -189,6 +252,9 @@ def summarize_pr_signals(job: JobRecord) -> PRSignals:
         ),
         obvious_unrelated_failures=drci_reports_obvious_unrelated_failures(drci_body),
         has_new_failures=drci_reports_new_failures(drci_body),
+        ai_unrelated_new_failures=drci_reports_ai_unrelated_new_failures(drci_body),
+        draft=bool(data.get("isDraft")),
+        review_decision=str(data.get("reviewDecision") or ""),
     )
 
 
@@ -218,7 +284,7 @@ def monitor_phase(
     ci: CheckSummary,
     pr_signals: PRSignals,
 ) -> str:
-    """Classify PR rows around landing state before treating red CI as fixes."""
+    """Classify PR rows without assuming raw red CI requires code fixes."""
     rebase_state = job.rebase_info.state
     if pr_state == "merged":
         return "merged/closed"
@@ -233,15 +299,19 @@ def monitor_phase(
     if status == JobStatus.RUNNING:
         return "agent working"
     if ci.failing:
-        if pr_signals.obvious_unrelated_failures:
+        if pr_signals.ai_unrelated_new_failures or (
+            pr_signals.obvious_unrelated_failures and not pr_signals.has_new_failures
+        ):
             return "unrelated CI"
-        if pr_signals.landing_stopped and not pr_signals.has_new_failures:
-            return "needs human review"
-        return "needs fix"
+        return "needs CI review"
     if ci.pending:
         return "waiting on CI"
+    if pr_signals.draft:
+        return "needs human review"
     if ci.label == "pass":
-        return "ready to merge"
+        if pr_signals.review_decision in {"", "APPROVED"}:
+            return "ready to merge"
+        return "needs human review"
     if pr_state == "open":
         return "needs human review"
     return "halted"
@@ -261,15 +331,27 @@ def merge_ignore_command(pr_url: str) -> str:
     return f"gh pr comment {shlex.quote(pr_url)} --body '@pytorchbot merge -i'"
 
 
-def next_action(job_id: str, phase: str) -> str:
+def next_action(
+    job_id: str,
+    phase: str,
+    *,
+    can_merge_ignore: bool = False,
+    review_decision: str = "",
+) -> str:
     """Return the primary PTQ command for the monitor row."""
     match phase:
         case "needs fix":
-            return "triage failing CI"
+            return f"ptq open {job_id}"
+        case "needs CI review":
+            return f"ptq open {job_id}"
         case "landing":
             return "monitor merge"
         case "unrelated CI":
-            return "comment @pytorchbot merge -i"
+            if can_merge_ignore:
+                return "comment @pytorchbot merge -i"
+            if review_decision == "APPROVED":
+                return "review merge readiness"
+            return f"ptq peek {job_id}"
         case "needs rebase":
             return f"ptq rebase {job_id}"
         case "needs human review":
@@ -325,6 +407,7 @@ def collect_monitor_rows(
             else monitor_phase(job, status, pr_state, ci, pr_signals)
         )
         triage_command = ci_triage_command(job.pr_url or "")
+        can_merge_ignore = phase == "unrelated CI" and pr_signals.landing_stopped
         rows.append(
             MonitorRow(
                 job_id=job_id,
@@ -337,11 +420,19 @@ def collect_monitor_rows(
                 pr_state=pr_state,
                 ci=ci,
                 phase=phase,
-                next_action=next_action(job_id, phase),
+                next_action=next_action(
+                    job_id,
+                    phase,
+                    can_merge_ignore=can_merge_ignore,
+                    review_decision=pr_signals.review_decision,
+                ),
                 takeover_command=takeover_for_job(job_id, job),
                 ci_triage_command=triage_command,
                 merge_ignore_command=merge_ignore_command(job.pr_url or ""),
                 pr_url=job.pr_url or "",
+                pr_is_draft=pr_signals.draft,
+                can_merge_ignore=can_merge_ignore,
+                review_decision=pr_signals.review_decision,
             )
         )
     return rows

@@ -23,8 +23,8 @@ def row() -> MonitorRow:
         job_status=JobStatus.STOPPED,
         pr_state="open",
         ci=CheckSummary(label="fail 1", failing=1, total=1),
-        phase="needs fix",
-        next_action="triage failing CI",
+        phase="needs CI review",
+        next_action="ptq open job-1",
         takeover_command="cd /tmp/ws/jobs/job-1 && source .venv/bin/activate",
         ci_triage_command="~/dotfiles/scripts/github_ci_triage https://github.com/pytorch/pytorch/pull/123",
         merge_ignore_command="gh pr comment https://github.com/pytorch/pytorch/pull/123 --body '@pytorchbot merge -i'",
@@ -32,7 +32,7 @@ def row() -> MonitorRow:
     )
 
 
-def test_classify_new_failure_as_merge_ignore_candidate_when_ai_verdict_says_unrelated():
+def test_classify_nonlanding_unrelated_failure_as_unrelated_ci():
     drci = """
     <details open><summary><b>NEW FAILURE</b> - The following job has failed:</summary>
     tf_efficientnet_b0
@@ -43,8 +43,20 @@ def test_classify_new_failure_as_merge_ignore_candidate_when_ai_verdict_says_unr
 
     status, summary, action = classify_failing_ci(row(), drci, "")
 
+    assert status == "unrelated CI"
+    assert "unrelated" in summary
+    assert action == "uv run ptq open job-1"
+
+
+def test_classify_landing_stopped_unrelated_ci_as_merge_ignore_candidate():
+    test_row = row()
+    test_row.phase = "unrelated CI"
+    test_row.can_merge_ignore = True
+
+    status, summary, action = classify_failing_ci(test_row, "", "")
+
     assert status == "merge-ignore candidate"
-    assert "present on trunk" in summary
+    assert "was landing" in summary
     assert action == "gh pr comment https://github.com/pytorch/pytorch/pull/123 --body '@pytorchbot merge -i'"
 
 
@@ -63,7 +75,7 @@ def test_classify_new_failure_as_needs_fix_when_ai_verdict_says_pr_modified_test
     assert action == "uv run ptq open job-1"
 
 
-def test_classify_merge_base_evidence_overrides_related_signature_names():
+def test_classify_merge_base_evidence_as_unrelated_ci_when_not_landing():
     drci = """
     <details open><summary><b>NEW FAILURE</b> - The following job has failed:</summary>
     test/inductor/test_compiled_autograd.py::TestCompiledAutograd::test_trace_run_with_rng_state
@@ -73,12 +85,12 @@ def test_classify_merge_base_evidence_overrides_related_signature_names():
 
     status, summary, action = classify_failing_ci(row(), drci, "")
 
-    assert status == "merge-ignore candidate"
-    assert "present on trunk" in summary
-    assert action == "gh pr comment https://github.com/pytorch/pytorch/pull/123 --body '@pytorchbot merge -i'"
+    assert status == "unrelated CI"
+    assert "unrelated" in summary
+    assert action == "uv run ptq open job-1"
 
 
-def test_classify_ambiguous_new_failure_as_human_review():
+def test_classify_ambiguous_new_failure_as_ci_review_without_triage():
     drci = """
     <details open><summary><b>NEW FAILURE</b> - The following job has failed:</summary>
     mysterious_test_failure
@@ -87,8 +99,8 @@ def test_classify_ambiguous_new_failure_as_human_review():
 
     status, summary, action = classify_failing_ci(row(), drci, "")
 
-    assert status == "needs human review"
-    assert "not confidently" in summary
+    assert status == "needs CI review"
+    assert "needs bounded triage" in summary
     assert action == "uv run ptq open job-1"
 
 
@@ -104,8 +116,8 @@ def test_classify_ambiguous_new_failure_ignores_following_flaky_bucket():
 
     status, summary, action = classify_failing_ci(row(), drci, "")
 
-    assert status == "needs human review"
-    assert "not confidently" in summary
+    assert status == "needs CI review"
+    assert "needs bounded triage" in summary
     assert action == "uv run ptq open job-1"
 
 
@@ -184,7 +196,7 @@ def test_supervise_row_returns_worker_prompt_and_persists_evidence_path(tmp_path
     ):
         verdict = supervise_row(test_row, job, output_root=tmp_path)
 
-    assert verdict.status == "merge-ignore candidate"
+    assert verdict.status == "unrelated CI"
     assert str(tmp_path / "triage.md") in verdict.evidence
     assert "github_ci_triage https://github.com/pytorch/pytorch/pull/123" in verdict.worker_prompt
     assert "needs human review" in verdict.worker_prompt

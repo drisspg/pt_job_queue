@@ -11,6 +11,7 @@ from pathlib import Path
 from ptq.application.monitor_service import (
     MonitorRow,
     collect_monitor_rows,
+    drci_reports_ai_unrelated_new_failures,
     latest_drci_comment,
     merge_ignore_command,
 )
@@ -118,8 +119,17 @@ def drci_new_failure_section(drci_body: str) -> str:
     return match.group(0) if match else ""
 
 
+def unrelated_ci_action(row: MonitorRow) -> str:
+    """Choose the next step for unrelated CI without assuming the PR is landing."""
+    if row.can_merge_ignore:
+        return merge_ignore_command(row.pr_url)
+    if row.review_decision == "APPROVED":
+        return "review merge readiness"
+    return f"uv run ptq open {row.job_id}"
+
+
 def classify_failing_ci(row: MonitorRow, drci_body: str, triage_output: str) -> tuple[str, str, str]:
-    """Classify failing CI using Dr. CI/HUD evidence without trusting buckets alone."""
+    """Classify failing CI without turning unrelated red checks into merge commands."""
     new_failure = drci_new_failure_section(drci_body)
     combined = f"{new_failure}\n{triage_output}"
     lower = combined.lower()
@@ -141,11 +151,23 @@ def classify_failing_ci(row: MonitorRow, drci_body: str, triage_output: str) -> 
         "broken trunk",
     )
 
-    if new_failure and any(marker in lower for marker in merge_base_markers):
+    if row.phase == "unrelated CI" and row.can_merge_ignore:
         return (
             "merge-ignore candidate",
-            "The remaining Dr. CI new-failure evidence looks already present on trunk.",
-            merge_ignore_command(row.pr_url),
+            "The PR was landing and Dr. CI reports only unrelated, flaky, or broken-trunk failures.",
+            unrelated_ci_action(row),
+        )
+    if row.phase == "unrelated CI" or drci_reports_ai_unrelated_new_failures(drci_body):
+        return (
+            "unrelated CI",
+            "Dr. CI/HUD evidence says the failing jobs are unrelated to this PR.",
+            unrelated_ci_action(row),
+        )
+    if new_failure and any(marker in lower for marker in merge_base_markers):
+        return (
+            "unrelated CI",
+            "CI evidence looks unrelated to this PR.",
+            unrelated_ci_action(row),
         )
     if any(marker in lower for marker in related_markers):
         return (
@@ -153,21 +175,21 @@ def classify_failing_ci(row: MonitorRow, drci_body: str, triage_output: str) -> 
             "CI has new failures that overlap the PR or match a related signature.",
             "uv run ptq open " + row.job_id,
         )
-    if row.phase == "unrelated CI":
-        return (
-            "merge-ignore candidate",
-            "Dr. CI reports only unrelated, flaky, or broken-trunk failures.",
-            merge_ignore_command(row.pr_url),
-        )
     if not new_failure and any(marker in lower for marker in unrelated_bucket_markers):
         return (
-            "merge-ignore candidate",
+            "unrelated CI",
             "Triage evidence shows only unrelated, flaky, or broken-trunk failures.",
-            merge_ignore_command(row.pr_url),
+            unrelated_ci_action(row),
+        )
+    if triage_output.strip():
+        return (
+            "needs human review",
+            "Failing CI is not confidently related or unrelated from bounded triage.",
+            f"uv run ptq open {row.job_id}",
         )
     return (
-        "needs human review",
-        "Failing CI is not confidently related or unrelated from bounded triage.",
+        "needs CI review",
+        "Failing CI needs bounded triage before assigning relatedness.",
         f"uv run ptq open {row.job_id}",
     )
 
@@ -184,9 +206,10 @@ Trust boundary:
 Commands to gather evidence:
 1. `uv run ptq peek {row.job_id}`
 2. `~/dotfiles/scripts/github_ci_triage {row.pr_url}`
-3. `gh pr view {row.pr_url} --json comments,labels,mergeStateStatus`
+3. `gh pr view {row.pr_url} --json comments,labels,mergeStateStatus,reviewDecision,isDraft`
 4. Open saved full log paths from the triage output only when the summary is insufficient.
 5. If `hud` is available and the triage output has job ids, use `hud job JOB_ID --json` and `hud log search --job-id JOB_ID --limit 20 --json`.
+6. If relatedness remains unclear, ask the parent to run `uv run ptq open {row.job_id}`. In that workspace, load `@prime.md` and inspect `PTQ_CONTEXT.md`, `worklog.md`, `report.md`, and the diff read-only before deciding whether code work or human intervention is needed.
 
 Classify each failing signature as one of:
 - `related_failure`: failing test/error overlaps PR diff, worklog, or Dr. CI says the commit directly modified the failing path.
@@ -201,7 +224,7 @@ Return:
 - concrete failing check/job names
 - concrete error signatures
 - saved log paths
-- whether `@pytorchbot merge -i` is reasonable or a job workspace should be opened.
+- whether `@pytorchbot merge -i` is reasonable for an actually landing PR, or whether a job workspace should be opened.
 """
 
 
