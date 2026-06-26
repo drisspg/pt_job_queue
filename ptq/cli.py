@@ -662,7 +662,7 @@ def _monitor_issue_markup(row) -> str:
 
 
 def _monitor_pr_markup(row) -> str:
-    """Render PR state with a visible PR number and an optional terminal hyperlink."""
+    """Render PR state with approval-aware color and an optional hyperlink."""
     pr_state = _monitor_text_attr(row, "pr_state")
     pr_url = _monitor_text_attr(row, "pr_url")
     pr_number = _github_url_number(pr_url, "pull")
@@ -672,7 +672,12 @@ def _monitor_pr_markup(row) -> str:
         return _monitor_link_markup(f"{label_prefix}draft", "blue", pr_url)
     match pr_state:
         case "open":
-            return _monitor_link_markup(f"{label_prefix}open", "green", pr_url)
+            style = (
+                "green"
+                if _monitor_text_attr(row, "review_decision") == "APPROVED"
+                else "yellow"
+            )
+            return _monitor_link_markup(f"{label_prefix}open", style, pr_url)
         case "merged":
             return _monitor_link_markup(f"{label_prefix}merged", "cyan", pr_url)
         case "closed":
@@ -814,7 +819,7 @@ def monitor(
             workspace = open_monitor_workspace(cwd=str(Path.cwd()), visual_command=command)
         except RuntimeError as e:
             console.print(f"[red]{e}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
         console.print("[bold green]Opened PTQ monitor Herdr workspace.[/bold green]")
         console.print(f"  workspace: {workspace.workspace_id}")
         console.print(f"  visual pane: {workspace.visual_pane_id}")
@@ -1089,7 +1094,7 @@ def open_job(
         )
     except RuntimeError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     console.print("[bold green]Opened PTQ job Herdr workspace.[/bold green]")
     console.print(f"  job: {job_id}")
     console.print(f"  workspace: {workspace.workspace_id}")

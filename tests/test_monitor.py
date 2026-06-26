@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 
 from ptq.application.monitor_service import collect_monitor_rows
-from ptq.cli import app, _monitor_issue_markup, _monitor_pr_markup
+from ptq.cli import _monitor_issue_markup, _monitor_pr_markup, app
 from ptq.domain.models import JobRecord, JobStatus
 from ptq.infrastructure.job_repository import JobRepository
 
@@ -511,10 +511,23 @@ def test_monitor_cli_marks_issue_and_pr_cells_as_terminal_links():
     row.pr_state = "open"
     row.pr_url = "https://github.com/pytorch/pytorch/pull/188178"
     row.pr_is_draft = False
+    row.review_decision = "REVIEW_REQUIRED"
 
     assert _monitor_issue_markup(row) == (
         "[cyan link=https://github.com/pytorch/pytorch/issues/150321]#150321[/]"
     )
+    assert _monitor_pr_markup(row) == (
+        "[yellow link=https://github.com/pytorch/pytorch/pull/188178]#188178 open[/]"
+    )
+
+
+def test_monitor_cli_marks_open_pr_green_only_when_approved():
+    row = MagicMock()
+    row.pr_state = "open"
+    row.pr_url = "https://github.com/pytorch/pytorch/pull/188178"
+    row.pr_is_draft = False
+    row.review_decision = "APPROVED"
+
     assert _monitor_pr_markup(row) == (
         "[green link=https://github.com/pytorch/pytorch/pull/188178]#188178 open[/]"
     )
