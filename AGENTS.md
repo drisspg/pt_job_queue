@@ -46,6 +46,12 @@
 - Keep `uv run ptq takeover JOB_ID` as the shell-entry command and source of truth for the worktree; use Herdr pane/workspace focus commands only for terminal UI orchestration.
 - Ask before interrupting, closing, or reusing a Herdr pane that appears to contain active work.
 
+# PTQ PR Body / DiffTrain Import Hygiene
+
+- PTQ-created GitHub PR bodies can be copied into internal DiffTrain/Jellyfish commit messages. Do not write raw Jellyfish or Arcanist field labels in human notes, reports, worklogs, or copied prompts unless they are intentional active fields.
+- Prefer Markdown headings such as `### Task` over bare field labels such as `Task:`, `Tasks:`, `Test Plan:`, `Reviewers:`, `Subscribers:`, `Tags:`, `Title:`, `Summary:`, or `Differential Revision:` in PR-visible artifact text.
+- Avoid raw internal task references like `T123` in PTQ-generated PR text unless intentionally linking an active internal task. A stale or archived task reference can wedge DiffTrain import.
+
 # PR Monitor / Mergedog-Inspired Workflow
 
 - The desired longer-term shape is a main Herdr monitor workspace that tracks open PTQ-created PR jobs and stopped worktrees that appear ready for PR creation, similar in spirit to mergedog's mux: one row/job per PR/worktree, explicit status, CI state, next required action, and a link to the associated Herdr workspace/session.

@@ -91,6 +91,24 @@ class TestBuildPrBody:
         body = _build_pr_body("R", "", "", issue_number=42, human_note="Fix")
         assert "Repro Script" not in body
 
+    def test_escapes_jellyfish_fields_in_artifacts(self):
+        body = _build_pr_body(
+            "Summary:\nReport text\nTest Plan: report tests",
+            "Title: issue title\nTask:\n- ran 12 focused tests\nTasks: T12",
+            "",
+            issue_number=None,
+            human_note="Reviewers: please check",
+        )
+
+        assert "Reviewers&#58; please check" in body
+        assert "Summary&#58;\nReport text" in body
+        assert "Test Plan&#58; report tests" in body
+        assert "Title&#58; issue title" in body
+        assert "Task&#58;\n- ran 12 focused tests" in body
+        assert "Tasks&#58; T12" in body
+        assert "\nTask:" not in body
+        assert "\nTasks:" not in body
+
 
 class TestEnsureSshRemote:
     def test_converts_https_to_ssh(self):

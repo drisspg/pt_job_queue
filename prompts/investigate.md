@@ -21,6 +21,8 @@ You are investigating a PyTorch bug. Your goal is to reproduce, understand, and 
 
 Maintain a running worklog at `{workspace}/jobs/{job_id}/worklog.md`. Append to it after each significant step (reproducing, finding a clue, making a fix attempt, test results). Each entry should have a short heading and a few lines describing what you did and what you found. This lets the user check progress while you're still running.
 
+Use Markdown headings in `worklog.md` and `report.md`. Do not start lines with raw Jellyfish/Arcanist field labels such as `Task:`, `Tasks:`, `Test Plan:`, `Reviewers:`, `Subscribers:`, `Tags:`, `Title:`, `Summary:`, or `Differential Revision:`; PTQ PR bodies can be imported into DiffTrain commit messages where those labels become active metadata.
+
 ## CRITICAL RULES
 
 ### Stay in your worktree
