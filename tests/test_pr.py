@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ptq.application import pr_service
-from ptq.application.pr_service import _build_pr_body, _ensure_ssh_remote, create_pr
+from ptq.application.pr_service import (
+    _build_pr_body,
+    _ensure_ssh_remote,
+    create_pr,
+    pr_defaults,
+)
 from ptq.domain.models import JobRecord, PtqError
 from ptq.infrastructure.job_repository import JobRepository
 
@@ -185,6 +190,98 @@ class TestCreatePr:
             )
         assert result.branch == "ptq/42"
 
+    def test_uses_agent_title_artifact_when_title_omitted(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+
+        def run_side_effect(cmd, check=True):
+            if "pr_title.txt" in cmd:
+                return CompletedProcess("", 0, "PR Title: Use meta device fallback\n", "")
+            if "git remote get-url" in cmd:
+                return CompletedProcess("", 0, "git@github.com:pytorch/pytorch.git\n")
+            if "gh pr create" in cmd:
+                return CompletedProcess(
+                    "", 0, "https://github.com/pytorch/pytorch/pull/99\n"
+                )
+            return CompletedProcess("", 0, "")
+
+        backend.run = MagicMock(side_effect=run_side_effect)
+        with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
+            create_pr(repo, "20260217-42", human_note="Note")
+
+        assert repo.get("20260217-42").pr_title == "Use meta device fallback"
+        pr_create_calls = [
+            c for c in backend.run.call_args_list if "gh pr create" in str(c)
+        ]
+        assert "--title 'Use meta device fallback'" in str(pr_create_calls[0])
+
+    def test_pr_defaults_syncs_open_github_metadata(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+        job = repo.get("20260217-42")
+        job.pr_url = "https://github.com/pytorch/pytorch/pull/77"
+        job.human_note = "Stale local note"
+        job.pr_title = "Stale local title"
+        repo.save(job)
+
+        def run_side_effect(cmd, check=True):
+            if "--json state,mergedAt" in cmd:
+                return CompletedProcess("", 0, "OPEN\t\n", "")
+            if "--json title,body" in cmd:
+                return CompletedProcess(
+                    "",
+                    0,
+                    '{"title":"GitHub title","body":"## Human Note\\nGitHub note\\n\\n## Agent Report\\nR"}',
+                    "",
+                )
+            return CompletedProcess("", 0, "")
+
+        backend.run = MagicMock(side_effect=run_side_effect)
+        with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
+            defaults = pr_defaults(repo, "20260217-42")
+
+        assert defaults.title == "GitHub title"
+        assert defaults.human_note == "GitHub note"
+        assert defaults.synced_from_github is True
+        assert defaults.human_note_synced_from_github is True
+        saved = repo.get("20260217-42")
+        assert saved.pr_title == "GitHub title"
+        assert saved.human_note == "GitHub note"
+
+    def test_create_pr_uses_github_note_when_note_omitted(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+        job = repo.get("20260217-42")
+        job.pr_url = "https://github.com/pytorch/pytorch/pull/77"
+        job.human_note = "Stale local note"
+        job.pr_title = "Stale local title"
+        repo.save(job)
+
+        def run_side_effect(cmd, check=True):
+            if "--json state,mergedAt" in cmd:
+                return CompletedProcess("", 0, "OPEN\t\n", "")
+            if "--json title,body" in cmd:
+                return CompletedProcess(
+                    "",
+                    0,
+                    '{"title":"GitHub title","body":"## Human Note\\nGitHub note\\n\\n---\\nfooter"}',
+                    "",
+                )
+            if "gh pr edit 'https://github.com/pytorch/pytorch/pull/77'" in cmd:
+                return CompletedProcess("", 0, "", "")
+            if "git remote get-url" in cmd:
+                return CompletedProcess("", 0, "git@github.com:pytorch/pytorch.git\n")
+            return CompletedProcess("", 0, "")
+
+        backend.run = MagicMock(side_effect=run_side_effect)
+        with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
+            result = create_pr(repo, "20260217-42", human_note=None)
+
+        assert result.url == "https://github.com/pytorch/pytorch/pull/77"
+        saved = repo.get("20260217-42")
+        assert saved.pr_title == "GitHub title"
+        assert saved.human_note == "GitHub note"
+        edit_calls = [c for c in backend.run.call_args_list if "gh pr edit" in str(c)]
+        assert "--title 'GitHub title'" in str(edit_calls[0])
+        assert "GitHub note" in str(edit_calls[0])
+
     def test_updates_known_open_pr(self, tmp_path):
         repo, backend = self._setup(tmp_path)
         job = repo.get("20260217-42")
@@ -263,6 +360,7 @@ class TestCreatePr:
         )
         edit_calls = [c for c in backend.run.call_args_list if "gh pr edit" in str(c)]
         assert len(edit_calls) == 1
+        assert "--title 'Fix #42'" in str(edit_calls[0])
         assert "Updated note" in str(edit_calls[0])
 
     def test_failure_raises(self, tmp_path):

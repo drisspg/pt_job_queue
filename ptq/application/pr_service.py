@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
-from ptq.domain.models import PRResult, PtqError
+from ptq.domain.models import JobRecord, PRResult, PtqError
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.repo_profiles import get_profile
@@ -21,11 +23,176 @@ _JELLYFISH_FIELD_LABEL_RE = re.compile(
     r"Reviewed By|Reviewed-by|Reviewers|Rollback Plan|Subscribers|Summary|Tags|"
     r"Task|Tasks|Test Plan|Tested By|Title)):"
 )
+_PR_TITLE_ARTIFACT = "pr_title.txt"
+_MAX_PR_TITLE_CHARS = 200
+
+
+@dataclass(frozen=True)
+class PRDefaults:
+    title: str
+    human_note: str
+    synced_from_github: bool = False
+    human_note_synced_from_github: bool = False
+
+
+@dataclass(frozen=True)
+class CurrentPRMetadata:
+    title: str | None = None
+    human_note: str | None = None
+    url: str = ""
+    fetched: bool = False
 
 
 def _read_file(backend: Backend, path: str) -> str:
     result = backend.run(f"cat {path}", check=False)
-    return result.stdout.strip() if result.returncode == 0 else ""
+    if result.returncode == 0 and isinstance(result.stdout, str):
+        return result.stdout.strip()
+    return ""
+
+
+def _fallback_pr_title(job: JobRecord) -> str:
+    return f"Fix #{job.issue}" if job.issue is not None else f"Fix from {job.job_id}"
+
+
+def _normalize_pr_title(title: str) -> str:
+    """Extract a safe one-line PR title from human or agent-authored text."""
+    for line in title.splitlines():
+        candidate = line.strip()
+        if not candidate:
+            continue
+        lower_candidate = candidate.lower()
+        for prefix in ("pr title:", "title:"):
+            if lower_candidate.startswith(prefix):
+                candidate = candidate[len(prefix) :].strip()
+                break
+        if candidate:
+            return candidate[:_MAX_PR_TITLE_CHARS]
+    return ""
+
+
+def _artifact_pr_title(backend: Backend, job_dir: str) -> str:
+    return _normalize_pr_title(
+        _read_file(backend, f"{job_dir}/{_PR_TITLE_ARTIFACT}")
+    )
+
+
+def _resolve_pr_title(
+    job: JobRecord, backend: Backend, job_dir: str, title: str | None
+) -> str:
+    """Apply the PR title precedence shared by CLI, web, and PR creation."""
+    explicit_title = _normalize_pr_title(title or "")
+    if explicit_title:
+        return explicit_title
+    if job.pr_title:
+        saved_title = _normalize_pr_title(job.pr_title)
+        if saved_title:
+            return saved_title
+    artifact_title = _artifact_pr_title(backend, job_dir)
+    if artifact_title:
+        return artifact_title
+    return _fallback_pr_title(job)
+
+
+def _extract_human_note(body: str) -> str | None:
+    """Extract the editable Human Note section from a PTQ-created PR body."""
+    match = re.search(r"(?m)^## Human Note\s*$", body)
+    if not match:
+        return None
+    rest = body[match.end() :].lstrip("\r\n")
+    markers = [
+        re.search(pattern, rest)
+        for pattern in (
+            r"(?m)^##\s+",
+            r"(?m)^Fixes #\d+\s*$",
+            r"(?m)^<details>\s*$",
+            r"(?m)^---\s*$",
+        )
+    ]
+    ends = [marker.start() for marker in markers if marker]
+    if ends:
+        rest = rest[: min(ends)]
+    return rest.strip()
+
+
+def _fetch_open_pr_metadata(
+    job: JobRecord,
+    backend: Backend,
+    log: Callable[[str], None] | None = None,
+) -> CurrentPRMetadata:
+    """Read title and Human Note from GitHub when the saved PR is still open."""
+    if not job.pr_url:
+        return CurrentPRMetadata()
+
+    _log = log or (lambda _: None)
+    pr_state = get_pr_state(backend, job.pr_url, force_refresh=True)
+    match pr_state:
+        case "open":
+            result = backend.run(
+                f"gh pr view '{job.pr_url}' --json title,body",
+                check=False,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                _log("Could not fetch current GitHub PR metadata.")
+                return CurrentPRMetadata(url=job.pr_url)
+            try:
+                data = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                _log("Could not parse current GitHub PR metadata.")
+                return CurrentPRMetadata(url=job.pr_url)
+            return CurrentPRMetadata(
+                title=_normalize_pr_title(str(data.get("title") or "")) or None,
+                human_note=_extract_human_note(str(data.get("body") or "")),
+                url=job.pr_url,
+                fetched=True,
+            )
+        case "closed" | "merged":
+            _log(f"Stored PR is {pr_state}. Creating a new PR from current branch.")
+        case _:
+            _log("Stored PR state is unknown. Proceeding with create-or-find flow.")
+    return CurrentPRMetadata()
+
+
+def sync_pr_metadata(
+    repo: JobRepository,
+    job_id: str,
+    *,
+    job: JobRecord | None = None,
+    backend: Backend | None = None,
+    log: Callable[[str], None] | None = None,
+) -> CurrentPRMetadata:
+    """Persist current open GitHub PR metadata so reruns do not clobber edits."""
+    job = job or repo.get(job_id)
+    backend = backend or backend_for_job(job)
+    metadata = _fetch_open_pr_metadata(job, backend, log)
+    updated = False
+    if metadata.title is not None:
+        job.pr_title = metadata.title or None
+        updated = True
+    if metadata.fetched:
+        job.human_note = metadata.human_note or None
+        updated = True
+    if updated:
+        repo.save(job)
+    return metadata
+
+
+def pr_defaults(repo: JobRepository, job_id: str) -> PRDefaults:
+    """Return PR title/note defaults after syncing any open GitHub PR edits."""
+    job = repo.get(job_id)
+    backend = backend_for_job(job)
+    metadata = sync_pr_metadata(repo, job_id, job=job, backend=backend)
+    job_dir = f"{backend.workspace}/jobs/{job_id}"
+    return PRDefaults(
+        title=_resolve_pr_title(job, backend, job_dir, None),
+        human_note=job.human_note or "",
+        synced_from_github=metadata.fetched,
+        human_note_synced_from_github=metadata.human_note is not None,
+    )
+
+
+def suggest_pr_title(repo: JobRepository, job_id: str) -> str:
+    """Return the PR title default humans see before creating or updating a PR."""
+    return pr_defaults(repo, job_id).title
 
 
 def _normalize_pr_state(raw_state: str, merged_at: str) -> str:
@@ -123,40 +290,33 @@ def create_pr(
     repo: JobRepository,
     job_id: str,
     *,
-    human_note: str,
+    human_note: str | None,
     title: str | None = None,
     draft: bool = False,
     log: Callable[[str], None] | None = None,
 ) -> PRResult:
-    if not human_note.strip():
-        raise PtqError(
-            "A human note is required. Describe what this PR does, "
-            "why you believe it's correct, and how the reviewer should approach it."
-        )
-
     _log = log or (lambda _: None)
     job = repo.get(job_id)
     backend = backend_for_job(job)
     job_dir = f"{backend.workspace}/jobs/{job_id}"
     profile = get_profile(job.repo)
     worktree = f"{job_dir}/{profile.dir_name}"
-    existing_open_pr_url = ""
+    existing_pr = sync_pr_metadata(repo, job_id, job=job, backend=backend, log=_log)
+    existing_open_pr_url = existing_pr.url
+    if existing_open_pr_url:
+        _log(f"Existing PR is open: {existing_open_pr_url}")
 
-    if job.pr_url:
-        pr_state = get_pr_state(backend, job.pr_url, force_refresh=True)
-        match pr_state:
-            case "open":
-                existing_open_pr_url = job.pr_url
-                _log(f"Existing PR is open: {existing_open_pr_url}")
-            case "closed" | "merged":
-                _log(f"Stored PR is {pr_state}. Creating a new PR from current branch.")
-            case _:
-                _log("Stored PR state is unknown. Proceeding with create-or-find flow.")
+    resolved_human_note = human_note.strip() if human_note else ""
+    if not resolved_human_note:
+        resolved_human_note = job.human_note or ""
+    if not resolved_human_note:
+        raise PtqError(
+            "A human note is required. Describe what this PR does, "
+            "why you believe it's correct, and how the reviewer should approach it."
+        )
 
     branch = f"ptq/{job.issue}" if job.issue is not None else f"ptq/{job_id}"
-    pr_title = title or (
-        f"Fix #{job.issue}" if job.issue is not None else f"Fix from {job_id}"
-    )
+    pr_title = _resolve_pr_title(job, backend, job_dir, title)
 
     _log(f"Branch: {branch}")
     _log(f"Title: {pr_title}")
@@ -164,7 +324,7 @@ def create_pr(
     report = _read_file(backend, f"{job_dir}/report.md")
     worklog = _read_file(backend, f"{job_dir}/worklog.md")
     repro = _read_file(backend, f"{job_dir}/repro.py")
-    body = _build_pr_body(report, worklog, repro, job.issue, human_note)
+    body = _build_pr_body(report, worklog, repro, job.issue, resolved_human_note)
     _log(
         f"PR body: report.md {'found' if report else 'missing'}, "
         f"worklog.md {'found' if worklog else 'missing'}, "
@@ -248,7 +408,10 @@ def create_pr(
             if url:
                 _log("Updating existing PR body...")
                 backend.run(
-                    f"cd {worktree} && gh pr edit '{branch}' --body '{body_escaped}'",
+                    f"cd {worktree} && "
+                    f"gh pr edit '{branch}' "
+                    f"--title '{commit_msg}' "
+                    f"--body '{body_escaped}'",
                     check=False,
                 )
         if not url:
@@ -256,7 +419,7 @@ def create_pr(
 
     if url:
         job.pr_url = url
-        job.human_note = human_note
+        job.human_note = resolved_human_note
         job.pr_title = pr_title
         repo.save(job)
 

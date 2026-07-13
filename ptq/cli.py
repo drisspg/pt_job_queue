@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Annotated
@@ -18,6 +19,10 @@ app = typer.Typer(
     help="PyTorch Job Queue — dispatch AI agents to fix issues in PyTorch and add-on repos.",
 )
 console = Console()
+
+
+def _can_prompt_for_pr_metadata() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _handle_error(e: PtqError) -> None:
@@ -1163,19 +1168,24 @@ def pr(
     Requires a human note describing the change. This is embedded at the top
     of the PR body so reviewers see the author's own assessment first.
     """
-    from ptq.application.pr_service import create_pr
+    from ptq.application.pr_service import create_pr, pr_defaults
 
     repo = _repo()
     try:
         job_id = repo.resolve_id(job_id)
+        defaults = pr_defaults(repo, job_id)
     except PtqError as e:
         _handle_error(e)
 
-    if not note:
-        saved_note = repo.get(job_id).human_note
-        if saved_note:
-            note = saved_note
-            console.print("[dim]Reusing saved human note.[/dim]")
+    title = title.strip() if title else None
+    if title is None and _can_prompt_for_pr_metadata():
+        prompted_title = typer.prompt("PR title", default=defaults.title)
+        title = prompted_title.strip() or None
+
+    if not note and defaults.human_note:
+        note = defaults.human_note
+        source = "GitHub" if defaults.human_note_synced_from_github else "saved"
+        console.print(f"[dim]Reusing {source} human note.[/dim]")
 
     if not note:
         import os

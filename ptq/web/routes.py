@@ -502,6 +502,14 @@ async def job_detail(request: Request, job_id: str):
         pr_state = await asyncio.to_thread(
             get_pr_state, backend_for_job(job), job.pr_url
         )
+    human_note = job.human_note or ""
+    pr_title = job.pr_title or ""
+    if status != "running":
+        from ptq.application.pr_service import pr_defaults
+
+        defaults = await asyncio.to_thread(pr_defaults, repo, job_id)
+        human_note = defaults.human_note
+        pr_title = defaults.title
 
     profile = get_profile(job.repo)
     from ptq.takeover import for_job as takeover_for_job
@@ -528,8 +536,8 @@ async def job_detail(request: Request, job_id: str):
             "agents": list(AGENTS.keys()),
             "pr_url": job.pr_url,
             "pr_state": pr_state,
-            "human_note": job.human_note or "",
-            "pr_title": job.pr_title or "",
+            "human_note": human_note,
+            "pr_title": pr_title,
             "workspace": job.workspace,
             "is_local": job.local,
             "takeover_command": takeover_for_job(job_id, job),

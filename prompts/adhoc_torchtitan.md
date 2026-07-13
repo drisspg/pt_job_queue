@@ -56,6 +56,8 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 
 **report.md** — A concise summary of what you did and what you found.
 
+**pr_title.txt** — A single-line suggested PR title if the result is PR-worthy. Do not include a Markdown heading or `Title:` prefix.
+
 **fix.diff** (if you made code changes) — Generate with:
 ```
 cd {workspace}/jobs/{job_id}/torchtitan && git diff > {workspace}/jobs/{job_id}/fix.diff
@@ -65,4 +67,4 @@ If you also edited PyTorch source, generate a separate diff:
 cd {workspace}/pytorch && git diff > {workspace}/jobs/{job_id}/pytorch-fix.diff
 ```
 
-IMPORTANT: Always generate report.md before finishing. Generate fix.diff if you made any code changes.
+IMPORTANT: Always generate report.md before finishing. Generate pr_title.txt if the result is PR-worthy. Generate fix.diff if you made any code changes.

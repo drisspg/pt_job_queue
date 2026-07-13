@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from ptq.application.supervisor_service import SupervisorVerdict
 from ptq.cli import app
+from ptq.application.pr_service import PRDefaults
 from ptq.domain.models import JobRecord, PRResult, RebaseInfo, RebaseState
 from ptq.infrastructure.job_repository import JobRepository
 
@@ -345,6 +346,76 @@ class TestPrCommand:
         assert result.exit_code == 0, result.output
         assert "Reusing saved human note" not in result.output
         assert mock_create_pr.call_args.kwargs["human_note"] == "Fresh note"
+
+    def test_prompts_for_title_when_interactive(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="job-with-pr",
+                    issue=187801,
+                    local=True,
+                    workspace="/tmp/ws",
+                )
+            ],
+        )
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch("ptq.cli._can_prompt_for_pr_metadata", return_value=True),
+            patch(
+                "ptq.application.pr_service.pr_defaults",
+                return_value=PRDefaults(title="Suggested Title", human_note=""),
+            ),
+            patch("ptq.cli.typer.prompt", return_value="Prompted Title") as prompt,
+            patch("ptq.application.pr_service.create_pr") as mock_create_pr,
+        ):
+            mock_create_pr.return_value = PRResult(
+                url="https://github.com/pytorch/pytorch/pull/187966",
+                branch="ptq/187801",
+            )
+            result = runner.invoke(app, ["pr", "job-with-pr", "-n", "Fresh note"])
+
+        assert result.exit_code == 0, result.output
+        assert prompt.call_args.kwargs["default"] == "Suggested Title"
+        assert mock_create_pr.call_args.kwargs["title"] == "Prompted Title"
+
+    def test_uses_github_human_note_default(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="job-with-pr",
+                    issue=187801,
+                    local=True,
+                    workspace="/tmp/ws",
+                    human_note="Saved reviewer note",
+                )
+            ],
+        )
+
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.application.pr_service.pr_defaults",
+                return_value=PRDefaults(
+                    title="GitHub Title",
+                    human_note="GitHub reviewer note",
+                    synced_from_github=True,
+                    human_note_synced_from_github=True,
+                ),
+            ),
+            patch("ptq.application.pr_service.create_pr") as mock_create_pr,
+        ):
+            mock_create_pr.return_value = PRResult(
+                url="https://github.com/pytorch/pytorch/pull/187966",
+                branch="ptq/187801",
+            )
+            result = runner.invoke(app, ["pr", "job-with-pr"])
+
+        assert result.exit_code == 0, result.output
+        assert "Reusing GitHub human note" in result.output
+        assert mock_create_pr.call_args.kwargs["human_note"] == "GitHub reviewer note"
 
 
 def _make_clean_repo(tmp_path: Path) -> JobRepository:

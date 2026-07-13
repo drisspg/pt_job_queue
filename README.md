@@ -157,7 +157,7 @@ The agent will:
 2. Read pytorch source to find the root cause
 3. Apply a minimal Python-only fix
 4. Test the fix by copying edits to site-packages and re-running the repro
-5. Write `report.md` and `fix.diff`
+5. Write `report.md`, `pr_title.txt`, and `fix.diff`
 
 Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees. Fresh workspaces still need an explicit `ptq setup ...` first.
 
@@ -275,7 +275,7 @@ uv run ptq results 174923
 uv run ptq results 20260214-174923
 ```
 
-Fetches `report.md`, `fix.diff`, `worklog.md`, and the run log from the remote.
+Fetches `report.md`, `pr_title.txt`, `fix.diff`, `worklog.md`, and the run log from the remote.
 
 ### 7. Apply the fix
 
@@ -284,6 +284,8 @@ uv run ptq apply 174923 --pytorch-path ~/meta/pytorch
 ```
 
 Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps for creating a PR.
+
+To create a PR directly from a PTQ job, run `uv run ptq pr JOB_ID`. For an existing open PR, PTQ first syncs the current GitHub title and `## Human Note` so direct GitHub edits are the default source of truth. In an interactive terminal it prompts for a PR title, then opens `$EDITOR` (or `vim`) for the reviewer note if `--note` is omitted. For a new PR, the title defaults to the agent's `pr_title.txt` suggestion when there is no saved title.
 
 ### 8. Manage agents
 
@@ -418,5 +420,6 @@ pt_job_queue/
         ├── claude-2.log
         ├── worklog.md              # Agent progress log
         ├── report.md
+        ├── pr_title.txt            # Suggested PR title
         └── fix.diff
 ```

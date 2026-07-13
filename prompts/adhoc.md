@@ -65,6 +65,8 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 
 **report.md** — A concise summary of what you did and what you found.
 
+**pr_title.txt** — A single-line suggested PR title if the result is PR-worthy. Do not include a Markdown heading or `Title:` prefix.
+
 **fix.diff** (if you made code changes) — Generate with:
 ```
 cd {workspace}/jobs/{job_id}/pytorch && git diff > {workspace}/jobs/{job_id}/fix.diff
@@ -72,4 +74,4 @@ cd {workspace}/jobs/{job_id}/pytorch && git diff > {workspace}/jobs/{job_id}/fix
 
 If you made code changes, run `spin fixlint` from `{workspace}/jobs/{job_id}/pytorch/` before generating `fix.diff` and before finishing.
 
-IMPORTANT: Always generate report.md before finishing. Generate fix.diff if you made any code changes.
+IMPORTANT: Always generate report.md before finishing. Generate pr_title.txt if the result is PR-worthy. Generate fix.diff if you made any code changes.

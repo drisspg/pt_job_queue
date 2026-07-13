@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from ptq.application.pr_service import PRDefaults
 from ptq.config import AgentModels, Config
 from ptq.domain.models import JobRecord
 from ptq.infrastructure.job_repository import JobRepository
@@ -115,6 +116,21 @@ class TestJobDetail:
         assert "Prompt Library" in resp.text
         assert "rerun-message-preset" in resp.text
         assert "Fix And Verify" in resp.text
+
+    def test_pr_form_prefills_github_defaults(self, client):
+        with patch(
+            "ptq.application.pr_service.pr_defaults",
+            return_value=PRDefaults(
+                title="Use meta fallback",
+                human_note="GitHub reviewer note",
+                synced_from_github=True,
+                human_note_synced_from_github=True,
+            ),
+        ):
+            resp = client.get("/jobs/20260217-100001")
+        assert resp.status_code == 200
+        assert 'value="Use meta fallback"' in resp.text
+        assert "GitHub reviewer note" in resp.text
 
     def test_takeover_command_uses_job_home_and_venv_for_local_job(self, client):
         resp = client.get("/jobs/20260218-adhoc-abc123")

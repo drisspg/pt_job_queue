@@ -91,6 +91,8 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 - Repro script — wrap in a collapsible `<details>` block with `<summary>Repro Script</summary>`, containing the full script as a fenced python code block followed by its output
 - Test results
 
+**pr_title.txt** — A single-line suggested PR title. Do not include a Markdown heading or `Title:` prefix.
+
 **fix.diff** — Generate with:
 ```
 cd {workspace}/jobs/{job_id}/torchtitan && git diff > {workspace}/jobs/{job_id}/fix.diff
@@ -100,4 +102,4 @@ If you also edited PyTorch source, generate a separate diff:
 cd {workspace}/pytorch && git diff > {workspace}/jobs/{job_id}/pytorch-fix.diff
 ```
 
-IMPORTANT: Always generate both report.md and fix.diff before finishing.
+IMPORTANT: Always generate report.md, pr_title.txt, and fix.diff before finishing.
