@@ -275,11 +275,11 @@ def _try_clone_base_venv(
         )
 
         backend.run(
-            f"for f in {sp_dir}/__editable__*torch* {sp_dir}/torch*.dist-info/direct_url.json; do "
+            f"for f in {sp_dir}/*editable*torch* {sp_dir}/torch*.dist-info/direct_url.json; do "
             f'[ -f "$f" ] && sed -i "s|{old_src}|{new_src}|g" "$f"; done',
             check=False,
         )
-        backend.run(f"rm -f {sp_dir}/__pycache__/__editable__*torch*.pyc", check=False)
+        backend.run(f"rm -f {sp_dir}/__pycache__/*editable*torch*.pyc", check=False)
 
     progress("Installing dev deps (build + test)...")
     with _timed("dev deps", progress):

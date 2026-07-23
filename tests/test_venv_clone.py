@@ -114,20 +114,22 @@ class TestEditableInstallRewrite:
         _try_clone_base_venv(backend, JOB_DIR, WORKTREE)
         cmds = _all_cmds(backend)
 
-        editable_seds = [c for c in cmds if "__editable__" in c and "sed" in c]
+        editable_seds = [c for c in cmds if "editable" in c and "torch" in c and "sed" in c]
         assert len(editable_seds) == 1
         cmd = editable_seds[0]
         assert f"s|{OLD_SRC}|{NEW_SRC}|g" in cmd
         assert "direct_url.json" in cmd
+        assert "*editable*torch*" in cmd
 
     def test_clears_editable_pyc_cache(self):
         backend = _make_backend()
         _try_clone_base_venv(backend, JOB_DIR, WORKTREE)
         cmds = _all_cmds(backend)
 
-        pyc_cmds = [c for c in cmds if "__editable__" in c and "rm -f" in c]
+        pyc_cmds = [c for c in cmds if "editable" in c and "torch" in c and "rm -f" in c]
         assert len(pyc_cmds) == 1
         assert ".pyc" in pyc_cmds[0]
+        assert "*editable*torch*" in pyc_cmds[0]
 
 
 class TestHardlinkBreaking:
