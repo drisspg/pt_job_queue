@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,7 +25,9 @@ _JELLYFISH_FIELD_LABEL_RE = re.compile(
     r"Task|Tasks|Test Plan|Tested By|Title)):"
 )
 _PR_TITLE_ARTIFACT = "pr_title.txt"
+_PR_LABELS_ARTIFACT = "pr_labels.txt"
 _MAX_PR_TITLE_CHARS = 200
+_MAX_PR_LABELS = 10
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,50 @@ def _artifact_pr_title(backend: Backend, job_dir: str) -> str:
     return _normalize_pr_title(
         _read_file(backend, f"{job_dir}/{_PR_TITLE_ARTIFACT}")
     )
+
+
+def _artifact_pr_labels(backend: Backend, job_dir: str) -> list[str]:
+    """Read unique, one-per-line labels suggested by the agent."""
+    labels: list[str] = []
+    for line in _read_file(backend, f"{job_dir}/{_PR_LABELS_ARTIFACT}").splitlines():
+        label = line.strip()
+        if label and label not in labels:
+            labels.append(label)
+    if len(labels) > _MAX_PR_LABELS:
+        raise PtqError(
+            f"{_PR_LABELS_ARTIFACT} contains {len(labels)} labels; "
+            f"at most {_MAX_PR_LABELS} are allowed."
+        )
+    return labels
+
+
+def _validate_pr_labels(
+    backend: Backend, github_repo: str, labels: list[str]
+) -> None:
+    """Fail before publishing when an agent suggests nonexistent labels."""
+    if not labels:
+        return
+    result = backend.run(
+        f"gh label list --repo {shlex.quote(github_repo)} "
+        "--limit 1000 --json name",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise PtqError(f"Could not validate labels from {_PR_LABELS_ARTIFACT}.")
+    try:
+        available = {item["name"] for item in json.loads(result.stdout)}
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise PtqError(f"Could not parse labels for {github_repo}.") from None
+    unknown = [label for label in labels if label not in available]
+    if unknown:
+        raise PtqError(
+            f"Unknown label(s) in {_PR_LABELS_ARTIFACT}: {', '.join(unknown)}"
+        )
+
+
+def _label_args(flag: str, labels: list[str]) -> str:
+    """Render shell-safe repeated GitHub CLI label options."""
+    return "".join(f" {flag} {shlex.quote(label)}" for label in labels)
 
 
 def _resolve_pr_title(
@@ -317,9 +364,13 @@ def create_pr(
 
     branch = f"ptq/{job.issue}" if job.issue is not None else f"ptq/{job_id}"
     pr_title = _resolve_pr_title(job, backend, job_dir, title)
+    pr_labels = _artifact_pr_labels(backend, job_dir)
+    _validate_pr_labels(backend, profile.github_repo, pr_labels)
 
     _log(f"Branch: {branch}")
     _log(f"Title: {pr_title}")
+    if pr_labels:
+        _log(f"Labels: {', '.join(pr_labels)}")
 
     report = _read_file(backend, f"{job_dir}/report.md")
     worklog = _read_file(backend, f"{job_dir}/worklog.md")
@@ -373,7 +424,8 @@ def create_pr(
             f"cd {worktree} && "
             f"gh pr edit '{existing_open_pr_url}' "
             f"--title '{commit_msg}' "
-            f"--body '{body_escaped}'",
+            f"--body '{body_escaped}'"
+            f"{_label_args('--add-label', pr_labels)}",
             check=False,
         )
         if edit_result.returncode == 0:
@@ -390,6 +442,7 @@ def create_pr(
             f"--title '{commit_msg}' "
             f"--body '{body_escaped}' "
             f"--head '{branch}'"
+            f"{_label_args('--label', pr_labels)}"
             f"{' --draft' if draft else ''}",
             check=False,
         )
@@ -411,7 +464,8 @@ def create_pr(
                     f"cd {worktree} && "
                     f"gh pr edit '{branch}' "
                     f"--title '{commit_msg}' "
-                    f"--body '{body_escaped}'",
+                    f"--body '{body_escaped}'"
+                    f"{_label_args('--add-label', pr_labels)}",
                     check=False,
                 )
         if not url:

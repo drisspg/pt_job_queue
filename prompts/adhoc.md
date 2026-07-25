@@ -67,6 +67,8 @@ Write these files to `{workspace}/jobs/{job_id}/`:
 
 **pr_title.txt** — A single-line suggested PR title if the result is PR-worthy. Do not include a Markdown heading or `Title:` prefix.
 
+**pr_labels.txt** — If the result is PR-worthy, write exactly one PyTorch release-note label exactly as it exists on GitHub. Choose the narrowest applicable `release notes: ...` label for user-facing changes, or `topic: not user facing` only for changes with no user-visible behavior (such as tests, CI, or internal refactors). Check exact names with `gh label list --repo pytorch/pytorch --limit 1000 --json name --jq '.[].name'`. Do not add bullets or commentary.
+
 **fix.diff** (if you made code changes) — Generate with:
 ```
 cd {workspace}/jobs/{job_id}/pytorch && git diff > {workspace}/jobs/{job_id}/fix.diff
@@ -74,4 +76,4 @@ cd {workspace}/jobs/{job_id}/pytorch && git diff > {workspace}/jobs/{job_id}/fix
 
 If you made code changes, run `spin fixlint` from `{workspace}/jobs/{job_id}/pytorch/` before generating `fix.diff` and before finishing.
 
-IMPORTANT: Always generate report.md before finishing. Generate pr_title.txt if the result is PR-worthy. Generate fix.diff if you made any code changes.
+IMPORTANT: Always generate report.md before finishing. Generate pr_title.txt and pr_labels.txt if the result is PR-worthy. Generate fix.diff if you made any code changes.

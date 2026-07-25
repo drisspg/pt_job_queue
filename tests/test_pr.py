@@ -214,6 +214,59 @@ class TestCreatePr:
         ]
         assert "--title 'Use meta device fallback'" in str(pr_create_calls[0])
 
+    def test_applies_agent_release_notes_label(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+
+        def run_side_effect(cmd, check=True):
+            if "pr_labels.txt" in cmd:
+                return CompletedProcess("", 0, "release notes: inductor\n", "")
+            if "gh label list" in cmd:
+                return CompletedProcess(
+                    "", 0, '[{"name":"release notes: inductor"}]\n', ""
+                )
+            if "git remote get-url" in cmd:
+                return CompletedProcess("", 0, "git@github.com:pytorch/pytorch.git\n")
+            if "gh pr create" in cmd:
+                return CompletedProcess(
+                    "", 0, "https://github.com/pytorch/pytorch/pull/99\n"
+                )
+            return CompletedProcess("", 0, "")
+
+        backend.run = MagicMock(side_effect=run_side_effect)
+        with patch("ptq.application.pr_service.backend_for_job", return_value=backend):
+            create_pr(repo, "20260217-42", human_note="Note")
+
+        pr_create_calls = [
+            call
+            for call in backend.run.call_args_list
+            if "gh pr create" in str(call)
+        ]
+        assert "--label 'release notes: inductor'" in str(pr_create_calls[0])
+
+    def test_rejects_unknown_agent_label_before_publishing(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+
+        def run_side_effect(cmd, check=True):
+            if "pr_labels.txt" in cmd:
+                return CompletedProcess("", 0, "release notes: compiler\n", "")
+            if "gh label list" in cmd:
+                return CompletedProcess(
+                    "", 0, '[{"name":"release notes: inductor"}]\n', ""
+                )
+            return CompletedProcess("", 0, "")
+
+        backend.run = MagicMock(side_effect=run_side_effect)
+        with (
+            patch("ptq.application.pr_service.backend_for_job", return_value=backend),
+            pytest.raises(PtqError, match="Unknown label.*release notes: compiler"),
+        ):
+            create_pr(repo, "20260217-42", human_note="Note")
+
+        assert all(
+            "git push" not in str(call) and "gh pr create" not in str(call)
+            for call in backend.run.call_args_list
+        )
+
     def test_pr_defaults_syncs_open_github_metadata(self, tmp_path):
         repo, backend = self._setup(tmp_path)
         job = repo.get("20260217-42")
