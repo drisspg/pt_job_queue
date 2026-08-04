@@ -4,6 +4,7 @@ from subprocess import CompletedProcess
 from unittest.mock import MagicMock
 
 from ptq.application.venv_service import (
+    PYTORCH_TEST_REQUIREMENTS,
     TRANSFORMER_NUGGETS_REQUIREMENT,
     _try_clone_base_venv,
     install_transformer_nuggets,
@@ -189,6 +190,12 @@ class TestCloneSuccess:
     def test_returns_true_on_success(self):
         backend = _make_backend()
         assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is True
+
+    def test_installs_test_requirements(self):
+        backend = _make_backend()
+        assert _try_clone_base_venv(backend, JOB_DIR, WORKTREE) is True
+
+        assert any(PYTORCH_TEST_REQUIREMENTS in cmd for cmd in _all_cmds(backend))
 
     def test_installs_transformer_nuggets_after_torch_smoke(self):
         backend = _make_backend()

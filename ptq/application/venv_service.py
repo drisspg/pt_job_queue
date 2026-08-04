@@ -13,6 +13,7 @@ from ptq.ssh import Backend
 log = logging.getLogger("ptq.venv")
 
 ProgressCallback = Callable[[str], None]
+PYTORCH_TEST_REQUIREMENTS = "pytest pytest-xdist"
 TRANSFORMER_NUGGETS_PACKAGE = "transformer_nuggets"
 TRANSFORMER_NUGGETS_REQUIREMENT = (
     "transformer_nuggets @ git+https://github.com/drisspg/transformer_nuggets.git"
@@ -285,7 +286,8 @@ def _try_clone_base_venv(
     with _timed("dev deps", progress):
         r = backend.run(
             f"cd {worktree_path} && "
-            f"uv pip install --python {job_python} -r requirements.txt pytest",
+            f"uv pip install --python {job_python} -r requirements.txt "
+            f"{PYTORCH_TEST_REQUIREMENTS}",
             check=False,
             stream=verbose,
         )
@@ -362,7 +364,8 @@ def _setup_job_venv(
         with _timed("dev deps", progress):
             result = backend.run(
                 f"cd {worktree_path} && "
-                f"uv pip install --python {job_python} -r requirements.txt pytest",
+                f"uv pip install --python {job_python} -r requirements.txt "
+                f"{PYTORCH_TEST_REQUIREMENTS}",
                 check=False,
                 stream=verbose,
             )

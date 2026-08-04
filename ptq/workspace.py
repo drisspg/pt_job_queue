@@ -7,7 +7,10 @@ from subprocess import CompletedProcess
 
 from rich.console import Console
 
-from ptq.application.venv_service import install_transformer_nuggets
+from ptq.application.venv_service import (
+    PYTORCH_TEST_REQUIREMENTS,
+    install_transformer_nuggets,
+)
 from ptq.repo_profiles import RepoProfile, available_repos, get_profile
 from ptq.ssh import Backend, RemoteBackend
 
@@ -99,7 +102,7 @@ def setup_workspace(
     console.print("Installing build dependencies...")
     result = backend.run(
         f"cd {workspace} && uv pip install --python .venv/bin/python "
-        f"-r {workspace}/pytorch/requirements-build.txt",
+        f"-r {workspace}/pytorch/requirements-build.txt {PYTORCH_TEST_REQUIREMENTS}",
         check=False,
         stream=True,
     )

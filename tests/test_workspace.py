@@ -4,7 +4,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ptq.application.venv_service import TRANSFORMER_NUGGETS_REQUIREMENT
+from ptq.application.venv_service import (
+    PYTORCH_TEST_REQUIREMENTS,
+    TRANSFORMER_NUGGETS_REQUIREMENT,
+)
 from ptq.workspace import detect_cuda_version, setup_workspace
 
 
@@ -96,6 +99,13 @@ class TestSetupWorkspace:
             "git -C" in cmd and "reset --hard upstream/viable/strict" in cmd
             for cmd in cmds
         )
+
+    def test_installs_test_requirements_in_base_venv(self, tmp_path):
+        backend = _setup_backend(str(tmp_path))
+        setup_workspace(backend)
+
+        cmds = [call.args[0] for call in backend.run.call_args_list]
+        assert any(PYTORCH_TEST_REQUIREMENTS in cmd for cmd in cmds)
 
     def test_installs_transformer_nuggets_when_torch_is_available(self, tmp_path):
         backend = _setup_backend(str(tmp_path))
