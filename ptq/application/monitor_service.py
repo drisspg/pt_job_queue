@@ -54,6 +54,7 @@ class MonitorRow:
     pr_is_draft: bool = False
     can_merge_ignore: bool = False
     review_decision: str = ""
+    job_name: str = ""
 
 
 def summarize_pr_checks(job: JobRecord) -> CheckSummary:
@@ -433,6 +434,7 @@ def collect_monitor_rows(
                 pr_is_draft=pr_signals.draft,
                 can_merge_ignore=can_merge_ignore,
                 review_decision=pr_signals.review_decision,
+                job_name=job.name or "",
             )
         )
     return rows

@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 
 from ptq.application.monitor_service import collect_monitor_rows
-from ptq.cli import _monitor_issue_markup, _monitor_pr_markup, app
+from ptq.cli import (
+    _monitor_issue_markup,
+    _monitor_job_markup,
+    _monitor_pr_markup,
+    app,
+)
 from ptq.domain.models import JobRecord, JobStatus
 from ptq.infrastructure.job_repository import JobRepository
 
@@ -456,6 +461,7 @@ def test_collect_monitor_rows_includes_pr_ready_jobs_without_pr_url(tmp_path):
                 local=True,
                 workspace="/tmp/ws",
                 agent="pi",
+                name="ready-job",
             )
         ],
     )
@@ -470,6 +476,7 @@ def test_collect_monitor_rows_includes_pr_ready_jobs_without_pr_url(tmp_path):
 
     assert len(rows) == 1
     assert rows[0].phase == "ready for PR"
+    assert rows[0].job_name == "ready-job"
     assert rows[0].next_action == "ptq pr job-ready"
 
 
@@ -502,6 +509,16 @@ def test_collect_monitor_rows_checks_pr_ready_artifacts_under_home_workspace(tmp
         "test -s $HOME/.ptq_workspace/jobs/job-ready/report.md || "
         "test -s $HOME/.ptq_workspace/jobs/job-ready/fix.diff",
         check=False,
+    )
+
+
+def test_monitor_cli_shows_display_name_and_stable_job_id():
+    row = MagicMock()
+    row.job_id = "20260829-pytorch-adhoc-100717"
+    row.job_name = "cuda-bf16x9-matmul"
+
+    assert _monitor_job_markup(row) == (
+        "cuda-bf16x9-matmul\n[dim]20260829-pytorch-adhoc-100717[/]"
     )
 
 

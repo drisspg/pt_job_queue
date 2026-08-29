@@ -654,6 +654,15 @@ def _github_url_number(url: str, kind: str) -> str:
     return number if number.isdigit() else ""
 
 
+def _monitor_job_markup(row) -> str:
+    """Show a job's display name while retaining its stable PTQ identifier."""
+    job_id = escape(_monitor_text_attr(row, "job_id"))
+    job_name = _monitor_text_attr(row, "job_name")
+    if not job_name:
+        return job_id
+    return f"{escape(job_name)}\n[dim]{job_id}[/]"
+
+
 def _monitor_issue_markup(row) -> str:
     """Render issue labels as terminal hyperlinks when an issue number is known."""
     issue = _monitor_text_attr(row, "issue")
@@ -714,7 +723,7 @@ def _render_monitor_table(rows) -> object:
     for row in rows:
         table.add_row(
             f"[{_monitor_phase_style(row.phase)}]{row.phase}[/]",
-            row.job_id,
+            _monitor_job_markup(row),
             _monitor_issue_markup(row),
             _monitor_pr_markup(row),
             row.ci.label,
