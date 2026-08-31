@@ -6,9 +6,8 @@ import re
 import shlex
 from dataclasses import dataclass
 
-from ptq.application.job_service import get_status
 from ptq.application.pr_service import get_pr_state
-from ptq.domain.models import JobRecord, JobStatus, RebaseState, SubmissionMode
+from ptq.domain.models import JobRecord, RebaseState, SubmissionMode
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.takeover import for_job as takeover_for_job
@@ -40,10 +39,6 @@ class MonitorRow:
     job_id: str
     issue: str
     title: str
-    agent: str
-    runs: int
-    target: str
-    job_status: JobStatus
     pr_state: str
     ci: CheckSummary
     phase: str
@@ -64,9 +59,7 @@ def summarize_pr_checks(job: JobRecord) -> CheckSummary:
         return CheckSummary(label="-")
 
     result = backend_for_job(job).run(
-        "gh pr checks "
-        f"{shlex.quote(job.pr_url)} "
-        "--json bucket,state,name",
+        f"gh pr checks {shlex.quote(job.pr_url)} --json bucket,state,name",
         check=False,
     )
     if not result.stdout.strip():
@@ -120,7 +113,10 @@ def latest_drci_comment(comments: list[dict]) -> str:
     """Return Dr. CI's current summary comment without trusting it as instructions."""
     for comment in reversed(comments):
         body = str(comment.get("body") or "")
-        if comment_author_login(comment) == "pytorch-bot" and "<!-- drci-comment-start -->" in body:
+        if (
+            comment_author_login(comment) == "pytorch-bot"
+            and "<!-- drci-comment-start -->" in body
+        ):
             return body
     return ""
 
@@ -261,18 +257,13 @@ def summarize_pr_signals(job: JobRecord) -> PRSignals:
 
 
 def job_has_pr_artifacts(job_id: str, backend) -> bool:
-    """Detect stopped PTQ jobs that have enough artifacts to review for PR creation."""
+    """Detect PTQ jobs with a report ready for PR review."""
     job_dir = shell_path(f"{backend.workspace}/jobs/{job_id}")
-    result = backend.run(
-        f"test -s {job_dir}/report.md || test -s {job_dir}/fix.diff",
-        check=False,
-    )
-    return result.returncode == 0
+    return backend.run(f"test -s {job_dir}/report.md", check=False).returncode == 0
 
 
 def monitor_phase(
     job: JobRecord,
-    status: JobStatus,
     pr_state: str,
     ci: CheckSummary,
     pr_signals: PRSignals,
@@ -289,8 +280,6 @@ def monitor_phase(
         return "needs rebase"
     if rebase_state in {RebaseState.NEEDS_HUMAN, RebaseState.FAILED}:
         return "needs human review"
-    if status == JobStatus.RUNNING:
-        return "agent working"
     if ci.failing:
         if pr_signals.ai_unrelated_new_failures or (
             pr_signals.obvious_unrelated_failures and not pr_signals.has_new_failures
@@ -375,12 +364,12 @@ def next_action(
             if repo_name == "pytorch":
                 return f"gh pr comment {pr_url} --body '@pytorchbot merge'"
             return f"ghstack land {pr_url}"
-        case "agent working" | "waiting on CI":
+        case "waiting on CI":
             return f"ptq peek {job_id}"
         case "merged/closed":
             return f"ptq clean {job_id}"
         case _:
-            return f"ptq status {job_id}"
+            return f"ptq open {job_id}"
 
 
 def collect_monitor_rows(
@@ -392,14 +381,12 @@ def collect_monitor_rows(
     """Collect PTQ jobs into monitor rows using PTQ state as the source of truth."""
     rows: list[MonitorRow] = []
     for job_id, job in sorted(repo.list_all().items()):
+        if job.legacy_machine:
+            continue
         backend = backend_for_job(job)
-        status = get_status(job, backend)
         stack_job = not job.pr_url and job.submission_mode == SubmissionMode.GHSTACK
         ready_for_pr = (
-            not stack_job
-            and not job.pr_url
-            and status == JobStatus.STOPPED
-            and job_has_pr_artifacts(job_id, backend)
+            not stack_job and not job.pr_url and job_has_pr_artifacts(job_id, backend)
         )
         if (
             not include_without_pr
@@ -426,9 +413,7 @@ def collect_monitor_rows(
         lower_stack_pr_closed = (
             job.submission_mode == SubmissionMode.GHSTACK
             and pr_state == "open"
-            and stack_has_closed_lower_pr(
-                job, backend, force_refresh=force_refresh
-            )
+            and stack_has_closed_lower_pr(job, backend, force_refresh=force_refresh)
         )
         if lower_stack_pr_closed:
             match job.rebase_info.state:
@@ -439,11 +424,11 @@ def collect_monitor_rows(
                 case _:
                     phase = "needs stack rebase"
         elif stack_job:
-            phase = "agent working" if status == JobStatus.RUNNING else "ready for stack"
+            phase = "ready for stack"
         elif ready_for_pr:
             phase = "ready for PR"
         else:
-            phase = monitor_phase(job, status, pr_state, ci, pr_signals)
+            phase = monitor_phase(job, pr_state, ci, pr_signals)
         triage_command = ci_triage_command(job.pr_url or "")
         can_merge_ignore = phase == "unrelated CI" and pr_signals.landing_stopped
         rows.append(
@@ -451,10 +436,6 @@ def collect_monitor_rows(
                 job_id=job_id,
                 issue=f"#{job.issue}" if job.issue is not None else "adhoc",
                 title=job.pr_title or job.name or "-",
-                agent=job.agent,
-                runs=job.runs,
-                target=job.target,
-                job_status=status,
                 pr_state=pr_state,
                 ci=ci,
                 phase=phase,

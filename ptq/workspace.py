@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import shlex
 from collections.abc import Callable
 from subprocess import CompletedProcess
@@ -11,37 +10,8 @@ from ptq.application.venv_service import (
     PYTORCH_TEST_REQUIREMENTS,
     install_transformer_nuggets,
 )
+from ptq.infrastructure.backends import Backend
 from ptq.repo_profiles import RepoProfile, available_repos, get_profile
-from ptq.ssh import Backend, RemoteBackend
-
-_CUDA_VERSION_RE = re.compile(r"CUDA Version:\s*(\d+)\.(\d+)")
-
-_SUPPORTED_CUDA = {
-    (12, 4): "cu124",
-    (12, 6): "cu126",
-    (12, 8): "cu128",
-    (13, 0): "cu130",
-}
-
-
-def detect_cuda_version(backend: Backend) -> str:
-    result = backend.run("nvidia-smi", check=False)
-    if result.returncode != 0:
-        raise SystemExit("nvidia-smi not found or failed.")
-    m = _CUDA_VERSION_RE.search(result.stdout)
-    if not m:
-        raise SystemExit("Could not parse CUDA version from nvidia-smi output.")
-    major, minor = int(m.group(1)), int(m.group(2))
-    if major < 12:
-        raise SystemExit(f"CUDA {major}.{minor} is too old (need >= 12.4).")
-    best = None
-    for (sup_major, sup_minor), tag in sorted(_SUPPORTED_CUDA.items()):
-        if (major, minor) >= (sup_major, sup_minor):
-            best = tag
-    if best is None:
-        raise SystemExit(f"CUDA {major}.{minor} is too old (need >= 12.4).")
-    return best
-
 
 console = Console()
 
@@ -67,10 +37,6 @@ def setup_workspace(
     workspace = backend.workspace
 
     console.print(f"[bold]Setting up workspace at {workspace}[/bold]")
-
-    if isinstance(backend, RemoteBackend):
-        _install_uv_remote(backend)
-        _ensure_rsync(backend)
 
     console.print("Creating workspace directories...")
     backend.run(f"mkdir -p {workspace}/jobs {workspace}/scripts")
@@ -267,16 +233,12 @@ def deploy_scripts(backend: Backend) -> None:
     scripts_dir = Path(__file__).parent.parent / "scripts"
     backend.run(f"mkdir -p {workspace}/scripts")
 
-    if isinstance(backend, RemoteBackend):
-        for script in scripts_dir.glob("*.sh"):
-            backend.copy_to(script, f"{workspace}/scripts/{script.name}")
-    else:
-        import shutil
+    import shutil
 
-        dest_dir = Path(workspace.replace("~", str(Path.home()))) / "scripts"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        for script in scripts_dir.glob("*.sh"):
-            shutil.copy2(script, dest_dir / script.name)
+    dest_dir = Path(workspace.replace("~", str(Path.home()))) / "scripts"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for script in scripts_dir.glob("*.sh"):
+        shutil.copy2(script, dest_dir / script.name)
 
     backend.run(f"chmod +x {workspace}/scripts/*.sh")
 
@@ -316,25 +278,3 @@ def _ensure_ccache_config(backend: Backend) -> None:
     backend.run(f"mkdir -p {conf_dir}")
     backend.run(f"cat > {conf_file} << 'CCACHE_EOF'\n{conf}CCACHE_EOF")
     console.print(f"Configured ccache with base_dir={home}")
-
-
-def _ensure_rsync(backend: Backend) -> None:
-    if backend.run("which rsync", check=False).returncode == 0:
-        return
-    console.print("Installing rsync...")
-    if backend.run("sudo apt-get install -y rsync", check=False).returncode == 0:
-        return
-    if backend.run("sudo yum install -y rsync", check=False).returncode == 0:
-        return
-    console.print(
-        "[yellow]Could not install rsync — fast-path venv clone will be disabled.[/yellow]"
-    )
-
-
-def _install_uv_remote(backend: RemoteBackend) -> None:
-    check = backend.run("which uv", check=False)
-    if check.returncode == 0:
-        console.print("uv already installed.")
-        return
-    console.print("Installing uv on remote...")
-    backend.run("curl -LsSf https://astral.sh/uv/install.sh | sh")

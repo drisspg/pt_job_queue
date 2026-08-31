@@ -2,21 +2,15 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ptq.application.job_service import clean_machine, get_status, kill_job
-from ptq.domain.models import (
-    JobNotFoundError,
-    JobRecord,
-    JobStatus,
-    SubmissionMode,
-)
+from ptq.application.job_service import clean_jobs, clean_single_job
+from ptq.domain.models import JobNotFoundError, JobRecord, PtqError, SubmissionMode
 from ptq.domain.policies import make_job_id
-from ptq.infrastructure.backends import backend_for_job, create_backend
+from ptq.infrastructure.backends import LocalBackend, backend_for_job, create_backend
 from ptq.infrastructure.job_repository import JobRepository
-from ptq.ssh import LocalBackend, RemoteBackend
 
 
 def _save_job_after_barrier(
@@ -24,11 +18,6 @@ def _save_job_after_barrier(
 ) -> None:
     barrier.wait()
     JobRepository(path).save(JobRecord(job_id=job_id, issue=issue))
-
-
-def _clear_pid_after_barrier(path, barrier: threading.Barrier, job_id: str) -> None:
-    barrier.wait()
-    JobRepository(path).save_pid(job_id, None)
 
 
 class TestMakeJobId:
@@ -43,63 +32,38 @@ class TestMakeJobId:
     def test_adhoc_ids_differ_by_message(self, frozen_date):
         assert make_job_id(message="a") != make_job_id(message="b")
 
-    def test_adhoc_default(self, frozen_date):
-        result = make_job_id()
-        assert "adhoc" in result
-
 
 class TestJobRecord:
     def test_roundtrip(self):
         record = JobRecord(
             job_id="20260217-42",
             issue=42,
-            runs=2,
-            agent="codex",
-            model="o3",
-            machine="gpu-dev",
-            workspace="~/ptq_workspace",
-            pid=12345,
+            workspace="~/workspace",
+            name="example",
         )
-        d = record.to_dict()
-        restored = JobRecord.from_dict("20260217-42", d)
-        assert restored.job_id == record.job_id
-        assert restored.issue == record.issue
-        assert restored.runs == record.runs
-        assert restored.agent == record.agent
-        assert restored.model == record.model
-        assert restored.machine == record.machine
-        assert restored.pid == record.pid
+        assert JobRecord.from_dict("20260217-42", record.to_dict()) == record
 
-    def test_local_roundtrip(self):
-        record = JobRecord(
-            job_id="20260217-adhoc-abc123",
-            local=True,
-            workspace="~/.ptq_workspace",
+    def test_ignores_legacy_execution_and_remote_fields(self):
+        record = JobRecord.from_dict(
+            "legacy",
+            {
+                "runs": 2,
+                "agent": "pi",
+                "model": "old-model",
+                "thinking": "high",
+                "pid": 123,
+                "initializing": True,
+                "local": True,
+                "machine": "old-host",
+            },
         )
-        d = record.to_dict()
-        assert d["local"] is True
-        assert "machine" not in d
-        restored = JobRecord.from_dict("20260217-adhoc-abc123", d)
-        assert restored.local is True
-        assert restored.workspace == "~/.ptq_workspace"
-
-    def test_target_property(self):
-        assert JobRecord(job_id="j", machine="gpu-dev").target == "gpu-dev"
-        assert JobRecord(job_id="j", local=True).target == "local"
-
-    def test_pr_url_roundtrip(self):
-        record = JobRecord(
-            job_id="j",
-            pr_url="https://github.com/pytorch/pytorch/pull/99",
-        )
-        d = record.to_dict()
-        assert d["pr_url"] == "https://github.com/pytorch/pytorch/pull/99"
-        restored = JobRecord.from_dict("j", d)
-        assert restored.pr_url == "https://github.com/pytorch/pytorch/pull/99"
-
-    def test_pr_url_omitted_when_none(self):
-        d = JobRecord(job_id="j").to_dict()
-        assert "pr_url" not in d
+        assert record.job_id == "legacy"
+        assert record.workspace == "~/.ptq_workspace"
+        assert record.to_dict() == {
+            "issue": None,
+            "workspace": "~/.ptq_workspace",
+            "machine": "old-host",
+        }
 
     def test_stack_mode_roundtrip(self):
         record = JobRecord(
@@ -116,27 +80,18 @@ class TestJobRecord:
         assert restored.stack_base == "release/2.8"
         assert restored.stack_pr_urls == record.stack_pr_urls
 
-    def test_default_submission_mode_is_omitted(self):
+    def test_default_optional_fields_are_omitted(self):
         data = JobRecord(job_id="j").to_dict()
+        assert "pr_url" not in data
         assert "submission_mode" not in data
         assert "stack_base" not in data
-
-    def test_initializing_omitted_when_false(self):
-        d = JobRecord(job_id="j").to_dict()
-        assert "initializing" not in d
-
-    def test_pid_omitted_when_none(self):
-        d = JobRecord(job_id="j").to_dict()
-        assert "pid" not in d
+        assert "repo" not in data
 
 
 class TestJobRepository:
     def test_save_and_get(self, repo: JobRepository):
-        record = JobRecord(job_id="test-1", issue=42, agent="claude")
-        repo.save(record)
-        restored = repo.get("test-1")
-        assert restored.issue == 42
-        assert restored.agent == "claude"
+        repo.save(JobRecord(job_id="test-1", issue=42))
+        assert repo.get("test-1").issue == 42
 
     def test_get_unknown_raises(self, repo: JobRepository):
         with pytest.raises(JobNotFoundError):
@@ -148,267 +103,126 @@ class TestJobRepository:
         with pytest.raises(JobNotFoundError):
             repo.get("del-me")
 
-    def test_list_all(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="a", issue=1))
-        repo.save(JobRecord(job_id="b", issue=2))
-        all_jobs = repo.list_all()
-        assert len(all_jobs) == 2
-        assert "a" in all_jobs
-        assert "b" in all_jobs
+    def test_resolve_id_by_job_issue_and_name(self, repo: JobRepository):
+        repo.save(JobRecord(job_id="job-42", issue=42, name="example"))
+        assert repo.resolve_id("job-42") == "job-42"
+        assert repo.resolve_id("42") == "job-42"
+        assert repo.resolve_id("example") == "job-42"
 
-    def test_resolve_id_by_job_id(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="20260217-42", issue=42))
-        assert repo.resolve_id("20260217-42") == "20260217-42"
+    def test_find_by_issue_and_repo(self, repo: JobRepository):
+        repo.save(JobRecord(job_id="pytorch", issue=42))
+        repo.save(JobRecord(job_id="titan", issue=42, repo="torchtitan"))
+        assert repo.find_by_issue(42) == "pytorch"
+        assert repo.find_by_issue(42, repo="torchtitan") == "titan"
 
-    def test_resolve_id_by_issue(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="20260217-42", issue=42))
-        assert repo.resolve_id("42") == "20260217-42"
-
-    def test_resolve_id_unknown_raises(self, repo: JobRepository):
-        with pytest.raises(JobNotFoundError):
-            repo.resolve_id("nonexistent")
-
-    def test_find_by_issue(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", issue=42, machine="gpu-dev"))
-        assert repo.find_by_issue(42, machine="gpu-dev") == "j1"
-        assert repo.find_by_issue(42, machine="other") is None
-        assert repo.find_by_issue(99, machine="gpu-dev") is None
-
-    def test_find_by_issue_local(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", issue=42, local=True))
-        assert repo.find_by_issue(42, local=True) == "j1"
-        assert repo.find_by_issue(42, machine="gpu-dev") is None
-
-    def test_increment_run(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", issue=42, runs=1))
-        new_run = repo.increment_run("j1", agent_type="codex", model="o3")
-        assert new_run == 2
-        updated = repo.get("j1")
-        assert updated.runs == 2
-        assert updated.agent == "codex"
-        assert updated.model == "o3"
-        assert updated.initializing is True
-        assert updated.pid is None
-
-    def test_save_pid(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", initializing=True))
-        repo.save_pid("j1", 12345)
-        updated = repo.get("j1")
-        assert updated.pid == 12345
-        assert updated.initializing is False
-
-    def test_clear_pid(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", pid=12345))
-        repo.save_pid("j1", None)
-        updated = repo.get("j1")
-        assert updated.pid is None
-
-    def test_clear_pid_also_clears_initializing(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", pid=12345, initializing=True))
-        repo.save_pid("j1", None)
-        updated = repo.get("j1")
-        assert updated.pid is None
-        assert updated.initializing is False
-
-    def test_save_pid_on_missing_job_is_noop(self, repo: JobRepository):
-        repo.save_pid("nonexistent", 999)
-
-    def test_concurrent_writes_do_not_drop_other_jobs(self, tmp_path):
+    def test_concurrent_writes_do_not_drop_jobs(self, tmp_path):
         path = tmp_path / "jobs.json"
-        repo = JobRepository(path)
-        repo.save(JobRecord(job_id="existing", issue=42, pid=12345, initializing=True))
-
-        new_job_ids = [f"job-{i}" for i in range(8)]
-        barrier = threading.Barrier(len(new_job_ids) + 8)
-
-        with ThreadPoolExecutor(max_workers=len(new_job_ids) + 8) as executor:
+        job_ids = [f"job-{index}" for index in range(16)]
+        barrier = threading.Barrier(len(job_ids))
+        with ThreadPoolExecutor(max_workers=len(job_ids)) as executor:
             futures = [
-                executor.submit(
-                    _save_job_after_barrier, path, barrier, job_id, 1000 + i
-                )
-                for i, job_id in enumerate(new_job_ids)
+                executor.submit(_save_job_after_barrier, path, barrier, job_id, index)
+                for index, job_id in enumerate(job_ids)
             ]
-            futures.extend(
-                executor.submit(_clear_pid_after_barrier, path, barrier, "existing")
-                for _ in range(8)
-            )
             for future in futures:
                 future.result()
-
-        all_jobs = JobRepository(path).list_all()
-        assert set(all_jobs) == {"existing", *new_job_ids}
-        assert all_jobs["existing"].pid is None
-        assert all_jobs["existing"].initializing is False
-
-    def test_from_dict_minimal(self):
-        record = JobRecord.from_dict("j1", {})
-        assert record.runs == 1
-        assert record.agent == "claude"
-        assert record.model == "opus"
-        assert record.machine is None
-        assert record.local is False
-
-    def test_adhoc_none_and_empty_equivalent(self, frozen_date):
-        assert make_job_id(message=None) == make_job_id(message="")
-
-    def test_adhoc_deterministic(self, frozen_date):
-        assert make_job_id(message="fix bug") == make_job_id(message="fix bug")
+        assert set(JobRepository(path).list_all()) == set(job_ids)
 
 
-class TestCreateBackend:
-    def test_local(self):
-        b = create_backend(local=True)
-        assert isinstance(b, LocalBackend)
-        assert b.workspace == "~/.ptq_workspace"
+class TestBackend:
+    def test_default_workspace(self):
+        backend = create_backend()
+        assert isinstance(backend, LocalBackend)
+        assert backend.workspace == "~/.ptq_workspace"
 
-    def test_local_custom_workspace(self):
-        b = create_backend(local=True, workspace="/custom/ws")
-        assert isinstance(b, LocalBackend)
-        assert b.workspace == "/custom/ws"
+    def test_custom_workspace(self):
+        assert create_backend(workspace="/custom/ws").workspace == "/custom/ws"
 
-    def test_remote(self):
-        b = create_backend(machine="gpu-dev")
-        assert isinstance(b, RemoteBackend)
-        assert b.workspace == "~/ptq_workspace"
+    def test_backend_for_job(self):
+        record = JobRecord(job_id="j1", workspace="~/workspace")
+        backend = backend_for_job(record)
+        assert isinstance(backend, LocalBackend)
+        assert backend.workspace == "~/workspace"
 
-    def test_neither_raises(self):
-        with pytest.raises(ValueError, match="Must specify"):
-            create_backend()
-
-
-class TestBackendForJob:
-    def test_local_job(self):
-        record = JobRecord(job_id="j1", local=True, workspace="~/.ptq_workspace")
-        b = backend_for_job(record)
-        assert isinstance(b, LocalBackend)
-
-    def test_remote_job(self):
-        record = JobRecord(job_id="j1", machine="gpu-dev", workspace="~/ws")
-        b = backend_for_job(record)
-        assert isinstance(b, RemoteBackend)
-
-    def test_no_target_raises(self):
-        record = JobRecord(job_id="j1")
-        with pytest.raises(JobNotFoundError, match="has no target"):
+    def test_legacy_remote_job_is_rejected(self):
+        record = JobRecord.from_dict(
+            "remote", {"machine": "gpu-dev", "workspace": "~/workspace"}
+        )
+        with pytest.raises(JobNotFoundError, match="removed remote machine"):
             backend_for_job(record)
 
 
-class TestGetStatus:
-    def test_initializing(self):
-        job = JobRecord(job_id="j1", initializing=True, pid=123)
-        backend = MagicMock()
-        assert get_status(job, backend) == JobStatus.INITIALIZING
+class TestClean:
+    @staticmethod
+    def backend(*, dirty: bool = False, remove_fails: bool = False):
+        backend = MagicMock(workspace="~/ws")
 
-    def test_no_pid(self):
-        job = JobRecord(job_id="j1")
-        backend = MagicMock()
-        assert get_status(job, backend) == JobStatus.STOPPED
+        def run(command, check=True, **kwargs):
+            if "status --porcelain" in command:
+                return MagicMock(returncode=0, stdout=" M file.py\n" if dirty else "")
+            if "rev-parse --absolute-git-dir" in command:
+                return MagicMock(returncode=0, stdout="/tmp/git-dir\n")
+            if "rebase-merge" in command or "rebase-apply" in command:
+                return MagicMock(returncode=1, stdout="")
+            if (
+                "worktree remove" in command or "create_worktree.py remove" in command
+            ) and remove_fails:
+                return MagicMock(returncode=1, stdout="", stderr="remove failed")
+            return MagicMock(returncode=0, stdout="", stderr="")
 
-    def test_alive_pid(self):
-        job = JobRecord(job_id="j1", pid=123)
-        backend = MagicMock()
-        backend.is_pid_alive.return_value = True
-        assert get_status(job, backend) == JobStatus.RUNNING
+        backend.run.side_effect = run
+        return backend
 
-    def test_dead_pid(self):
-        job = JobRecord(job_id="j1", pid=123)
-        backend = MagicMock()
-        backend.is_pid_alive.return_value = False
-        assert get_status(job, backend) == JobStatus.STOPPED
+    def test_single_clean_job(self, repo: JobRepository):
+        repo.save(JobRecord(job_id="j1", workspace="~/ws"))
+        with patch(
+            "ptq.application.job_service.backend_for_job",
+            return_value=self.backend(),
+        ):
+            removed = clean_single_job(repo, "j1")
+        assert removed.job_id == "j1"
+        with pytest.raises(JobNotFoundError):
+            repo.get("j1")
 
-    def test_pid_zero_is_not_none(self):
-        job = JobRecord(job_id="j1", pid=0)
-        backend = MagicMock()
-        backend.is_pid_alive.return_value = False
-        assert get_status(job, backend) == JobStatus.STOPPED
-        backend.is_pid_alive.assert_called_once_with(0)
+    def test_refuses_dirty_job(self, repo: JobRepository):
+        repo.save(JobRecord(job_id="j1", workspace="~/ws"))
+        with (
+            patch(
+                "ptq.application.job_service.backend_for_job",
+                return_value=self.backend(dirty=True),
+            ),
+            pytest.raises(PtqError, match="uncommitted work"),
+        ):
+            clean_single_job(repo, "j1")
+        assert repo.get("j1").job_id == "j1"
 
+    def test_failed_removal_preserves_record(self, repo: JobRepository):
+        repo.save(JobRecord(job_id="j1", workspace="~/ws"))
+        with (
+            patch(
+                "ptq.application.job_service.backend_for_job",
+                return_value=self.backend(remove_fails=True),
+            ),
+            pytest.raises(PtqError, match="Failed to remove worktree"),
+        ):
+            clean_single_job(repo, "j1")
+        assert repo.get("j1").job_id == "j1"
 
-class TestKillJob:
-    def test_kills_running(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", machine="gpu-dev", workspace="~/ws", pid=42))
-        backend = MagicMock()
-        backend.is_pid_alive.return_value = True
-        with MagicMock() as mock_bfj:
-            mock_bfj.return_value = backend
-            from unittest.mock import patch
-
-            with patch("ptq.application.job_service.backend_for_job", mock_bfj):
-                killed = kill_job(repo, "j1")
-        assert killed is True
-        backend.kill_pid.assert_called_once_with(42)
-        assert repo.get("j1").pid is None
-
-    def test_already_stopped(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="j1", machine="gpu-dev", workspace="~/ws"))
-        backend = MagicMock()
-        from unittest.mock import patch
-
-        with patch("ptq.application.job_service.backend_for_job", return_value=backend):
-            killed = kill_job(repo, "j1")
-        assert killed is False
-        backend.kill_pid.assert_not_called()
-
-
-class TestCleanMachine:
-    def _setup_jobs(self, repo: JobRepository, count: int) -> list[str]:
-        ids = []
-        for i in range(count):
-            jid = f"job-{i}"
-            repo.save(JobRecord(job_id=jid, machine="gpu-dev", workspace="~/ws"))
-            ids.append(jid)
-        return ids
+    def test_force_removes_dirty_job(self, repo: JobRepository):
+        repo.save(JobRecord(job_id="j1", workspace="~/ws"))
+        with patch(
+            "ptq.application.job_service.backend_for_job",
+            return_value=self.backend(dirty=True),
+        ):
+            clean_single_job(repo, "j1", force=True)
+        with pytest.raises(JobNotFoundError):
+            repo.get("j1")
 
     def test_keep_preserves_newest(self, repo: JobRepository):
-        ids = self._setup_jobs(repo, 5)
-        backend = MagicMock()
-        backend.workspace = "~/ws"
-        backend.is_pid_alive.return_value = False
-        removed, skipped = clean_machine(repo, backend, machine="gpu-dev", keep=2)
-        assert len(removed) == 3
-        assert set(removed) == {ids[0], ids[1], ids[2]}
-        remaining = repo.list_all()
-        assert ids[3] in remaining
-        assert ids[4] in remaining
-
-    def test_keep_equal_to_count_removes_none(self, repo: JobRepository):
-        self._setup_jobs(repo, 2)
-        backend = MagicMock()
-        backend.workspace = "~/ws"
-        backend.is_pid_alive.return_value = False
-        removed, _ = clean_machine(repo, backend, machine="gpu-dev", keep=2)
-        assert removed == []
-        assert len(repo.list_all()) == 2
-
-    def test_keep_greater_than_count_removes_none(self, repo: JobRepository):
-        self._setup_jobs(repo, 2)
-        backend = MagicMock()
-        backend.workspace = "~/ws"
-        backend.is_pid_alive.return_value = False
-        removed, _ = clean_machine(repo, backend, machine="gpu-dev", keep=5)
-        assert removed == []
-
-    def test_skips_running_by_default(self, repo: JobRepository):
-        repo.save(JobRecord(job_id="stopped", machine="gpu-dev", workspace="~/ws"))
-        repo.save(
-            JobRecord(job_id="running", machine="gpu-dev", workspace="~/ws", pid=42)
-        )
-        backend = MagicMock()
-        backend.workspace = "~/ws"
-        backend.is_pid_alive.side_effect = lambda pid: pid == 42
-        removed, skipped = clean_machine(repo, backend, machine="gpu-dev")
-        assert "stopped" in removed
-        assert "running" not in removed
-        assert skipped == 1
-
-    def test_include_running(self, repo: JobRepository):
-        repo.save(
-            JobRecord(job_id="running", machine="gpu-dev", workspace="~/ws", pid=42)
-        )
-        backend = MagicMock()
-        backend.workspace = "~/ws"
-        backend.is_pid_alive.return_value = True
-        removed, _ = clean_machine(
-            repo, backend, machine="gpu-dev", include_running=True
-        )
-        assert "running" in removed
+        for index in range(5):
+            repo.save(JobRecord(job_id=f"job-{index}", workspace="~/ws"))
+        backend = self.backend()
+        with patch("ptq.application.job_service.backend_for_job", return_value=backend):
+            removed = clean_jobs(repo, keep=2)
+        assert removed == ["job-0", "job-1", "job-2"]
+        assert set(repo.list_all()) == {"job-3", "job-4"}

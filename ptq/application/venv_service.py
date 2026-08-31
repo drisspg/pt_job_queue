@@ -7,8 +7,8 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from subprocess import CompletedProcess
 
+from ptq.infrastructure.backends import Backend
 from ptq.repo_profiles import get_profile
-from ptq.ssh import Backend
 
 log = logging.getLogger("ptq.venv")
 

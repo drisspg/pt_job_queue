@@ -102,54 +102,20 @@ class JobRepository:
             return sorted(by_name, key=lambda x: x[0])[-1][0]
         raise JobNotFoundError(f"Unknown job: {job_id_or_issue}")
 
-    def find_by_name(self, name: str) -> str | None:
+    def find_by_name(self, name: str, repo: str = "pytorch") -> str | None:
         for job_id, entry in sorted(self._load_raw().items(), reverse=True):
-            if entry.get("name") == name:
+            if entry.get("name") == name and entry.get("repo", "pytorch") == repo:
                 return job_id
         return None
 
-    def find_by_issue(
-        self,
-        issue_number: int,
-        machine: str | None = None,
-        local: bool = False,
-        repo: str = "pytorch",
-    ) -> str | None:
+    def find_by_issue(self, issue_number: int, repo: str = "pytorch") -> str | None:
         for job_id, entry in sorted(self._load_raw().items(), reverse=True):
-            if entry.get("issue") != issue_number:
-                continue
-            if entry.get("repo", "pytorch") != repo:
-                continue
-            if local and entry.get("local"):
-                return job_id
-            if machine and entry.get("machine") == machine:
+            if (
+                entry.get("issue") == issue_number
+                and entry.get("repo", "pytorch") == repo
+            ):
                 return job_id
         return None
-
-    def increment_run(
-        self,
-        job_id: str,
-        agent_type: str | None = None,
-        model: str | None = None,
-        thinking: str | None = None,
-    ) -> int:
-        with self._locked(exclusive=True):
-            db = self._load_raw_unlocked()
-            entry = db.get(job_id)
-            if not entry:
-                raise JobNotFoundError(f"Unknown job: {job_id}")
-            job = JobRecord.from_dict(job_id, entry)
-            job.runs += 1
-            job.pid = None
-            job.initializing = True
-            if agent_type:
-                job.agent = agent_type
-            if model:
-                job.model = model
-            job.thinking = thinking
-            db[job_id] = job.to_dict()
-            self._save_raw_unlocked(db)
-            return job.runs
 
     def save_rebase(self, job_id: str, rebase_data: dict) -> None:
         def update(db: dict) -> None:
@@ -170,17 +136,5 @@ class JobRepository:
                 db[job_id]["name"] = name
             else:
                 db[job_id].pop("name", None)
-
-        self._update_raw(update)
-
-    def save_pid(self, job_id: str, pid: int | None) -> None:
-        def update(db: dict) -> None:
-            if job_id not in db:
-                return
-            if pid is not None:
-                db[job_id]["pid"] = pid
-            else:
-                db[job_id].pop("pid", None)
-            db[job_id].pop("initializing", None)
 
         self._update_raw(update)

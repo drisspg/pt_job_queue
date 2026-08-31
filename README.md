@@ -1,10 +1,10 @@
-# ptq — PyTorch Job Queue
+# ptq — PyTorch Workspace Queue
 
-CLI tool that takes a GitHub issue number, SSHs into a remote GPU machine, and launches an agent (Claude/Codex/Cursor/pi) to autonomously investigate and fix the bug. The agent produces a report and a diff that you can review and turn into a PR.
+PTQ creates isolated PyTorch worktrees, opens them in Herdr, tracks their pull requests, and monitors CI. Development happens interactively in Pi from each job workspace.
 
 ## Install
 
-No install step needed — just use `uv run`:
+No installation step is required:
 
 ```bash
 cd pt_job_queue
@@ -17,395 +17,220 @@ For development:
 uv run --extra dev pytest
 ```
 
-### Uber speed mode getting started
+## Set up a seed workspace
 
-Assumes you have uv installed; otherwise run `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-
-```bash
-git clone git@github.com:drisspg/pt_job_queue.git
-
-# This is the one intentional local PyTorch build for the seed workspace.
-uv run ptq setup --local --build
-uv run ptq run -m "tell me a story" --agent codex
-```
-
-To build the seed workspace from a non-default base, pass the target ref explicitly:
+Create one local seed checkout and build it once:
 
 ```bash
-uv run ptq setup --local --build --onto upstream/viable/strict
+uv run ptq setup --build
 ```
 
-### New issue isolation workflow
-
-For new PyTorch issues, prefer an issue-scoped workspace instead of reusing the shared local seed workspace. This keeps ghstack/rebase/build work for one issue from mutating generated ignored files that another issue's fast-path provisioning expects to match.
+Use a different base when needed:
 
 ```bash
-ISSUE=143260
-WS="$HOME/.ptq_workspaces/pytorch-$ISSUE"
-uv run ptq setup --local --workspace "$WS" --build
-uv run ptq run --issue "$ISSUE" --local --workspace "$WS" --agent pi --no-follow
-uv run ptq takeover "$ISSUE"
+uv run ptq setup --build --onto upstream/viable/strict
 ```
 
-Use `--build` intentionally for a fresh isolated PyTorch workspace: it creates the built base venv that later worktree provisioning relies on for the fast clone path. Do not let an unprepared or mismatched workspace discover that problem by falling back during `ptq worktree`.
-
-If the issue job/worktree already exists, skip setup and worktree creation; enter the recorded workspace instead:
-
-```bash
-uv run ptq list
-uv run ptq takeover JOB_ID
-```
-
-`ptq takeover` reads the workspace from the job record, so you do not repeat `--workspace` there.
-
-## Usage
-
-### 1. Set up a machine
-
-```bash
-# Remote GPU machine (auto-detects CUDA version)
-uv run ptq setup my-gpu-box --build
-
-# Remote with explicit CUDA version
-uv run ptq setup my-gpu-box --cuda cu130 --build
-
-# Local (for testing/development)
-uv run ptq setup --local --cpu --build
-```
-
-This creates a workspace with:
-- A `uv`-managed venv with PyTorch nightly
-- `transformer_nuggets` installed from
-  `https://github.com/drisspg/transformer_nuggets` once torch is importable
-- A pytorch source clone at the matching nightly commit
-- Helper scripts for applying fixes to site-packages
-
-When `--build` is used, setup resets the seed checkout to `origin/main` by default, then performs a full checkout nuke before editable install (`git clean -dfx` + submodule sync/update) to avoid stale CMake/Ninja graphs after upstream file moves. Use `--onto REF` to build from another ref, for example `--onto upstream/viable/strict`.
-
-**Speed up C++ rebuilds:** Install system NCCL to skip building it from source (~5 min savings per rebuild):
-
-```bash
-sudo apt install -y libnccl-dev
-```
-
-Then add to `~/.ptq/config.toml`:
+Setup creates the source checkout, uv-managed environment, build dependencies, and helper scripts used to provision job worktrees. Add build environment settings to `~/.ptq/config.toml`:
 
 ```toml
 [build.env]
 USE_SYSTEM_NCCL = "1"
 ```
 
-### 2. Create a named worktree
+## Open a workspace
+
+Create or reuse a local issue workspace and open it in Herdr:
 
 ```bash
-# On a remote machine
-uv run ptq worktree flex-attn --machine my-gpu-box
-
-# Locally (default when no --machine)
-uv run ptq worktree my-fix --local
-
-# Only when debugging provisioning output
-uv run ptq worktree stride-fix --machine my-gpu-box -v
+uv run ptq open --issue 143260
 ```
 
-Creates a PyTorch git worktree with a ready-to-use venv, without launching an agent. Useful when you want to work in the worktree yourself or defer agent launch. Run `ptq setup ...` first — `worktree` assumes the workspace already exists and has a compatible built base venv. The command prints the shell command to enter the worktree.
-
-Before creating a new worktree, run `uv run ptq list`; if a job or named worktree already exists for the issue, use `uv run ptq takeover JOB_ID` instead. `-v/--verbose` only streams provisioning output. It does not make worktree creation faster and should not be part of the default new-issue path.
-
-Later, launch an agent in the same worktree by name:
+Create or reuse named work:
 
 ```bash
-uv run ptq run flex-attn -m "optimize the CPU codegen"
+uv run ptq open --name scaled-addmm-api
 ```
 
-The worktree shows up in `ptq list` and can be cleaned with `ptq clean` like any other job.
-
-### 3. Launch an investigation
+Open an existing job by ID, issue number, or name:
 
 ```bash
-# On a remote machine
-uv run ptq run --issue 174923 --machine my-gpu-box
-
-# Locally
-uv run ptq run --issue 174923 --local
-
-# Run in background (don't stream output)
-uv run ptq run --issue 174923 --machine my-gpu-box --no-follow
-
-# Ad-hoc task (no issue, just a message)
-uv run ptq run --machine my-gpu-box -m "Optimize the flex attention CPU codegen"
-
-# Issue + extra context
-uv run ptq run --issue 174923 --machine my-gpu-box -m "Focus on the stride logic"
-
-# Use a preset template from the prompt library
-ptq run --issue 174923 --machine my-gpu-box -p diagnose_and_plan
-
-# Preset + extra instructions (appends your -m text)
-ptq run --issue 174923 --machine my-gpu-box -p fix_and_verify -m "focus only on scaled_mm path"
-
-# Use a different agent
-uv run ptq run --issue 174923 --machine my-gpu-box --agent cursor --model gpt-5.3-codex-xhigh-fast
-
-# Use first-class thinking control when the backend supports it
-uv run ptq run --agent pi --model openai-codex/gpt-5.5 --thinking high -m "triage the repro"
-```
-
-The agent will:
-1. Reproduce the bug using a repro script extracted from the issue
-2. Read pytorch source to find the root cause
-3. Apply a minimal Python-only fix
-4. Test the fix by copying edits to site-packages and re-running the repro
-5. Write `report.md`, `pr_title.txt`, and `fix.diff`
-
-Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees. Fresh workspaces still need an explicit `ptq setup ...` first.
-
-The prompt library is backed by `~/.ptq/config.toml`.
-
-Per-agent model defaults live there too. For backends with first-class reasoning controls, you can set thinking separately from the model:
-
-```toml
-[models.pi]
-default = "openai-codex/gpt-5.5"
-thinking = "high"
-
-[models.claude]
-default = "opus"
-thinking = "high"
-
-[models.codex]
-default = "gpt-5.4"
-thinking = "high"
-```
-
-Cursor currently encodes reasoning level in the model name itself, so PTQ continues to treat Cursor thinking as model-driven.
-
-- Built-ins are always available and can be overridden under `[prompt_library.builtin.<name>]`
-- User presets can be added under `[prompt_library.custom.<name>]`
-
-List everything available from CLI with:
-
-```bash
-ptq presets
-```
-
-### 4. Monitor progress (CLI)
-
-```bash
-# Peek at the agent's worklog
-uv run ptq peek 174923
-
-# Peek with recent log activity
-uv run ptq peek 174923 --log 30
-
-# List all jobs with running/stopped status
-uv run ptq list
-
-# Watch PR jobs and CI follow-up status
-uv run ptq monitor
-uv run ptq monitor --watch
-
-# Run bounded CI supervision over monitor rows and print worker prompts
-uv run ptq supervise
-uv run ptq supervise --prompts
-uv run ptq supervise --watch --interval 300
-
-# Open the monitor in a two-pane Herdr workspace
-uv run ptq monitor --herdr
-
-# Open an interactive Herdr workspace for a job
 uv run ptq open JOB_ID
 ```
 
-The agent maintains a `worklog.md` with entries after each significant step, so you can check progress without streaming the full output.
+For an intentionally isolated seed checkout:
 
-`ptq monitor` is a mergedog-style PR monitor for PTQ-created PR jobs and stopped jobs that look ready for PR creation. It shows one row per relevant job, classifies the next phase, colors the PR column as open/draft/closed state, prints `ptq takeover JOB_ID`-equivalent shell-entry commands for opening Herdr workspaces, marks actively merging PRs as `landing` even if checks are red, and points failing CI review rows at the local triage helper. On terminals with OSC-8 hyperlink support, the Issue and PR cells are clickable GitHub links:
+```bash
+ISSUE=143260
+WS="$HOME/.ptq_workspaces/pytorch-$ISSUE"
+uv run ptq setup --workspace "$WS" --build
+uv run ptq open --issue "$ISSUE" --workspace "$WS"
+```
+
+`open` does not launch a background agent. In the created Herdr workspace, start Pi from the job directory and load:
+
+```text
+@prime.md
+```
+
+`prime.md` contains the paths and workflow rules. The same context is copied to job-root `AGENTS.md` for agents that discover it automatically.
+
+Use `takeover` when only the shell-entry command is needed:
+
+```bash
+uv run ptq takeover JOB_ID
+```
+
+## Inspect jobs
+
+```bash
+uv run ptq list
+uv run ptq peek JOB_ID
+```
+
+`peek` displays the current `worklog.md` and `report.md` directly from the job workspace.
+
+## Monitor pull requests
+
+```bash
+uv run ptq monitor
+uv run ptq monitor --watch
+uv run ptq monitor --all
+```
+
+The monitor shows PR state, CI state, rebase state, and the next action. Issue and PR cells are terminal hyperlinks when OSC-8 is supported.
+
+For a `needs CI review` row, the Driver skill gathers evidence with:
 
 ```bash
 ~/dotfiles/scripts/github_ci_triage PR_URL
 ```
 
-When a landing attempt stopped and Dr. CI clearly reports only unrelated, flaky, or broken-trunk failures, the monitor prints a PyTorchBot merge-ignore command instead:
+If a stopped landing attempt has only unrelated, flaky, or broken-trunk failures, the driver may propose:
 
 ```bash
 gh pr comment PR_URL --body '@pytorchbot merge -i'
 ```
 
-Use `uv run ptq monitor --all` to include all jobs, even if they do not have a recorded PR or ready PR artifacts yet. `uv run ptq monitor --watch` uses Rich's alternate-screen live view so resizing a Herdr pane or terminal redraws cleanly instead of leaving wrapped table fragments in scrollback. `uv run ptq open JOB_ID` creates an interactive Herdr workspace using `uv run ptq takeover JOB_ID` as the source of truth for where to start.
+The driver never posts comments, reruns CI, pushes, merges, or cleans jobs without user approval.
 
-`uv run ptq supervise` adds a read-only triage layer above the raw monitor table. For failing CI rows it fetches the latest Dr. CI comment, runs `~/dotfiles/scripts/github_ci_triage PR_URL`, saves the transcript under `agent_space/supervisor/JOB_ID/`, and classifies the row as `needs fix`, `unrelated CI`, `merge-ignore candidate`, or `needs human review`. `merge-ignore candidate` only implies `@pytorchbot merge -i` for PRs that are actively landing or whose landing attempt just stopped. The monitor/supervisor use explicit Dr. CI/HUD AI verdict text when available, but not badge images alone. Use `uv run ptq supervise --prompts` to print a worker prompt that tells a Pi/subagent exactly how to gather logs, apply the trust boundary, and classify each failure without editing code or posting comments.
+The unified driver workflow lives at `.agents/skills/driver/SKILL.md`; `.pi/prompts/driver.md` provides `/driver` in interactive Pi.
 
-Each PTQ job also gets a `prime.md` handoff file in the job directory. For a fresh manual Pi in an opened job workspace, start from the job directory and load `@prime.md`; it points the subagent at `PTQ_CONTEXT.md`, `system_prompt.md`, `worklog.md`, `report.md`, and the source repo `AGENTS.md` before editing.
-
-The main driver skill lives at `.agents/skills/driver/SKILL.md`, and `.pi/prompts/driver.md` provides `/driver` in interactive Pi. Use `/driver` in your primary Herdr driver pane to coordinate PTQ workspaces.
-
-The monitor operator skill lives at `.agents/skills/monitor/SKILL.md`, and `.pi/prompts/monitor.md` provides `/monitor` in interactive Pi. In the operator pane, use `/monitor` or start Pi with `--skill .agents/skills/monitor` so it uses the PTQ monitor workflow, CI triage helper, and optional HUD checks.
-
-### 5. View results
+## Submit a pull request
 
 ```bash
-# By issue number (uses most recent job)
-uv run ptq results 174923
-
-# By full job ID
-uv run ptq results 20260214-174923
+uv run ptq pr JOB_ID
 ```
 
-Fetches `report.md`, `pr_title.txt`, `pr_labels.txt`, `fix.diff`, `worklog.md`, and the run log from the remote.
+PTQ submits the current worktree directly. It uses `pr_title.txt`, `pr_labels.txt`, `report.md`, and `worklog.md` when present. Existing GitHub titles and human notes remain the source of truth during updates.
 
-### 6. Apply the fix
+## Ghstack workflow
+
+Initialize stack mode before implementation:
 
 ```bash
-uv run ptq apply 174923 --pytorch-path ~/meta/pytorch
+uv run ptq open --name MY_STACK
+uv run ptq stack init MY_STACK
 ```
 
-Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps for creating a PR.
-
-To create a PR directly from a PTQ job, run `uv run ptq pr JOB_ID`. For an existing open PR, PTQ first syncs the current GitHub title and `## Human Note` so direct GitHub edits are the default source of truth. In an interactive terminal it prompts for a PR title, then opens `$EDITOR` (or `vim`) for the reviewer note if `--note` is omitted. For a new PR, the title defaults to the agent's `pr_title.txt` suggestion when there is no saved title. If the agent wrote `pr_labels.txt`, PTQ validates every label against the repository before publishing and applies them when creating or updating the PR. PyTorch agents use this for the required `release notes: ...` or `topic: not user facing` label.
-
-For a sequence of independently reviewable commits, inspect and submit the job as a ghstack stack:
+Create a linear sequence of independently buildable and tested commits, then inspect and submit it:
 
 ```bash
-uv run ptq stack init JOB_ID
-uv run ptq stack show JOB_ID
-uv run ptq stack submit JOB_ID --draft
+uv run ptq stack show MY_STACK
+uv run ptq stack submit MY_STACK --draft
 ```
 
-Run `stack init` before implementation begins. It records the job's ghstack submission mode, attaches a `ptq-stack/<job-id>` branch when the clean worktree is detached or still on the base branch, and writes `STACK_CONTEXT.md` for agents taking over the job. The PTQ monitor then reports `ready for stack` and points to `ptq stack show` instead of suggesting `ptq pr`.
+Ordinary updates preserve GitHub titles and bodies. Use `--update-metadata` only when intentionally replacing them from commit messages.
 
-`stack show` reports the branch, configured remote, current local base, dirty state, commits, and existing PR mappings without changing anything. `stack submit` requires prior initialization and a clean, attached, linear branch. It prints fetch and preflight progress, streams ghstack's publish output live, verifies every commit-to-PR trailer, and records the top PR for PTQ monitoring; the commit trailers remain the complete mapping source of truth. Later updates use the same command without `--draft`. Existing PR titles and bodies are preserved by default; pass `--update-metadata` only when you intentionally want ghstack to replace them from local commit messages. PTQ rejects `ptq pr` for jobs configured for ghstack.
+For PyTorch, `@pytorchbot merge` on a ghstack PR lands that PR and every open PR below it. Use the bottom PR for one layer or the top PR for the whole stack; do not use the GitHub merge button.
 
-PTQ does not create or split stack commits. Commit each independently buildable and tested change before submission. Pass `--base BRANCH` to `stack init` when the stack does not target `main`; PTQ remembers that base for later `show`, `submit`, and monitor actions. PyTorch's merge bot understands ghstack prefixes: `@pytorchbot merge` on a PR lands that PR and every open PR below it. Use the bottom PR to land one layer or the top PR to land the whole stack; do not use the GitHub merge button. Other repositories use `ghstack land PR_URL`.
-
-PTQ records the submitted PR URLs from bottom to top. When a lower PR lands while higher PRs remain open, the monitor reports `needs stack rebase`; run its `ptq rebase JOB_ID` action. After a clean rebase it reports `ready to resubmit stack`; run `ptq stack submit JOB_ID` to update the remaining PRs and clear the completed layer from PTQ's stack state.
-
-### 7. Manage agents
+After a lower layer lands:
 
 ```bash
-# Check status of a specific job
-uv run ptq status 174923
-
-# Kill a specific agent
-uv run ptq kill 174923
-
-# Kill all agents on a machine (tracked + zombie processes)
-uv run ptq prune my-gpu-box
-
-# Kill all local agents
-uv run ptq prune --local
+uv run ptq rebase MY_STACK
+uv run ptq stack submit MY_STACK
 ```
 
-### 8. Clean up
+## Rebase
 
 ```bash
-# Remove all jobs on a machine
-uv run ptq clean my-gpu-box
-
-# Keep the 3 most recent
-uv run ptq clean my-gpu-box --keep 3
-
-# Clean local workspace
-uv run ptq clean --local
+uv run ptq rebase JOB_ID
+uv run ptq rebase JOB_ID --onto origin/main
 ```
 
-Removes job directories and prunes git worktrees.
+A clean rebase completes automatically. If conflicts occur, PTQ leaves the rebase in progress and prints the job entry command so they can be resolved interactively in Herdr.
 
-## Options
+## Clean up
 
-| Flag | Command | Default | Description |
-|------|---------|---------|-------------|
-| `--cuda` | setup | auto-detect | CUDA tag (`cu124`, `cu126`, `cu128`, `cu130`) |
-| `--cpu` | setup | | Use CPU-only PyTorch (macOS/testing) |
-| `--machine` | run, worktree | | Remote machine hostname |
-| `--local` | setup, run, worktree, clean, prune | | Use local workspace instead of SSH |
-| `--follow/--no-follow` | run | follow | Stream agent output to terminal |
-| `--agent` | run | claude | Agent (`claude`, `codex`, `cursor`, `pi`) |
-| `--model` | run | opus | Model name (agent-specific) |
-| `--thinking` | run | agent default | Reasoning/thinking level when supported by the agent |
-| `--max-turns` | run | 100 | Max agent turns |
-| `-m/--message` | run | | Ad-hoc task or extra context for an issue |
-| `-p/--preset` | run | | Prompt preset key/title from prompt library |
-| `--workspace` | setup, run, worktree, prune | `~/ptq_workspace` | Custom workspace path |
-| `--onto` | setup, rebase | `origin/main` | Target ref for resetting the seed checkout or rebasing a job |
-| `--keep` | clean | 0 | Number of recent jobs to keep |
-| `--log` | peek | 0 | Number of log lines to show |
+```bash
+uv run ptq clean JOB_ID
+uv run ptq clean local
+uv run ptq clean local --keep 3
+```
 
-## Adding a new repo
+Before deleting or recreating a worktree, check it for uncommitted work.
 
-1. Add a `[repos.<name>]` section to `~/.ptq/config.toml`:
+## Add a repository
+
+Add a section to `~/.ptq/config.toml`:
 
 ```toml
-[repos.torchtitan]
-github_repo = "pytorch/torchtitan"
-clone_url = "https://github.com/pytorch/torchtitan.git"
-dir_name = "torchtitan"
-smoke_test_import = "torchtitan"
-repro_import_hint = "import torchtitan"
+[repos.example]
+github_repo = "org/example"
+clone_url = "https://github.com/org/example.git"
+dir_name = "example"
+smoke_test_import = "example"
 ```
 
-2. Create prompt templates in `prompts/`:
-   - `prompts/investigate_<name>.md` — issue investigation prompt
-   - `prompts/adhoc_<name>.md` — freeform task prompt
+Optional profile fields:
 
-The prompt templates are where the real work is — they teach the agent about the repo's build system, directory layout, debugging tools, and testing conventions. See the existing `investigate.md` and `investigate_torchtitan.md` for examples.
-
-Optional profile fields (all default to `false`/`null`):
-| Field | Description |
-|-------|-------------|
-| `uses_custom_worktree_tool` | Use `tools/create_worktree.py` instead of `git worktree add` |
-| `needs_cpp_build` | Run C++ rebuild after worktree creation |
-| `lint_cmd` | Lint command to run before PRs |
+| Field | Default | Purpose |
+|---|---:|---|
+| `uses_custom_worktree_tool` | `false` | Use PyTorch's `tools/create_worktree.py` |
+| `needs_cpp_build` | `false` | Build native code during environment provisioning |
+| `lint_cmd` | unset | Repository lint command recorded in context |
 
 ## Project layout
 
-```
+```text
 pt_job_queue/
-├── pyproject.toml
 ├── ptq/
-│   ├── cli.py                          # Thin Typer CLI adapter
-│   ├── ssh.py                          # SSH/SCP + local subprocess backends
-│   ├── issue.py                        # GitHub issue fetching via gh
-│   ├── agent.py                        # Prompt construction + text utilities
-│   ├── agents.py                       # Agent protocol + claude/codex/cursor/pi
-│   ├── config.py                       # Config loading (~/.ptq/config.toml)
-│   ├── workspace.py                    # Remote workspace setup
+│   ├── cli.py
+│   ├── config.py
+│   ├── repo_profiles.py
+│   ├── workspace.py
 │   ├── domain/
-│   │   ├── models.py                   # JobRecord, RunRequest, JobStatus, errors
-│   │   └── policies.py                 # Job ID generation
+│   │   ├── models.py
+│   │   └── policies.py
 │   ├── infrastructure/
-│   │   ├── job_repository.py           # JSON persistence (~/.ptq/jobs.json)
-│   │   └── backends.py                 # Backend factory functions
-│   ├── application/
-│   │   ├── run_service.py              # Launch/rerun orchestration
-│   │   ├── worktree_service.py         # Worktree + venv provisioning
-│   │   ├── job_service.py              # Status/kill/clean/list
-│   │   ├── artifact_service.py         # Results fetching + diff apply
-│   │   └── pr_service.py              # PR creation workflow
-├── prompts/
-│   ├── investigate.md                  # PyTorch issue investigation prompt
-│   ├── adhoc.md                        # PyTorch freeform task prompt
-│   ├── investigate_torchtitan.md       # TorchTitan issue investigation prompt
-│   └── adhoc_torchtitan.md             # TorchTitan freeform task prompt
+│   │   ├── backends.py
+│   │   └── job_repository.py
+│   └── application/
+│       ├── herdr_service.py
+│       ├── job_context.py
+│       ├── job_service.py
+│       ├── monitor_service.py
+│       ├── pr_service.py
+│       ├── rebase_service.py
+│       ├── stack_service.py
+│       ├── venv_service.py
+│       └── worktree_service.py
+├── tests/
 └── scripts/
     └── rebuild.sh
 ```
 
-## Workspace layout (on remote/local)
+A job directory contains:
 
-```
-~/ptq_workspace/
-├── .venv/                          # uv-managed, PyTorch nightly
-├── pytorch/                        # Source clone at nightly commit
-├── scripts/apply_to_site_pkgs.sh   # Copies edits to site-packages
-└── jobs/
-    └── 20260214-174923/            # Per-issue job directory
-        ├── pytorch/                # git worktree (isolated)
-        ├── system_prompt.md
-        ├── repro.py
-        ├── claude-1.log            # Per-run logs
-        ├── claude-2.log
-        ├── worklog.md              # Agent progress log
-        ├── report.md
-        ├── pr_title.txt            # Suggested PR title
-        └── fix.diff
+```text
+<workspace>/jobs/<job-id>/
+├── .venv/
+├── <repo>/
+├── prime.md
+├── AGENTS.md
+├── worklog.md
+├── report.md
+├── pr_title.txt
+├── pr_labels.txt
+└── STACK_CONTEXT.md  # ghstack jobs only
 ```

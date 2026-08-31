@@ -4,12 +4,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
-class JobStatus(Enum):
-    INITIALIZING = "initializing"
-    RUNNING = "running"
-    STOPPED = "stopped"
-
-
 class PtqError(Exception):
     pass
 
@@ -37,7 +31,6 @@ class RebaseInfo:
     target_ref: str = ""
     before_sha: str = ""
     after_sha: str = ""
-    attempts: int = 0
     error: str = ""
 
     def to_dict(self) -> dict:
@@ -50,8 +43,6 @@ class RebaseInfo:
             d["before_sha"] = self.before_sha
         if self.after_sha:
             d["after_sha"] = self.after_sha
-        if self.attempts:
-            d["attempts"] = self.attempts
         if self.error:
             d["error"] = self.error
         return d
@@ -65,7 +56,6 @@ class RebaseInfo:
             target_ref=data.get("target_ref", ""),
             before_sha=data.get("before_sha", ""),
             after_sha=data.get("after_sha", ""),
-            attempts=data.get("attempts", 0),
             error=data.get("error", ""),
         )
 
@@ -74,15 +64,8 @@ class RebaseInfo:
 class JobRecord:
     job_id: str
     issue: int | None = None
-    runs: int = 1
-    agent: str = "claude"
-    model: str = "opus"
-    thinking: str | None = None
-    machine: str | None = None
-    local: bool = False
-    workspace: str = "~/ptq_workspace"
-    pid: int | None = None
-    initializing: bool = False
+    workspace: str = "~/.ptq_workspace"
+    legacy_machine: str | None = None
     pr_url: str | None = None
     human_note: str | None = None
     pr_title: str | None = None
@@ -94,33 +77,16 @@ class JobRecord:
     repo: str = "pytorch"
 
     @property
-    def target(self) -> str:
-        return self.machine or "local"
-
-    @property
     def rebase_info(self) -> RebaseInfo:
         if self.rebase is None:
             self.rebase = RebaseInfo()
         return self.rebase
 
     def to_dict(self) -> dict:
-        d: dict = {
-            "issue": self.issue,
-            "runs": self.runs,
-            "agent": self.agent,
-            "model": self.model,
-        }
-        if self.thinking:
-            d["thinking"] = self.thinking
-        if self.local:
-            d["local"] = True
-        if self.machine:
-            d["machine"] = self.machine
+        d: dict = {"issue": self.issue}
         d["workspace"] = self.workspace
-        if self.pid is not None:
-            d["pid"] = self.pid
-        if self.initializing:
-            d["initializing"] = True
+        if self.legacy_machine:
+            d["machine"] = self.legacy_machine
         if self.pr_url:
             d["pr_url"] = self.pr_url
         if self.human_note:
@@ -145,22 +111,12 @@ class JobRecord:
 
     @classmethod
     def from_dict(cls, job_id: str, data: dict) -> JobRecord:
-        local = data.get("local", False)
         rebase_data = data.get("rebase")
         return cls(
             job_id=job_id,
             issue=data.get("issue"),
-            runs=data.get("runs", 1),
-            agent=data.get("agent", "claude"),
-            model=data.get("model", "opus"),
-            thinking=data.get("thinking"),
-            machine=data.get("machine"),
-            local=local,
-            workspace=data.get(
-                "workspace", "~/.ptq_workspace" if local else "~/ptq_workspace"
-            ),
-            pid=data.get("pid"),
-            initializing=data.get("initializing", False),
+            workspace=data.get("workspace", "~/.ptq_workspace"),
+            legacy_machine=data.get("machine"),
             pr_url=data.get("pr_url"),
             human_note=data.get("human_note"),
             pr_title=data.get("pr_title"),
@@ -173,24 +129,6 @@ class JobRecord:
             name=data.get("name"),
             repo=data.get("repo", "pytorch"),
         )
-
-
-@dataclass
-class RunRequest:
-    issue_data: dict | None = None
-    issue_number: int | None = None
-    message: str | None = None
-    machine: str | None = None
-    local: bool = False
-    follow: bool = True
-    model: str = "opus"
-    thinking: str | None = None
-    max_turns: int = 100
-    agent_type: str = "claude"
-    existing_job_id: str | None = None
-    verbose: bool = False
-    name: str | None = None
-    repo: str = "pytorch"
 
 
 @dataclass

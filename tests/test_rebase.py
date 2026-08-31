@@ -1,32 +1,28 @@
 from __future__ import annotations
 
-from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typer.testing import CliRunner
 
 from ptq.application.rebase_service import rebase
-from ptq.domain.models import (
-    JobRecord,
-    PtqError,
-    RebaseInfo,
-    RebaseState,
-)
+from ptq.cli import app
+from ptq.domain.models import JobRecord, PtqError, RebaseInfo, RebaseState
 from ptq.infrastructure.job_repository import JobRepository
 
 
-def _make_repo(tmp_path: Path) -> tuple[JobRepository, str]:
+def _make_repo(tmp_path) -> tuple[JobRepository, str]:
     repo = JobRepository(tmp_path / "jobs.json")
+    job_id = "20260217-42"
     repo.save(
         JobRecord(
-            job_id="20260217-42",
+            job_id=job_id,
             issue=42,
-            machine="gpu-dev",
             workspace="~/ptq_workspace",
         )
     )
-    return repo, "20260217-42"
+    return repo, job_id
 
 
 def _ok(stdout: str = "") -> CompletedProcess[str]:
@@ -37,7 +33,7 @@ def _fail(stderr: str = "") -> CompletedProcess[str]:
     return CompletedProcess("", 1, "", stderr)
 
 
-class TestRebaseInfoRoundtrip:
+class TestRebaseInfo:
     def test_idle_to_dict_empty(self):
         assert RebaseInfo().to_dict() == {}
 
@@ -47,106 +43,40 @@ class TestRebaseInfoRoundtrip:
             target_ref="origin/main",
             before_sha="aaa",
             after_sha="bbb",
-            attempts=2,
         )
-        restored = RebaseInfo.from_dict(info.to_dict())
-        assert restored.state == RebaseState.SUCCEEDED
-        assert restored.before_sha == "aaa"
-        assert restored.after_sha == "bbb"
-        assert restored.attempts == 2
+        assert RebaseInfo.from_dict(info.to_dict()) == info
 
-    def test_from_empty_dict(self):
-        assert RebaseInfo.from_dict({}).state == RebaseState.IDLE
-
-    def test_none_returns_default(self):
-        assert RebaseInfo.from_dict(None).state == RebaseState.IDLE
-
-
-class TestJobRecordRebase:
-    def test_rebase_omitted_when_none(self):
-        d = JobRecord(job_id="j").to_dict()
-        assert "rebase" not in d
-
-    def test_rebase_omitted_when_idle(self):
-        d = JobRecord(job_id="j", rebase=RebaseInfo()).to_dict()
-        assert "rebase" not in d
-
-    def test_rebase_persisted_when_active(self):
-        info = RebaseInfo(state=RebaseState.SUCCEEDED, after_sha="abc")
-        d = JobRecord(job_id="j", rebase=info).to_dict()
-        assert "rebase" in d
-        assert d["rebase"]["state"] == "succeeded"
-
-    def test_rebase_roundtrip(self):
+    def test_job_roundtrip(self):
         info = RebaseInfo(
             state=RebaseState.NEEDS_HUMAN,
             target_ref="origin/main",
             error="conflicts remain",
         )
-        record = JobRecord(job_id="j", rebase=info)
-        d = record.to_dict()
-        restored = JobRecord.from_dict("j", d)
-        assert restored.rebase is not None
-        assert restored.rebase.state == RebaseState.NEEDS_HUMAN
-        assert restored.rebase.error == "conflicts remain"
-
-    def test_rebase_info_property(self):
-        record = JobRecord(job_id="j")
-        assert record.rebase is None
-        ri = record.rebase_info
-        assert ri.state == RebaseState.IDLE
-        assert record.rebase is ri
-
-
-class TestRebaseRepository:
-    def test_save_rebase(self, tmp_path):
-        repo = JobRepository(tmp_path / "jobs.json")
-        repo.save(JobRecord(job_id="j1", machine="gpu-dev", workspace="~/ws"))
-        repo.save_rebase("j1", {"state": "running", "target_ref": "origin/main"})
-        job = repo.get("j1")
-        assert job.rebase is not None
-        assert job.rebase.state == RebaseState.RUNNING
-
-    def test_clear_rebase(self, tmp_path):
-        repo = JobRepository(tmp_path / "jobs.json")
-        repo.save(
-            JobRecord(
-                job_id="j1",
-                machine="gpu-dev",
-                workspace="~/ws",
-                rebase=RebaseInfo(state=RebaseState.SUCCEEDED),
-            )
+        restored = JobRecord.from_dict(
+            "j", JobRecord(job_id="j", rebase=info).to_dict()
         )
-        repo.save_rebase("j1", {})
-        job = repo.get("j1")
-        assert job.rebase is None
+        assert restored.rebase == info
 
-    def test_save_rebase_missing_job(self, tmp_path):
+    def test_repository_save_and_clear(self, tmp_path):
         repo = JobRepository(tmp_path / "jobs.json")
-        repo.save_rebase("nonexistent", {"state": "running"})
+        repo.save(JobRecord(job_id="j1"))
+        repo.save_rebase("j1", {"state": "running", "target_ref": "origin/main"})
+        assert repo.get("j1").rebase_info.state == RebaseState.RUNNING
+        repo.save_rebase("j1", {})
+        assert repo.get("j1").rebase is None
 
 
-class TestRebaseClean:
-    def test_clean_rebase_success(self, tmp_path):
+class TestRebase:
+    def test_clean_rebase(self, tmp_path):
         repo, job_id = _make_repo(tmp_path)
 
-        def run_side(cmd, check=True):
-            if "test -d" in cmd or "test -f" in cmd:
-                return _ok()
-            if "rev-parse HEAD" in cmd:
+        def run_side(command, check=True):
+            if "rev-parse HEAD" in command:
                 return _ok("abc123\n")
-            if "rev-parse --verify" in cmd:
-                return _ok("def456\n")
-            if "fetch origin" in cmd:
-                return _ok()
-            if "git rebase" in cmd and "--continue" not in cmd:
-                return _ok()
             return _ok()
 
-        backend = MagicMock()
-        backend.workspace = "~/ptq_workspace"
-        backend.run = MagicMock(side_effect=run_side)
-
+        backend = MagicMock(workspace="~/ptq_workspace")
+        backend.run.side_effect = run_side
         with patch(
             "ptq.application.rebase_service.backend_for_job", return_value=backend
         ):
@@ -154,29 +84,20 @@ class TestRebaseClean:
 
         assert result.state == RebaseState.SUCCEEDED
         assert result.before_sha == "abc123"
+        assert repo.get(job_id).rebase_info.state == RebaseState.SUCCEEDED
 
-        job = repo.get(job_id)
-        assert job.rebase is not None
-        assert job.rebase.state == RebaseState.SUCCEEDED
-
-    def test_rebase_target_not_found(self, tmp_path):
+    def test_target_not_found(self, tmp_path):
         repo, job_id = _make_repo(tmp_path)
 
-        def run_side(cmd, check=True):
-            if "test -d" in cmd or "test -f" in cmd:
-                return _ok()
-            if "rev-parse HEAD" in cmd:
+        def run_side(command, check=True):
+            if "rev-parse HEAD" in command:
                 return _ok("abc123\n")
-            if "rev-parse --verify" in cmd:
+            if "rev-parse --verify" in command:
                 return _fail("not found")
-            if "fetch origin" in cmd:
-                return _ok()
             return _ok()
 
-        backend = MagicMock()
-        backend.workspace = "~/ptq_workspace"
-        backend.run = MagicMock(side_effect=run_side)
-
+        backend = MagicMock(workspace="~/ptq_workspace")
+        backend.run.side_effect = run_side
         with (
             patch(
                 "ptq.application.rebase_service.backend_for_job", return_value=backend
@@ -184,16 +105,12 @@ class TestRebaseClean:
             pytest.raises(PtqError, match="Target ref not found"),
         ):
             rebase(repo, job_id)
+        assert repo.get(job_id).rebase_info.state == RebaseState.FAILED
 
-        job = repo.get(job_id)
-        assert job.rebase.state == RebaseState.FAILED
-
-    def test_no_worktree_raises(self, tmp_path):
+    def test_no_worktree(self, tmp_path):
         repo, job_id = _make_repo(tmp_path)
-        backend = MagicMock()
-        backend.workspace = "~/ptq_workspace"
+        backend = MagicMock(workspace="~/ptq_workspace")
         backend.run.return_value = _fail()
-
         with (
             patch(
                 "ptq.application.rebase_service.backend_for_job", return_value=backend
@@ -202,188 +119,92 @@ class TestRebaseClean:
         ):
             rebase(repo, job_id)
 
-
-class TestRebaseConflictResolution:
-    def _setup(self, tmp_path):
-        repo, job_id = _make_repo(tmp_path)
-        state = {"agent_ran": False}
-
-        def run_side(cmd, check=True):
-            if "rebase-merge" in cmd or "rebase-apply" in cmd:
-                if state["agent_ran"]:
-                    return _fail()
-                return _ok()
-            if "test -d" in cmd or "test -f" in cmd:
-                return _ok()
-            if "rev-parse HEAD" in cmd:
-                return _ok("abc123\n")
-            if "rev-parse --verify" in cmd:
-                return _ok("def456\n")
-            if "fetch origin" in cmd:
-                return _ok()
-            if "rebase --continue" in cmd:
-                return _ok()
-            if "rebase" in cmd and "fetch" not in cmd:
-                return _fail("CONFLICT")
-            if "diff --name-only --diff-filter=U" in cmd:
-                if not state["agent_ran"]:
-                    return _ok("file.py\n")
-                return _ok()
-            return _ok()
-
-        def fake_launch_bg(cmd, log_file):
-            state["agent_ran"] = True
-            return 12345
-
-        backend = MagicMock()
-        backend.workspace = "~/ptq_workspace"
-        backend.run = MagicMock(side_effect=run_side)
-        backend.is_pid_alive = MagicMock(return_value=False)
-        backend.launch_background = MagicMock(side_effect=fake_launch_bg)
-        backend.copy_to = MagicMock()
-
-        return repo, job_id, backend, state
-
-    def test_conflict_resolved_in_one_attempt(self, tmp_path):
-        repo, job_id, backend, _ = self._setup(tmp_path)
-
-        with patch(
-            "ptq.application.rebase_service.backend_for_job", return_value=backend
-        ):
-            result = rebase(repo, job_id, max_attempts=3)
-
-        assert result.state == RebaseState.SUCCEEDED
-        assert result.attempts == 1
-        assert backend.launch_background.call_count == 1
-
-    def test_codex_rebase_uses_rebase_prompt_for_agents_file(self, tmp_path):
-        repo, job_id, backend, _ = self._setup(tmp_path)
-
-        with patch(
-            "ptq.application.rebase_service.backend_for_job", return_value=backend
-        ):
-            rebase(repo, job_id, agent_name="codex", max_attempts=1)
-
-        run_cmds = [
-            call.args[0]
-            for call in backend.run.call_args_list
-            if isinstance(call.args[0], str)
-        ]
-        assert any(
-            cmd == f"cp ~/ptq_workspace/jobs/{job_id}/rebase_prompt_1.md "
-            f"~/ptq_workspace/jobs/{job_id}/AGENTS.md"
-            for cmd in run_cmds
-        )
-
-    def test_escalates_after_max_attempts(self, tmp_path):
+    def test_leaves_conflicts_for_interactive_resolution(self, tmp_path):
         repo, job_id = _make_repo(tmp_path)
 
-        def run_side(cmd, check=True):
-            if "rebase-merge" in cmd or "rebase-apply" in cmd:
-                return _ok()
-            if "test -d" in cmd or "test -f" in cmd:
-                return _ok()
-            if "rev-parse HEAD" in cmd:
-                return _ok("abc123\n")
-            if "rev-parse --verify" in cmd:
-                return _ok("def456\n")
-            if "fetch origin" in cmd:
-                return _ok()
-            if "rebase --continue" in cmd:
-                return _fail("conflicts remain")
-            if "rebase" in cmd and "fetch" not in cmd:
-                return _fail("CONFLICT")
-            if "diff --name-only --diff-filter=U" in cmd:
+        def run_side(command, check=True):
+            if "diff --name-only --diff-filter=U" in command:
                 return _ok("file.py\n")
+            if "rebase-merge" in command or "rebase-apply" in command:
+                return _ok()
+            if "rev-parse HEAD" in command:
+                return _ok("abc123\n")
+            if " rebase origin/main" in command:
+                return _fail("CONFLICT")
             return _ok()
 
-        backend = MagicMock()
-        backend.workspace = "~/ptq_workspace"
-        backend.run = MagicMock(side_effect=run_side)
-        backend.is_pid_alive = MagicMock(return_value=False)
-        backend.launch_background = MagicMock(return_value=12345)
-        backend.copy_to = MagicMock()
-
+        backend = MagicMock(workspace="~/ptq_workspace")
+        backend.run.side_effect = run_side
         with patch(
             "ptq.application.rebase_service.backend_for_job", return_value=backend
         ):
-            result = rebase(repo, job_id, max_attempts=2)
+            result = rebase(repo, job_id)
 
         assert result.state == RebaseState.NEEDS_HUMAN
-        assert result.attempts == 2
         assert "file.py" in result.error
-        assert backend.launch_background.call_count == 2
+        assert "Resolve interactively" in result.error
 
-        job = repo.get(job_id)
-        assert job.rebase.state == RebaseState.NEEDS_HUMAN
+    def test_non_conflict_failure_raises(self, tmp_path):
+        repo, job_id = _make_repo(tmp_path)
+
+        def run_side(command, check=True):
+            if "rebase-merge" in command or "rebase-apply" in command:
+                return _fail()
+            if "diff --name-only --diff-filter=U" in command:
+                return _ok()
+            if " rebase origin/main" in command:
+                return _fail("fatal error")
+            return _ok("abc123\n")
+
+        backend = MagicMock(workspace="~/ptq_workspace")
+        backend.run.side_effect = run_side
+        with (
+            patch(
+                "ptq.application.rebase_service.backend_for_job", return_value=backend
+            ),
+            pytest.raises(PtqError, match="fatal error"),
+        ):
+            rebase(repo, job_id)
+        assert any(
+            "rev-parse --absolute-git-dir" in call.args[0]
+            for call in backend.run.call_args_list
+        )
 
 
 class TestRebaseCLI:
-    def test_rebase_command_help(self):
-        from typer.testing import CliRunner
-
-        from ptq.cli import app
-
+    def test_help_has_no_agent_options(self):
         result = CliRunner().invoke(app, ["rebase", "--help"])
         assert result.exit_code == 0
         assert "--onto" in result.output
-        assert "--max-attempts" in result.output
+        assert "--agent" not in result.output
+        assert "--max-attempts" not in result.output
 
-    def test_rebase_command_success(self, tmp_path):
-        from typer.testing import CliRunner
-
-        from ptq.cli import app
-
-        repo = JobRepository(tmp_path / "jobs.json")
-        repo.save(
-            JobRecord(
-                job_id="20260217-42",
-                issue=42,
-                machine="gpu-dev",
-                workspace="~/ws",
-            )
-        )
-
-        mock_result = RebaseInfo(
+    def test_success(self, tmp_path):
+        repo, job_id = _make_repo(tmp_path)
+        result_info = RebaseInfo(
             state=RebaseState.SUCCEEDED,
             before_sha="aaa111",
             after_sha="bbb222",
         )
-
         with (
             patch("ptq.cli._repo", return_value=repo),
-            patch("ptq.application.rebase_service.rebase", return_value=mock_result),
+            patch("ptq.application.rebase_service.rebase", return_value=result_info),
         ):
-            result = CliRunner().invoke(app, ["rebase", "20260217-42"])
-
+            result = CliRunner().invoke(app, ["rebase", job_id])
         assert result.exit_code == 0
         assert "Rebase complete" in result.output
 
-    def test_rebase_command_needs_human(self, tmp_path):
-        from typer.testing import CliRunner
-
-        from ptq.cli import app
-
-        repo = JobRepository(tmp_path / "jobs.json")
-        repo.save(
-            JobRecord(
-                job_id="20260217-42",
-                issue=42,
-                machine="gpu-dev",
-                workspace="~/ws",
-            )
-        )
-
-        mock_result = RebaseInfo(
+    def test_conflict_points_to_takeover(self, tmp_path):
+        repo, _ = _make_repo(tmp_path)
+        result_info = RebaseInfo(
             state=RebaseState.NEEDS_HUMAN,
-            error="file.py has unresolved conflicts",
+            error="Resolve interactively in the job workspace: file.py",
         )
-
         with (
             patch("ptq.cli._repo", return_value=repo),
-            patch("ptq.application.rebase_service.rebase", return_value=mock_result),
+            patch("ptq.application.rebase_service.rebase", return_value=result_info),
         ):
             result = CliRunner().invoke(app, ["rebase", "42"])
-
         assert result.exit_code == 0
         assert "human intervention" in result.output
+        assert "ptq_workspace/jobs/20260217-42" in result.output

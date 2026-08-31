@@ -142,7 +142,6 @@ class TestCreatePr:
             JobRecord(
                 job_id="20260217-42",
                 issue=42,
-                machine="gpu-dev",
                 workspace="~/ptq_workspace",
             )
         )
@@ -209,7 +208,9 @@ class TestCreatePr:
 
         def run_side_effect(cmd, check=True):
             if "pr_title.txt" in cmd:
-                return CompletedProcess("", 0, "PR Title: Use meta device fallback\n", "")
+                return CompletedProcess(
+                    "", 0, "PR Title: Use meta device fallback\n", ""
+                )
             if "git remote get-url" in cmd:
                 return CompletedProcess("", 0, "git@github.com:pytorch/pytorch.git\n")
             if "gh pr create" in cmd:
@@ -251,9 +252,7 @@ class TestCreatePr:
             create_pr(repo, "20260217-42", human_note="Note")
 
         pr_create_calls = [
-            call
-            for call in backend.run.call_args_list
-            if "gh pr create" in str(call)
+            call for call in backend.run.call_args_list if "gh pr create" in str(call)
         ]
         assert "--label 'release notes: inductor'" in str(pr_create_calls[0])
 

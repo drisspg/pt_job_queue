@@ -17,14 +17,6 @@ class HerdrWorkspace:
     takeover_command: str
 
 
-@dataclass
-class HerdrMonitorWorkspace:
-    workspace_id: str
-    visual_pane_id: str
-    operator_pane_id: str
-    cwd: str
-
-
 def cwd_from_takeover_command(command: str) -> str:
     """Extract the local cwd from PTQ takeover commands when one is present."""
     parts = shlex.split(command)
@@ -44,26 +36,6 @@ class HerdrClient:
         )
 
 
-def monitor_operator_bootstrap_command() -> str:
-    """Print the repo-local monitor skill entrypoint in the operator pane."""
-    prompt = "Start by running uv run ptq monitor and summarize current state."
-    pi_command = (
-        "pi --model openai-codex/gpt-5.5 --thinking high "
-        "--skill .agents/skills/monitor "
-        f"{shlex.quote(prompt)}"
-    )
-    lines = [
-        "PTQ monitor operator pane",
-        "Start the monitor operator Pi with:",
-        pi_command,
-        "",
-        "In interactive Pi, use /monitor to expand the repo prompt template.",
-        "The monitor skill lives in .agents/skills/monitor/SKILL.md.",
-        "Use uv run ptq open JOB_ID to open an interactive job workspace.",
-    ]
-    return "printf '%s\\n' " + " ".join(shlex.quote(line) for line in lines)
-
-
 def herdr_error(action: str, result: subprocess.CompletedProcess[str]) -> RuntimeError:
     detail = result.stderr.strip() or result.stdout.strip() or "no output"
     return RuntimeError(f"herdr {action} failed: {detail}")
@@ -76,9 +48,13 @@ def herdr_json(action: str, result: subprocess.CompletedProcess[str]) -> dict[st
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"herdr {action} returned invalid JSON: {result.stdout.strip()}") from e
+        raise RuntimeError(
+            f"herdr {action} returned invalid JSON: {result.stdout.strip()}"
+        ) from e
     if not isinstance(data, dict):
-        raise RuntimeError(f"herdr {action} returned unexpected JSON: {result.stdout.strip()}")
+        raise RuntimeError(
+            f"herdr {action} returned unexpected JSON: {result.stdout.strip()}"
+        )
     return data
 
 
@@ -132,54 +108,4 @@ def open_job_workspace(
         pane_id=pane_id,
         cwd=cwd,
         takeover_command=takeover_command,
-    )
-
-
-def open_monitor_workspace(
-    *,
-    cwd: str,
-    visual_command: str,
-    label: str = "ptq monitor",
-    client: HerdrClient | None = None,
-) -> HerdrMonitorWorkspace:
-    """Create a two-pane Herdr workspace for visual monitoring and operator work."""
-    herdr = client or HerdrClient()
-    data = herdr_json(
-        "workspace create",
-        herdr.run(["workspace", "create", "--cwd", cwd, "--label", label, "--focus"]),
-    )
-    root_pane = pane_info("workspace create", data, "root_pane")
-    visual_pane_id = root_pane["pane_id"]
-    workspace_id = root_pane["workspace_id"]
-
-    run_result = herdr.run(["pane", "run", visual_pane_id, visual_command])
-    if run_result.returncode != 0:
-        raise herdr_error("pane run", run_result)
-
-    split_data = herdr_json(
-        "pane split",
-        herdr.run(
-            [
-                "pane",
-                "split",
-                visual_pane_id,
-                "--direction",
-                "right",
-                "--cwd",
-                cwd,
-                "--no-focus",
-            ]
-        ),
-    )
-    operator_pane_id = pane_info("pane split", split_data, "pane")["pane_id"]
-    operator_result = herdr.run(
-        ["pane", "run", operator_pane_id, monitor_operator_bootstrap_command()]
-    )
-    if operator_result.returncode != 0:
-        raise herdr_error("operator pane run", operator_result)
-    return HerdrMonitorWorkspace(
-        workspace_id=workspace_id,
-        visual_pane_id=visual_pane_id,
-        operator_pane_id=operator_pane_id,
-        cwd=cwd,
     )

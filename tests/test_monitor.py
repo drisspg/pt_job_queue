@@ -16,7 +16,6 @@ from ptq.cli import (
 )
 from ptq.domain.models import (
     JobRecord,
-    JobStatus,
     RebaseInfo,
     RebaseState,
     SubmissionMode,
@@ -40,9 +39,7 @@ def test_collect_monitor_rows_marks_raw_failing_pr_for_ci_review(tmp_path):
             JobRecord(
                 job_id="job-1",
                 issue=123,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/123",
                 pr_title="Fix thing",
             )
@@ -56,7 +53,6 @@ def test_collect_monitor_rows_marks_raw_failing_pr_for_ci_review(tmp_path):
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -80,9 +76,7 @@ def test_collect_monitor_rows_marks_merging_pr_as_landing_even_with_red_ci(tmp_p
             JobRecord(
                 job_id="job-landing",
                 issue=125,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/125",
             )
         ],
@@ -110,7 +104,6 @@ def test_collect_monitor_rows_marks_merging_pr_as_landing_even_with_red_ci(tmp_p
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -121,16 +114,16 @@ def test_collect_monitor_rows_marks_merging_pr_as_landing_even_with_red_ci(tmp_p
     assert rows[0].next_action == "monitor merge"
 
 
-def test_collect_monitor_rows_marks_nonlanding_unrelated_ci_without_merge_command(tmp_path):
+def test_collect_monitor_rows_marks_nonlanding_unrelated_ci_without_merge_command(
+    tmp_path,
+):
     repo = _repo(
         tmp_path,
         [
             JobRecord(
                 job_id="job-unrelated",
                 issue=126,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/126",
             )
         ],
@@ -170,7 +163,6 @@ def test_collect_monitor_rows_marks_nonlanding_unrelated_ci_without_merge_comman
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -192,9 +184,7 @@ def test_collect_monitor_rows_suggests_merge_ignore_after_stopped_landing(tmp_pa
             JobRecord(
                 job_id="job-unrelated-landing",
                 issue=126,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/126",
             )
         ],
@@ -238,7 +228,6 @@ def test_collect_monitor_rows_suggests_merge_ignore_after_stopped_landing(tmp_pa
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -256,9 +245,7 @@ def test_collect_monitor_rows_uses_ai_unrelated_verdict_text(tmp_path):
             JobRecord(
                 job_id="job-ai-unrelated",
                 issue=129,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/129",
             )
         ],
@@ -305,7 +292,6 @@ def test_collect_monitor_rows_uses_ai_unrelated_verdict_text(tmp_path):
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -322,9 +308,7 @@ def test_collect_monitor_rows_sends_new_failures_to_ci_review(tmp_path):
             JobRecord(
                 job_id="job-new-failures",
                 issue=127,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/127",
             )
         ],
@@ -366,7 +350,6 @@ def test_collect_monitor_rows_sends_new_failures_to_ci_review(tmp_path):
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -383,9 +366,7 @@ def test_collect_monitor_rows_parses_checks_from_nonzero_gh_exit(tmp_path):
             JobRecord(
                 job_id="job-pending",
                 issue=124,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/124",
             )
         ],
@@ -398,7 +379,6 @@ def test_collect_monitor_rows_parses_checks_from_nonzero_gh_exit(tmp_path):
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -415,9 +395,7 @@ def test_collect_monitor_rows_keeps_passing_draft_out_of_ready_to_merge(tmp_path
             JobRecord(
                 job_id="job-draft",
                 issue=128,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/128",
             )
         ],
@@ -448,7 +426,6 @@ def test_collect_monitor_rows_keeps_passing_draft_out_of_ready_to_merge(tmp_path
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
         patch("ptq.application.monitor_service.get_pr_state", return_value="open"),
     ):
         rows = collect_monitor_rows(repo)
@@ -465,9 +442,7 @@ def test_collect_monitor_rows_includes_pr_ready_jobs_without_pr_url(tmp_path):
             JobRecord(
                 job_id="job-ready",
                 issue=456,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 name="ready-job",
             )
         ],
@@ -477,7 +452,6 @@ def test_collect_monitor_rows_includes_pr_ready_jobs_without_pr_url(tmp_path):
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
     ):
         rows = collect_monitor_rows(repo)
 
@@ -489,13 +463,16 @@ def test_collect_monitor_rows_includes_pr_ready_jobs_without_pr_url(tmp_path):
 
 def test_ready_pytorch_ghstack_uses_pytorchbot():
     pr_url = "https://github.com/pytorch/pytorch/pull/99"
-    assert next_action(
-        "stack-job",
-        "ready to merge",
-        ghstack=True,
-        pr_url=pr_url,
-        repo_name="pytorch",
-    ) == f"gh pr comment {pr_url} --body '@pytorchbot merge'"
+    assert (
+        next_action(
+            "stack-job",
+            "ready to merge",
+            ghstack=True,
+            pr_url=pr_url,
+            repo_name="pytorch",
+        )
+        == f"gh pr comment {pr_url} --body '@pytorchbot merge'"
+    )
 
 
 def test_ready_non_pytorch_ghstack_uses_ghstack_land():
@@ -518,7 +495,6 @@ def test_collect_monitor_rows_routes_ghstack_jobs_to_stack_preflight(tmp_path):
         [
             JobRecord(
                 job_id="stack-job",
-                local=True,
                 workspace="/tmp/ws",
                 submission_mode=SubmissionMode.GHSTACK,
                 stack_base="release/2.8",
@@ -530,10 +506,6 @@ def test_collect_monitor_rows_routes_ghstack_jobs_to_stack_preflight(tmp_path):
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch(
-            "ptq.application.monitor_service.get_status",
-            return_value=JobStatus.STOPPED,
-        ),
     ):
         rows = collect_monitor_rows(repo)
 
@@ -563,7 +535,6 @@ def test_collect_monitor_rows_tracks_landed_lower_stack_pr(
         [
             JobRecord(
                 job_id="stack-job",
-                local=True,
                 workspace="/tmp/ws",
                 submission_mode=SubmissionMode.GHSTACK,
                 stack_pr_urls=[base_url, top_url],
@@ -580,10 +551,6 @@ def test_collect_monitor_rows_tracks_landed_lower_stack_pr(
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch(
-            "ptq.application.monitor_service.get_status",
-            return_value=JobStatus.STOPPED,
-        ),
         patch("ptq.application.monitor_service.get_pr_state", side_effect=pr_state),
     ):
         rows = collect_monitor_rows(repo)
@@ -599,9 +566,7 @@ def test_collect_monitor_rows_checks_pr_ready_artifacts_under_home_workspace(tmp
             JobRecord(
                 job_id="job-ready",
                 issue=456,
-                local=True,
                 workspace="~/.ptq_workspace",
-                agent="pi",
             )
         ],
     )
@@ -611,15 +576,13 @@ def test_collect_monitor_rows_checks_pr_ready_artifacts_under_home_workspace(tmp
 
     with (
         patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
-        patch("ptq.application.monitor_service.get_status", return_value=JobStatus.STOPPED),
     ):
         rows = collect_monitor_rows(repo)
 
     assert len(rows) == 1
     assert rows[0].phase == "ready for PR"
     backend.run.assert_called_with(
-        "test -s $HOME/.ptq_workspace/jobs/job-ready/report.md || "
-        "test -s $HOME/.ptq_workspace/jobs/job-ready/fix.diff",
+        "test -s $HOME/.ptq_workspace/jobs/job-ready/report.md",
         check=False,
     )
 
@@ -669,9 +632,7 @@ def test_monitor_cli_prints_failing_ci_review_command(tmp_path):
             JobRecord(
                 job_id="job-1",
                 issue=123,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/123",
             )
         ],
@@ -684,16 +645,15 @@ def test_monitor_cli_prints_failing_ci_review_command(tmp_path):
     row.pr_is_draft = False
     row.ci.label = "fail 1"
     row.ci.failing = 1
-    row.agent = "pi"
-    row.runs = 1
-    row.target = "local"
     row.next_action = "ptq open job-1"
     row.takeover_command = "cd /tmp/ws/jobs/job-1 && source .venv/bin/activate"
     row.ci_triage_command = "~/dotfiles/scripts/github_ci_triage https://github.com/pytorch/pytorch/pull/123"
 
     with (
         patch("ptq.cli._repo", return_value=repo),
-        patch("ptq.application.monitor_service.collect_monitor_rows", return_value=[row]),
+        patch(
+            "ptq.application.monitor_service.collect_monitor_rows", return_value=[row]
+        ),
     ):
         result = runner.invoke(app, ["monitor"])
 
@@ -711,9 +671,7 @@ def test_monitor_cli_marks_draft_pr_and_omits_agent_target_columns(tmp_path):
             JobRecord(
                 job_id="job-draft",
                 issue=128,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/128",
             )
         ],
@@ -731,7 +689,9 @@ def test_monitor_cli_marks_draft_pr_and_omits_agent_target_columns(tmp_path):
 
     with (
         patch("ptq.cli._repo", return_value=repo),
-        patch("ptq.application.monitor_service.collect_monitor_rows", return_value=[row]),
+        patch(
+            "ptq.application.monitor_service.collect_monitor_rows", return_value=[row]
+        ),
     ):
         result = runner.invoke(app, ["monitor"])
 
@@ -748,9 +708,7 @@ def test_monitor_cli_prints_merge_ignore_command_for_unrelated_ci(tmp_path):
             JobRecord(
                 job_id="job-unrelated",
                 issue=126,
-                local=True,
                 workspace="/tmp/ws",
-                agent="pi",
                 pr_url="https://github.com/pytorch/pytorch/pull/126",
             )
         ],
@@ -763,9 +721,6 @@ def test_monitor_cli_prints_merge_ignore_command_for_unrelated_ci(tmp_path):
     row.pr_is_draft = False
     row.ci.label = "fail 1"
     row.ci.failing = 1
-    row.agent = "pi"
-    row.runs = 1
-    row.target = "local"
     row.next_action = "comment @pytorchbot merge -i"
     row.can_merge_ignore = True
     row.takeover_command = "cd /tmp/ws/jobs/job-unrelated && source .venv/bin/activate"
@@ -776,7 +731,9 @@ def test_monitor_cli_prints_merge_ignore_command_for_unrelated_ci(tmp_path):
 
     with (
         patch("ptq.cli._repo", return_value=repo),
-        patch("ptq.application.monitor_service.collect_monitor_rows", return_value=[row]),
+        patch(
+            "ptq.application.monitor_service.collect_monitor_rows", return_value=[row]
+        ),
     ):
         result = runner.invoke(app, ["monitor"])
 

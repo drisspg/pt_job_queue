@@ -4,15 +4,10 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
-from typer.testing import CliRunner
+import pytest
 
-from ptq.application.run_service import launch
-from ptq.cli import app
-from ptq.domain.models import JobRecord, RunRequest
+from ptq.domain.models import JobRecord, PtqError
 from ptq.infrastructure.job_repository import JobRepository
-from ptq.ssh import LocalBackend
-
-runner = CliRunner()
 
 
 def _make_repo(tmp_path: Path, records: list[JobRecord] | None = None) -> JobRepository:
@@ -26,324 +21,28 @@ def _ok(*args, **kwargs) -> CompletedProcess[str]:
     return CompletedProcess(args="", returncode=0, stdout="", stderr="")
 
 
-def _mock_backend(backend: LocalBackend, *, worktree_exists: bool = False) -> None:
-    def run_side_effect(cmd: str, check: bool = True, **kw) -> CompletedProcess[str]:
-        if "test -d" in cmd or "test -f" in cmd:
-            rc = 0 if worktree_exists else 1
-            return CompletedProcess(args="", returncode=rc, stdout="", stderr="")
-        return _ok()
+class TestJobContext:
+    def test_writes_prime_and_auto_discovered_agents_file(self):
+        from ptq.application.job_context import write_job_context
 
-    backend.run = MagicMock(side_effect=run_side_effect)
-    backend.copy_to = MagicMock()
-    backend.launch_background = MagicMock(return_value=12345)
-    backend.tail_log = MagicMock()
-
-
-class TestWorktreeCommand:
-    def test_creates_job_record_with_name(self, tmp_path, frozen_date):
-        repo = _make_repo(tmp_path)
-        mock_backend = MagicMock()
-        mock_backend.workspace = "/tmp/ws"
-        mock_backend.run = MagicMock(return_value=_ok())
-
-        with (
-            patch("ptq.cli._repo", return_value=repo),
-            patch(
-                "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
-            ),
-            patch("ptq.config.load_config") as mock_cfg,
-        ):
-            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
-            result = runner.invoke(app, ["worktree", "flex-attn"])
-
-        assert result.exit_code == 0, result.output
-        assert "flex-attn" in result.output
-        assert "ready" in result.output.lower()
-
-        all_jobs = repo.list_all()
-        assert len(all_jobs) == 1
-        job = list(all_jobs.values())[0]
-        assert job.name == "flex-attn"
-        assert job.runs == 0
-
-    def test_defaults_to_local(self, tmp_path, frozen_date):
-        repo = _make_repo(tmp_path)
-        mock_backend = MagicMock()
-        mock_backend.workspace = "/tmp/ws"
-        mock_backend.run = MagicMock(return_value=_ok())
-
-        with (
-            patch("ptq.cli._repo", return_value=repo),
-            patch(
-                "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
-            ),
-            patch("ptq.config.load_config") as mock_cfg,
-        ):
-            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
-            result = runner.invoke(app, ["worktree", "my-fix"])
-
-        assert result.exit_code == 0, result.output
-        job = list(repo.list_all().values())[0]
-        assert job.local is True
-
-    def test_rejects_duplicate_name(self, tmp_path, frozen_date):
-        repo = _make_repo(
-            tmp_path,
-            [
-                JobRecord(
-                    job_id="20260217-adhoc-abc123",
-                    name="flex-attn",
-                    local=True,
-                    workspace="/tmp/ws",
-                ),
-            ],
-        )
-        with patch("ptq.cli._repo", return_value=repo):
-            result = runner.invoke(app, ["worktree", "flex-attn"])
-
-        assert result.exit_code == 1
-        assert "already exists" in result.output
-
-    def test_prints_enter_command_local(self, tmp_path, frozen_date):
-        repo = _make_repo(tmp_path)
-        mock_backend = MagicMock()
-        mock_backend.workspace = "/tmp/ws"
-        mock_backend.run = MagicMock(return_value=_ok())
-
-        from ptq.repo_profiles import _DEFAULT_PROFILES
-
-        with (
-            patch("ptq.cli._repo", return_value=repo),
-            patch(
-                "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
-            ),
-            patch("ptq.config.load_config") as mock_cfg,
-            patch(
-                "ptq.repo_profiles._loaded_profiles",
-                return_value=_DEFAULT_PROFILES,
-            ),
-        ):
-            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
-            result = runner.invoke(app, ["worktree", "my-fix", "--local"])
-
-        assert result.exit_code == 0, result.output
-        flat = " ".join(result.output.split())
-        assert "Take over: cd /tmp/ws/jobs/" in flat
-        assert "&& source .venv/bin/activate" in flat
-        assert "/pytorch && source" not in flat
-        assert "Shortcut: ptq takeover 20260217-pytorch-adhoc-" in flat
-        assert "ptq run my-fix" in flat
-
-    def test_prints_ssh_command_remote(self, tmp_path, frozen_date):
-        repo = _make_repo(tmp_path)
-        mock_backend = MagicMock()
-        mock_backend.workspace = "/tmp/ws"
-        mock_backend.run = MagicMock(return_value=_ok())
-
-        from ptq.repo_profiles import _DEFAULT_PROFILES
-
-        with (
-            patch("ptq.cli._repo", return_value=repo),
-            patch(
-                "ptq.infrastructure.backends.RemoteBackend", return_value=mock_backend
-            ),
-            patch("ptq.config.load_config") as mock_cfg,
-            patch(
-                "ptq.repo_profiles.get_profile",
-                side_effect=lambda name: _DEFAULT_PROFILES[name],
-            ),
-        ):
-            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
-            result = runner.invoke(app, ["worktree", "my-fix", "--machine", "gpu-dev"])
-
-        assert result.exit_code == 0, result.output
-        assert "ssh -t gpu-dev" in result.output
-
-    def test_no_agent_launched(self, tmp_path, frozen_date):
-        repo = _make_repo(tmp_path)
-        mock_backend = MagicMock()
-        mock_backend.workspace = "/tmp/ws"
-        mock_backend.run = MagicMock(return_value=_ok())
-        mock_backend.launch_background = MagicMock()
-
-        from ptq.repo_profiles import _DEFAULT_PROFILES
-
-        with (
-            patch("ptq.cli._repo", return_value=repo),
-            patch(
-                "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
-            ),
-            patch("ptq.config.load_config") as mock_cfg,
-            patch(
-                "ptq.repo_profiles._loaded_profiles",
-                return_value=_DEFAULT_PROFILES,
-            ),
-        ):
-            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
-            result = runner.invoke(app, ["worktree", "my-fix"])
-
-        assert result.exit_code == 0, result.output
-        mock_backend.launch_background.assert_not_called()
-
-    def test_writes_manual_agent_context(self, tmp_path, frozen_date):
-        repo = _make_repo(tmp_path)
-        mock_backend = MagicMock()
-        mock_backend.workspace = "/tmp/ws"
-        mock_backend.run = MagicMock(return_value=_ok())
-
-        from ptq.repo_profiles import _DEFAULT_PROFILES
-
-        with (
-            patch("ptq.cli._repo", return_value=repo),
-            patch(
-                "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
-            ),
-            patch("ptq.config.load_config") as mock_cfg,
-            patch(
-                "ptq.repo_profiles._loaded_profiles",
-                return_value=_DEFAULT_PROFILES,
-            ),
-        ):
-            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
-            result = runner.invoke(app, ["worktree", "my-fix"])
-
-        assert result.exit_code == 0, result.output
-        run_cmds = [
-            call.args[0]
-            for call in mock_backend.run.call_args_list
-            if isinstance(call.args[0], str)
-        ]
-        assert any("PTQ_CONTEXT.md" in c for c in run_cmds)
-        assert any("prime.md" in c for c in run_cmds)
-        assert any("/jobs/20260217-pytorch-adhoc-" in c and "/AGENTS.md" in c for c in run_cmds)
-        assert any("/jobs/20260217-pytorch-adhoc-" in c and "/CLAUDE.md" in c for c in run_cmds)
-        assert any("/pytorch/agent_space/PTQ_CONTEXT.md" in c for c in run_cmds)
-        assert any("/pytorch/agent_space/prime.md" in c for c in run_cmds)
-
-    def test_record_created_before_worktree(self, tmp_path, frozen_date):
-        repo = _make_repo(tmp_path)
-        mock_backend = MagicMock()
-        mock_backend.workspace = "/tmp/ws"
-
-        call_order: list[str] = []
-        original_save = repo.save
-
-        def tracked_save(record):
-            call_order.append("save")
-            original_save(record)
-
-        def run_side(cmd: str, check: bool = True, **kw) -> CompletedProcess[str]:
-            if "create_worktree.py" in cmd:
-                call_order.append("create_worktree")
-            if "pytorch/.git" in cmd and "jobs" not in cmd:
-                return _ok()
-            if "test -d" in cmd or "test -f" in cmd:
-                return CompletedProcess(args="", returncode=1, stdout="", stderr="")
-            return _ok()
-
-        mock_backend.run = MagicMock(side_effect=run_side)
-
-        from ptq.repo_profiles import _DEFAULT_PROFILES
-
-        with (
-            patch("ptq.cli._repo", return_value=repo),
-            patch.object(repo, "save", side_effect=tracked_save),
-            patch(
-                "ptq.infrastructure.backends.LocalBackend", return_value=mock_backend
-            ),
-            patch("ptq.config.load_config") as mock_cfg,
-            patch(
-                "ptq.repo_profiles._loaded_profiles",
-                return_value=_DEFAULT_PROFILES,
-            ),
-        ):
-            mock_cfg.return_value.build_env_prefix.return_value = "USE_NINJA=1 "
-            result = runner.invoke(app, ["worktree", "my-fix"])
-
-        assert result.exit_code == 0, result.output
-        assert "save" in call_order
-        assert "create_worktree" in call_order
-        assert call_order.index("save") < call_order.index("create_worktree")
-
-
-class TestWorktreeReuse:
-    @patch("ptq.application.run_service.deploy_scripts")
-    @patch("ptq.repo_profiles._loaded_profiles")
-    def test_run_adopts_precreated_worktree(
-        self, mock_profiles, _deploy, repo, frozen_date
-    ):
-        from ptq.repo_profiles import _DEFAULT_PROFILES
-
-        mock_profiles.return_value = _DEFAULT_PROFILES
-        backend = LocalBackend(workspace="/tmp/ws")
-        _mock_backend(backend, worktree_exists=True)
-
-        repo.save(
-            JobRecord(
-                job_id="20260217-adhoc-aaaaaa",
-                runs=0,
-                agent="claude",
-                model="",
-                local=True,
-                workspace="/tmp/ws",
-                name="flex-attn",
-            )
-        )
-
-        launch(
-            repo,
+        backend = MagicMock()
+        write_job_context(
             backend,
-            RunRequest(
-                message="optimize codegen",
-                local=True,
-                follow=False,
-                existing_job_id="20260217-adhoc-aaaaaa",
-            ),
+            job_id="job-1",
+            workspace="/tmp/ws",
+            name="example",
         )
 
-        job = repo.get("20260217-adhoc-aaaaaa")
-        assert job.runs == 1
-        assert job.name == "flex-attn"
-        backend.launch_background.assert_called_once()
-
-    @patch("ptq.application.run_service.deploy_scripts")
-    @patch("ptq.repo_profiles._loaded_profiles")
-    def test_run_reuses_existing_worktree_no_rebuild(
-        self, mock_profiles, _deploy, repo, frozen_date
-    ):
-        from ptq.repo_profiles import _DEFAULT_PROFILES
-
-        mock_profiles.return_value = _DEFAULT_PROFILES
-        backend = LocalBackend(workspace="/tmp/ws")
-        _mock_backend(backend, worktree_exists=True)
-
-        repo.save(
-            JobRecord(
-                job_id="20260217-adhoc-bbbbbb",
-                runs=0,
-                local=True,
-                workspace="/tmp/ws",
-                name="my-fix",
-            )
+        commands = [call.args[0] for call in backend.run.call_args_list]
+        assert any("/job-1/prime.md" in command for command in commands)
+        assert any(
+            command == "cp /tmp/ws/jobs/job-1/prime.md /tmp/ws/jobs/job-1/AGENTS.md"
+            for command in commands
         )
-
-        launch(
-            repo,
-            backend,
-            RunRequest(
-                message="do the thing",
-                local=True,
-                follow=False,
-                existing_job_id="20260217-adhoc-bbbbbb",
-            ),
-        )
-
-        run_cmds = [
-            call.args[0]
-            for call in backend.run.call_args_list
-            if isinstance(call.args[0], str)
-        ]
-        assert not any("create_worktree.py" in c for c in run_cmds)
+        cleanup = next(command for command in commands if command.startswith("rm -f"))
+        assert "PTQ_CONTEXT.md" in cleanup
+        assert "CLAUDE.md" in cleanup
+        assert "/agent_space/prime.md" in cleanup
 
 
 class TestNameResolution:
@@ -354,7 +53,6 @@ class TestNameResolution:
                 JobRecord(
                     job_id="20260217-adhoc-abc123",
                     name="flex-attn",
-                    local=True,
                     workspace="/tmp/ws",
                 ),
             ],
@@ -367,13 +65,11 @@ class TestNameResolution:
             [
                 JobRecord(
                     job_id="flex-attn",
-                    local=True,
                     workspace="/tmp/ws",
                 ),
                 JobRecord(
                     job_id="20260217-adhoc-xyz789",
                     name="flex-attn",
-                    local=True,
                     workspace="/tmp/ws",
                 ),
             ],
@@ -387,13 +83,11 @@ class TestNameResolution:
                 JobRecord(
                     job_id="20260217-adhoc-abc123",
                     name="flex-attn",
-                    local=True,
                     workspace="/tmp/ws",
                 ),
                 JobRecord(
                     job_id="20260217-adhoc-xyz789",
                     name="other",
-                    local=True,
                     workspace="/tmp/ws",
                 ),
             ],
@@ -401,6 +95,101 @@ class TestNameResolution:
         assert repo.find_by_name("flex-attn") == "20260217-adhoc-abc123"
         assert repo.find_by_name("other") == "20260217-adhoc-xyz789"
         assert repo.find_by_name("nonexistent") is None
+
+
+class TestEnsureJobWorktree:
+    def test_creates_issue_job_without_launching_agent(self, tmp_path, frozen_date):
+        from ptq.application.worktree_service import ensure_job_worktree
+
+        repo = _make_repo(tmp_path)
+        backend = MagicMock(workspace="/tmp/ws")
+        backend.run.return_value = _ok()
+
+        with (
+            patch("ptq.application.worktree_service.deploy_scripts"),
+            patch("ptq.application.worktree_service.provision_worktree") as provision,
+            patch(
+                "ptq.application.worktree_service.write_job_context"
+            ) as write_context,
+        ):
+            job_id, created = ensure_job_worktree(
+                repo,
+                backend,
+                issue_number=123,
+            )
+
+        assert created is True
+        job = repo.get(job_id)
+        assert job.issue == 123
+        provision.assert_called_once()
+        write_context.assert_called_once()
+
+    def test_reuses_existing_issue_job(self, tmp_path):
+        from ptq.application.worktree_service import ensure_job_worktree
+
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="existing-job",
+                    issue=123,
+                    workspace="/tmp/ws",
+                )
+            ],
+        )
+        backend = MagicMock(workspace="/tmp/ws")
+
+        with patch("ptq.application.worktree_service.prepare_job_worktree") as prepare:
+            job_id, created = ensure_job_worktree(
+                repo,
+                backend,
+                issue_number=123,
+            )
+
+        assert (job_id, created) == ("existing-job", False)
+        prepare.assert_called_once()
+        args, kwargs = prepare.call_args
+        assert args[0].workspace == "/tmp/ws"
+        assert args[1] == "existing-job"
+        assert kwargs == {
+            "name": None,
+            "verbose": False,
+            "progress": None,
+            "repo": "pytorch",
+        }
+
+    def test_rejects_reuse_from_another_workspace(self, tmp_path):
+        from ptq.application.worktree_service import ensure_job_worktree
+
+        repo = _make_repo(
+            tmp_path,
+            [JobRecord(job_id="existing-job", issue=123, workspace="/other/ws")],
+        )
+        with pytest.raises(PtqError, match="already exists in /other/ws"):
+            ensure_job_worktree(
+                repo,
+                MagicMock(workspace="/tmp/ws"),
+                issue_number=123,
+                workspace_explicit=True,
+            )
+
+    def test_removes_record_when_new_job_provisioning_fails(
+        self, tmp_path, frozen_date
+    ):
+        from ptq.application.worktree_service import ensure_job_worktree
+
+        repo = _make_repo(tmp_path)
+        backend = MagicMock(workspace="/tmp/ws")
+        backend.run.return_value = _ok()
+        with (
+            patch(
+                "ptq.application.worktree_service.prepare_job_worktree",
+                side_effect=PtqError("provision failed"),
+            ),
+            pytest.raises(PtqError, match="provision failed"),
+        ):
+            ensure_job_worktree(repo, backend, name="example")
+        assert repo.list_all() == {}
 
 
 class TestProvisionWorktree:

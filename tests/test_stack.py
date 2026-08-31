@@ -18,8 +18,8 @@ from ptq.application.stack_service import (
     validate_submit,
 )
 from ptq.domain.models import JobRecord, PtqError, SubmissionMode
+from ptq.infrastructure.backends import LocalBackend
 from ptq.infrastructure.job_repository import JobRepository
-from ptq.ssh import LocalBackend
 
 
 def completed(
@@ -33,7 +33,6 @@ def make_repo(tmp_path: Path) -> JobRepository:
     repo.save(
         JobRecord(
             job_id="stack-job",
-            local=True,
             workspace="/workspace",
         )
     )
@@ -123,7 +122,7 @@ def test_stack_workflow_uses_a_real_git_worktree(tmp_path):
     )
 
     repo = JobRepository(tmp_path / "jobs.json")
-    repo.save(JobRecord(job_id="stack-job", local=True, workspace=str(workspace)))
+    repo.save(JobRecord(job_id="stack-job", workspace=str(workspace)))
     status = inspect_stack(repo, "stack-job")
 
     assert status.branch == "feature-stack"

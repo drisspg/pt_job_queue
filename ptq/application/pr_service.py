@@ -8,10 +8,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ptq.domain.models import JobRecord, PRResult, PtqError, SubmissionMode
-from ptq.infrastructure.backends import backend_for_job
+from ptq.infrastructure.backends import Backend, backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.repo_profiles import get_profile
-from ptq.ssh import Backend
 
 _HTTPS_TO_SSH = {
     "https://github.com/": "git@github.com:",
@@ -83,9 +82,7 @@ def _normalize_pr_title(title: str) -> str:
 
 
 def _artifact_pr_title(backend: Backend, job_dir: str) -> str:
-    return _normalize_pr_title(
-        _read_file(backend, f"{job_dir}/{_PR_TITLE_ARTIFACT}")
-    )
+    return _normalize_pr_title(_read_file(backend, f"{job_dir}/{_PR_TITLE_ARTIFACT}"))
 
 
 def _artifact_pr_labels(backend: Backend, job_dir: str) -> list[str]:
@@ -103,15 +100,12 @@ def _artifact_pr_labels(backend: Backend, job_dir: str) -> list[str]:
     return labels
 
 
-def _validate_pr_labels(
-    backend: Backend, github_repo: str, labels: list[str]
-) -> None:
+def _validate_pr_labels(backend: Backend, github_repo: str, labels: list[str]) -> None:
     """Fail before publishing when an agent suggests nonexistent labels."""
     if not labels:
         return
     result = backend.run(
-        f"gh label list --repo {shlex.quote(github_repo)} "
-        "--limit 1000 --json name",
+        f"gh label list --repo {shlex.quote(github_repo)} --limit 1000 --json name",
         check=False,
     )
     if result.returncode != 0:

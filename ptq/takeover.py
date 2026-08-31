@@ -23,26 +23,10 @@ def shell_path(path: str) -> str:
     return shlex.quote(path)
 
 
-def shell_command(
-    *,
-    workspace: str,
-    job_id: str,
-    repo: str = "pytorch",
-    local: bool,
-    machine: str | None = None,
-) -> str:
+def shell_command(*, workspace: str, job_id: str, repo: str = "pytorch") -> str:
     job_dir = shell_path(job_dir_path(workspace, job_id))
-    if local:
-        return f"cd {job_dir} && source .venv/bin/activate"
-    remote_cmd = f"cd {job_dir} && source .venv/bin/activate && exec $SHELL"
-    return f"ssh -t {shlex.quote(machine or '')} {shlex.quote(remote_cmd)}"
+    return f"cd {job_dir} && source .venv/bin/activate"
 
 
 def for_job(job_id: str, job: JobRecord) -> str:
-    return shell_command(
-        workspace=job.workspace,
-        job_id=job_id,
-        repo=job.repo,
-        local=job.local,
-        machine=job.machine,
-    )
+    return shell_command(workspace=job.workspace, job_id=job_id, repo=job.repo)

@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from subprocess import CompletedProcess
 
 from ptq.domain.models import JobRecord, PtqError, SubmissionMode
-from ptq.infrastructure.backends import backend_for_job
+from ptq.infrastructure.backends import Backend, backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
-from ptq.ssh import Backend
 from ptq.takeover import shell_path, worktree_path
 
 _FIELD_SEPARATOR = "\x1f"
