@@ -13,7 +13,7 @@ from ptq.application.pr_service import (
     create_pr,
     pr_defaults,
 )
-from ptq.domain.models import JobRecord, PtqError
+from ptq.domain.models import JobRecord, PtqError, SubmissionMode
 from ptq.infrastructure.job_repository import JobRepository
 
 
@@ -181,6 +181,20 @@ class TestCreatePr:
             pytest.raises(PtqError, match="human note is required"),
         ):
             create_pr(repo, "20260217-42", human_note="")
+
+    def test_rejects_conventional_pr_for_ghstack_job(self, tmp_path):
+        repo, backend = self._setup(tmp_path)
+        job = repo.get("20260217-42")
+        job.submission_mode = SubmissionMode.GHSTACK
+        repo.save(job)
+
+        with (
+            patch("ptq.application.pr_service.backend_for_job", return_value=backend),
+            pytest.raises(PtqError, match="configured for ghstack"),
+        ):
+            create_pr(repo, "20260217-42", human_note="Note")
+
+        backend.run.assert_not_called()
 
     def test_custom_title(self, tmp_path):
         repo, backend = self._setup(tmp_path)

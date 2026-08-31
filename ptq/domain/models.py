@@ -26,6 +26,11 @@ class RebaseState(Enum):
     FAILED = "failed"
 
 
+class SubmissionMode(Enum):
+    PULL_REQUEST = "pull_request"
+    GHSTACK = "ghstack"
+
+
 @dataclass
 class RebaseInfo:
     state: RebaseState = RebaseState.IDLE
@@ -81,6 +86,8 @@ class JobRecord:
     pr_url: str | None = None
     human_note: str | None = None
     pr_title: str | None = None
+    submission_mode: SubmissionMode = SubmissionMode.PULL_REQUEST
+    stack_base: str = "main"
     rebase: RebaseInfo | None = None
     name: str | None = None
     repo: str = "pytorch"
@@ -119,6 +126,10 @@ class JobRecord:
             d["human_note"] = self.human_note
         if self.pr_title:
             d["pr_title"] = self.pr_title
+        if self.submission_mode != SubmissionMode.PULL_REQUEST:
+            d["submission_mode"] = self.submission_mode.value
+        if self.stack_base != "main":
+            d["stack_base"] = self.stack_base
         if self.name:
             d["name"] = self.name
         if self.repo != "pytorch":
@@ -150,6 +161,10 @@ class JobRecord:
             pr_url=data.get("pr_url"),
             human_note=data.get("human_note"),
             pr_title=data.get("pr_title"),
+            submission_mode=SubmissionMode(
+                data.get("submission_mode", SubmissionMode.PULL_REQUEST.value)
+            ),
+            stack_base=data.get("stack_base", "main"),
             rebase=RebaseInfo.from_dict(rebase_data) if rebase_data else None,
             name=data.get("name"),
             repo=data.get("repo", "pytorch"),

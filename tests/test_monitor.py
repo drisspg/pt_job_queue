@@ -6,14 +6,14 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from ptq.application.monitor_service import collect_monitor_rows
+from ptq.application.monitor_service import collect_monitor_rows, next_action
 from ptq.cli import (
     _monitor_issue_markup,
     _monitor_job_markup,
     _monitor_pr_markup,
     app,
 )
-from ptq.domain.models import JobRecord, JobStatus
+from ptq.domain.models import JobRecord, JobStatus, SubmissionMode
 from ptq.infrastructure.job_repository import JobRepository
 
 runner = CliRunner()
@@ -478,6 +478,44 @@ def test_collect_monitor_rows_includes_pr_ready_jobs_without_pr_url(tmp_path):
     assert rows[0].phase == "ready for PR"
     assert rows[0].job_name == "ready-job"
     assert rows[0].next_action == "ptq pr job-ready"
+
+
+def test_ready_ghstack_uses_ghstack_land():
+    pr_url = "https://github.com/pytorch/pytorch/pull/99"
+    assert (
+        next_action("stack-job", "ready to merge", ghstack=True, pr_url=pr_url)
+        == f"ghstack land {pr_url}"
+    )
+
+
+def test_collect_monitor_rows_routes_ghstack_jobs_to_stack_preflight(tmp_path):
+    repo = _repo(
+        tmp_path,
+        [
+            JobRecord(
+                job_id="stack-job",
+                local=True,
+                workspace="/tmp/ws",
+                submission_mode=SubmissionMode.GHSTACK,
+                stack_base="release/2.8",
+            )
+        ],
+    )
+    backend = MagicMock()
+    backend.run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+    with (
+        patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
+        patch(
+            "ptq.application.monitor_service.get_status",
+            return_value=JobStatus.STOPPED,
+        ),
+    ):
+        rows = collect_monitor_rows(repo)
+
+    assert len(rows) == 1
+    assert rows[0].phase == "ready for stack"
+    assert rows[0].next_action == "ptq stack show stack-job"
 
 
 def test_collect_monitor_rows_checks_pr_ready_artifacts_under_home_workspace(tmp_path):

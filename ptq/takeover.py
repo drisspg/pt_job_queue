@@ -15,7 +15,7 @@ def worktree_path(workspace: str, job_id: str, repo: str = "pytorch") -> str:
     return f"{job_dir_path(workspace, job_id)}/{profile.dir_name}"
 
 
-def _shell_path(path: str) -> str:
+def shell_path(path: str) -> str:
     if path in {"~", "~/"}:
         return "$HOME"
     if path.startswith("~/"):
@@ -31,7 +31,7 @@ def shell_command(
     local: bool,
     machine: str | None = None,
 ) -> str:
-    job_dir = _shell_path(job_dir_path(workspace, job_id))
+    job_dir = shell_path(job_dir_path(workspace, job_id))
     if local:
         return f"cd {job_dir} && source .venv/bin/activate"
     remote_cmd = f"cd {job_dir} && source .venv/bin/activate && exec $SHELL"

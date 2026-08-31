@@ -287,6 +287,20 @@ Creates a branch `ptq/{issue_number}`, applies the diff, and prints next steps f
 
 To create a PR directly from a PTQ job, run `uv run ptq pr JOB_ID`. For an existing open PR, PTQ first syncs the current GitHub title and `## Human Note` so direct GitHub edits are the default source of truth. In an interactive terminal it prompts for a PR title, then opens `$EDITOR` (or `vim`) for the reviewer note if `--note` is omitted. For a new PR, the title defaults to the agent's `pr_title.txt` suggestion when there is no saved title. If the agent wrote `pr_labels.txt`, PTQ validates every label against the repository before publishing and applies them when creating or updating the PR. PyTorch agents use this for the required `release notes: ...` or `topic: not user facing` label.
 
+For a sequence of independently reviewable commits, inspect and submit the job as a ghstack stack:
+
+```bash
+uv run ptq stack init JOB_ID
+uv run ptq stack show JOB_ID
+uv run ptq stack submit JOB_ID --draft
+```
+
+Run `stack init` before implementation begins. It records the job's ghstack submission mode, attaches a `ptq-stack/<job-id>` branch when the clean worktree is detached or still on the base branch, and writes `STACK_CONTEXT.md` for agents taking over the job. The PTQ monitor then reports `ready for stack` and points to `ptq stack show` instead of suggesting `ptq pr`.
+
+`stack show` reports the branch, configured remote, current local base, dirty state, commits, and existing PR mappings without changing anything. `stack submit` requires prior initialization and a clean, attached, linear branch. It verifies every ghstack commit-to-PR trailer and records the top PR for PTQ monitoring; the commit trailers remain the complete mapping source of truth. Later updates use the same command without `--draft`. Existing PR titles and bodies are preserved by default; pass `--update-metadata` only when you intentionally want ghstack to replace them from local commit messages. PTQ rejects `ptq pr` for jobs configured for ghstack.
+
+PTQ does not create or split stack commits. Commit each independently buildable and tested change before submission. Pass `--base BRANCH` to `stack init` when the stack does not target `main`; PTQ remembers that base for later `show`, `submit`, and monitor actions. Land a submitted stack with the monitor's `ghstack land PR_URL` action rather than the GitHub merge button.
+
 ### 8. Manage agents
 
 ```bash

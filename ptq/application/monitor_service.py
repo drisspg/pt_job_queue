@@ -8,10 +8,11 @@ from dataclasses import dataclass
 
 from ptq.application.job_service import get_status
 from ptq.application.pr_service import get_pr_state
-from ptq.domain.models import JobRecord, JobStatus, RebaseState
+from ptq.domain.models import JobRecord, JobStatus, RebaseState, SubmissionMode
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.takeover import for_job as takeover_for_job
+from ptq.takeover import shell_path
 
 
 @dataclass
@@ -259,15 +260,6 @@ def summarize_pr_signals(job: JobRecord) -> PRSignals:
     )
 
 
-def shell_path(path: str) -> str:
-    """Quote paths for backend shell commands while preserving home expansion."""
-    if path in {"~", "~/"}:
-        return "$HOME"
-    if path.startswith("~/"):
-        return f"$HOME/{shlex.quote(path[2:])}"
-    return shlex.quote(path)
-
-
 def job_has_pr_artifacts(job_id: str, backend) -> bool:
     """Detect stopped PTQ jobs that have enough artifacts to review for PR creation."""
     job_dir = shell_path(f"{backend.workspace}/jobs/{job_id}")
@@ -338,6 +330,8 @@ def next_action(
     *,
     can_merge_ignore: bool = False,
     review_decision: str = "",
+    ghstack: bool = False,
+    pr_url: str = "",
 ) -> str:
     """Return the primary PTQ command for the monitor row."""
     match phase:
@@ -359,8 +353,10 @@ def next_action(
             return f"ptq open {job_id}"
         case "ready for PR":
             return f"ptq pr {job_id}"
+        case "ready for stack":
+            return f"ptq stack show {job_id}"
         case "ready to merge":
-            return "trigger merge"
+            return f"ghstack land {pr_url}" if ghstack else "trigger merge"
         case "agent working" | "waiting on CI":
             return f"ptq peek {job_id}"
         case "merged/closed":
@@ -380,12 +376,19 @@ def collect_monitor_rows(
     for job_id, job in sorted(repo.list_all().items()):
         backend = backend_for_job(job)
         status = get_status(job, backend)
+        stack_job = not job.pr_url and job.submission_mode == SubmissionMode.GHSTACK
         ready_for_pr = (
-            not job.pr_url
+            not stack_job
+            and not job.pr_url
             and status == JobStatus.STOPPED
             and job_has_pr_artifacts(job_id, backend)
         )
-        if not include_without_pr and not job.pr_url and not ready_for_pr:
+        if (
+            not include_without_pr
+            and not job.pr_url
+            and not ready_for_pr
+            and not stack_job
+        ):
             continue
         pr_state = (
             get_pr_state(backend, job.pr_url, force_refresh=force_refresh)
@@ -402,11 +405,12 @@ def collect_monitor_rows(
             if job.pr_url and pr_state not in {"closed", "merged"}
             else PRSignals()
         )
-        phase = (
-            "ready for PR"
-            if ready_for_pr
-            else monitor_phase(job, status, pr_state, ci, pr_signals)
-        )
+        if stack_job:
+            phase = "agent working" if status == JobStatus.RUNNING else "ready for stack"
+        elif ready_for_pr:
+            phase = "ready for PR"
+        else:
+            phase = monitor_phase(job, status, pr_state, ci, pr_signals)
         triage_command = ci_triage_command(job.pr_url or "")
         can_merge_ignore = phase == "unrelated CI" and pr_signals.landing_stopped
         rows.append(
@@ -426,6 +430,8 @@ def collect_monitor_rows(
                     phase,
                     can_merge_ignore=can_merge_ignore,
                     review_decision=pr_signals.review_decision,
+                    ghstack=job.submission_mode == SubmissionMode.GHSTACK,
+                    pr_url=job.pr_url or "",
                 ),
                 takeover_command=takeover_for_job(job_id, job),
                 ci_triage_command=triage_command,

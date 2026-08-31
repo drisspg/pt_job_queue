@@ -6,10 +6,17 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
+from ptq.application.pr_service import PRDefaults
+from ptq.application.stack_service import StackCommit, StackStatus, StackSubmitResult
 from ptq.application.supervisor_service import SupervisorVerdict
 from ptq.cli import app
-from ptq.application.pr_service import PRDefaults
-from ptq.domain.models import JobRecord, PRResult, RebaseInfo, RebaseState
+from ptq.domain.models import (
+    JobRecord,
+    PRResult,
+    RebaseInfo,
+    RebaseState,
+    SubmissionMode,
+)
 from ptq.infrastructure.job_repository import JobRepository
 
 runner = CliRunner()
@@ -290,7 +297,146 @@ class TestSuperviseCommand:
         assert collect.call_args.kwargs["run_triage"] is False
 
 
+class TestStackCommand:
+    def test_init_configures_job(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [JobRecord(job_id="stack-job", local=True, workspace="/tmp/ws")],
+        )
+        status = StackStatus(
+            branch="ptq-stack/stack-job",
+            base="main",
+            remote="origin",
+            base_ref="origin/main",
+            dirty=False,
+            has_merges=False,
+            commits=(),
+        )
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.application.stack_service.initialize_stack",
+                return_value=status,
+            ) as initialize,
+        ):
+            result = runner.invoke(app, ["stack", "init", "stack-job"])
+
+        assert result.exit_code == 0, result.output
+        assert "Configured stack-job for ghstack" in result.output
+        initialize.assert_called_once_with(repo, "stack-job", base=None)
+
+    def test_show_renders_stack(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [JobRecord(job_id="stack-job", local=True, workspace="/tmp/ws")],
+        )
+        status = StackStatus(
+            branch="feature-stack",
+            base="main",
+            remote="origin",
+            base_ref="origin/main",
+            dirty=False,
+            has_merges=False,
+            commits=(
+                StackCommit(
+                    sha="abc123456789",
+                    subject="First change",
+                    source_id="source-1",
+                    pr_url="https://github.com/pytorch/pytorch/pull/99",
+                ),
+            ),
+        )
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch("ptq.application.stack_service.inspect_stack", return_value=status),
+        ):
+            result = runner.invoke(app, ["stack", "show", "stack-job"])
+
+        assert result.exit_code == 0, result.output
+        assert "feature-stack" in result.output
+        assert "abc1234567 First change" in result.output
+        assert "pull/99" in result.output
+
+    def test_submit_passes_safe_options(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="stack-job",
+                    local=True,
+                    workspace="/tmp/ws",
+                    submission_mode=SubmissionMode.GHSTACK,
+                    stack_base="release/2.8",
+                )
+            ],
+        )
+        status = StackStatus(
+            branch="feature-stack",
+            base="release/2.8",
+            remote="origin",
+            base_ref="origin/release/2.8",
+            dirty=False,
+            has_merges=False,
+            commits=(
+                StackCommit(
+                    sha="abc123",
+                    subject="First change",
+                    source_id="source-1",
+                    pr_url="https://github.com/pytorch/pytorch/pull/99",
+                ),
+            ),
+        )
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch(
+                "ptq.application.stack_service.submit_stack",
+                return_value=StackSubmitResult(status=status, output="submitted"),
+            ) as submit,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "stack",
+                    "submit",
+                    "stack-job",
+                    "--draft",
+                    "--update-metadata",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Submitted 1 PR(s)" in result.output
+        assert submit.call_args.kwargs == {
+            "draft": True,
+            "update_metadata": True,
+        }
+
+
 class TestPrCommand:
+    def test_rejects_ghstack_job_before_prompting(self, tmp_path):
+        repo = _make_repo(
+            tmp_path,
+            [
+                JobRecord(
+                    job_id="stack-job",
+                    local=True,
+                    workspace="/tmp/ws",
+                    submission_mode=SubmissionMode.GHSTACK,
+                )
+            ],
+        )
+        with (
+            patch("ptq.cli._repo", return_value=repo),
+            patch("ptq.cli.typer.prompt") as prompt,
+            patch("ptq.application.pr_service.create_pr") as create_pr,
+        ):
+            result = runner.invoke(app, ["pr", "stack-job"])
+
+        assert result.exit_code == 1
+        assert "configured for ghstack" in result.output
+        prompt.assert_not_called()
+        create_pr.assert_not_called()
+
     def test_reuses_saved_human_note_when_note_omitted(self, tmp_path):
         repo = _make_repo(
             tmp_path,

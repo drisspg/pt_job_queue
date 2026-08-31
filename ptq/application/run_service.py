@@ -13,7 +13,11 @@ from ptq.agent import (
 )
 from ptq.agents import RunContext, get_agent
 from ptq.application.job_context import write_job_context
-from ptq.application.venv_service import ProgressCallback, _noop_progress, _setup_job_venv
+from ptq.application.venv_service import (
+    ProgressCallback,
+    _noop_progress,
+    _setup_job_venv,
+)
 from ptq.domain.models import JobRecord, PtqError, RunRequest
 from ptq.domain.policies import make_job_id
 from ptq.infrastructure.job_repository import JobRepository
@@ -59,22 +63,30 @@ def _stamp_worklog_header(
 def _build_prior_context(backend: Backend, job_dir: str, run_number: int) -> str:
     worklog = backend.run(f"cat {job_dir}/worklog.md", check=False)
     report = backend.run(f"cat {job_dir}/report.md", check=False)
+    stack = backend.run(f"cat {job_dir}/STACK_CONTEXT.md", check=False)
 
     worklog_content = worklog.stdout.strip() if worklog.returncode == 0 else ""
     report_content = report.stdout.strip() if report.returncode == 0 else ""
+    stack_content = stack.stdout.strip() if stack.returncode == 0 else ""
 
-    if not worklog_content and not report_content:
+    if not worklog_content and not report_content and not stack_content:
         return ""
 
-    sections = [
-        "\n\n## Prior Run Context\n",
-        "The following is from a previous investigation attempt on this issue. "
-        "Use it to avoid repeating work and to build on what was already found.\n",
-    ]
-    if worklog_content:
-        sections.append(f"### Previous Worklog\n{worklog_content}\n")
-    if report_content:
-        sections.append(f"### Previous Report\n{report_content}\n")
+    sections = ["\n\n"]
+    if stack_content:
+        sections.append(f"## Submission Workflow\n{stack_content}\n")
+    if worklog_content or report_content:
+        sections.extend(
+            [
+                "## Prior Run Context\n",
+                "The following is from a previous investigation attempt on this issue. "
+                "Use it to avoid repeating work and to build on what was already found.\n",
+            ]
+        )
+        if worklog_content:
+            sections.append(f"### Previous Worklog\n{worklog_content}\n")
+        if report_content:
+            sections.append(f"### Previous Report\n{report_content}\n")
 
     sections.append(
         f"\n## Continuation Instructions\n"
@@ -241,7 +253,7 @@ def launch(
         prior_context = _build_prior_context(backend, job_dir, run_number)
         if prior_context:
             system_prompt += prior_context
-            progress("Loaded prior run context (worklog/report).")
+            progress("Loaded prior run and submission context.")
 
     _stamp_worklog_header(backend, job_dir, run_number, request.message)
 

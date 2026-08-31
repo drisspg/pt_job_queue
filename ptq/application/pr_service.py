@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ptq.domain.models import JobRecord, PRResult, PtqError
+from ptq.domain.models import JobRecord, PRResult, PtqError, SubmissionMode
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.repo_profiles import get_profile
@@ -44,6 +44,15 @@ class CurrentPRMetadata:
     human_note: str | None = None
     url: str = ""
     fetched: bool = False
+
+
+def ensure_conventional_pr(job: JobRecord) -> None:
+    """Reject conventional PR creation for jobs explicitly configured as stacks."""
+    if job.submission_mode == SubmissionMode.GHSTACK:
+        raise PtqError(
+            f"Job {job.job_id} is configured for ghstack; "
+            f"use `ptq stack submit {job.job_id}`."
+        )
 
 
 def _read_file(backend: Backend, path: str) -> str:
@@ -344,6 +353,7 @@ def create_pr(
 ) -> PRResult:
     _log = log or (lambda _: None)
     job = repo.get(job_id)
+    ensure_conventional_pr(job)
     backend = backend_for_job(job)
     job_dir = f"{backend.workspace}/jobs/{job_id}"
     profile = get_profile(job.repo)

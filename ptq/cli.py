@@ -12,12 +12,20 @@ from rich.markup import escape
 
 from ptq.agent import _clean, _indent, _truncate
 from ptq.agents import StreamEvent, get_agent
-from ptq.domain.models import JobRecord, JobStatus, PtqError, RebaseState, RunRequest
+from ptq.domain.models import (
+    JobRecord,
+    JobStatus,
+    PtqError,
+    RebaseState,
+    RunRequest,
+)
 
 app = typer.Typer(
     name="ptq",
     help="PyTorch Job Queue — dispatch AI agents to fix issues in PyTorch and add-on repos.",
 )
+stack_app = typer.Typer(help="Inspect and submit ghstack pull request stacks.")
+app.add_typer(stack_app, name="stack")
 console = Console()
 
 
@@ -598,6 +606,12 @@ def list_jobs() -> None:
         "[dim]  ptq pr JOB_ID                         # create GitHub PR[/dim]"
     )
     console.print(
+        "[dim]  ptq stack init JOB_ID                 # configure a ghstack job[/dim]"
+    )
+    console.print(
+        "[dim]  ptq stack show JOB_ID                 # inspect ghstack commits[/dim]"
+    )
+    console.print(
         "[dim]  ptq takeover JOB_ID                   # drop into worktree[/dim]"
     )
     console.print("[dim]  ptq kill JOB_ID                       # stop agent[/dim]")
@@ -615,7 +629,7 @@ def list_jobs() -> None:
 
 def _monitor_phase_style(phase: str) -> str:
     match phase:
-        case "ready to merge" | "ready for PR":
+        case "ready to merge" | "ready for PR" | "ready for stack":
             return "green"
         case "agent working" | "waiting on CI" | "landing":
             return "cyan"
@@ -1157,6 +1171,106 @@ def status(
         console.print(f"\n  last log: [dim]{tail.stdout.strip()[:120]}[/dim]")
 
 
+@stack_app.command("init")
+def stack_init(
+    job_id: Annotated[str, typer.Argument(help="Job ID, name, or issue number.")],
+    base: Annotated[
+        str | None,
+        typer.Option("--base", "-B", help="Set the stack base branch."),
+    ] = None,
+) -> None:
+    """Configure a PTQ job and its agent context for ghstack submissions."""
+    from ptq.application.stack_service import initialize_stack
+
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+        status = initialize_stack(repo, job_id, base=base)
+    except PtqError as e:
+        _handle_error(e)
+
+    console.print(f"[bold green]Configured {escape(job_id)} for ghstack.[/bold green]")
+    console.print(f"  Branch: {escape(status.branch)}")
+    console.print(f"  Base: {escape(status.base_ref)}")
+    console.print("  Agent context: STACK_CONTEXT.md")
+    console.print(f"  Next: uv run ptq stack show {escape(job_id)}")
+
+
+@stack_app.command("show")
+def stack_show(
+    job_id: Annotated[str, typer.Argument(help="Job ID, name, or issue number.")],
+) -> None:
+    """Show the commits and repository state that ghstack would submit."""
+    from ptq.application.stack_service import inspect_stack
+
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+        status = inspect_stack(repo, job_id)
+    except PtqError as e:
+        _handle_error(e)
+
+    branch = status.branch or "detached HEAD"
+    cleanliness = "dirty" if status.dirty else "clean"
+    console.print(f"[bold]ghstack for {escape(job_id)}[/bold]")
+    console.print(f"  Branch: {escape(branch)}")
+    console.print(f"  Remote: {escape(status.remote)}")
+    console.print(f"  Base: {escape(status.base_ref)}")
+    console.print(f"  Worktree: {cleanliness}")
+    if status.has_merges:
+        console.print("  [yellow]History contains merge commits.[/yellow]")
+    if not status.commits:
+        console.print("  [dim]No commits to submit.[/dim]")
+        return
+
+    console.print("\n  Commits (base to top):")
+    for position, commit in enumerate(status.commits, start=1):
+        link = f" -> {commit.pr_url}" if commit.pr_url else ""
+        console.print(
+            f"  {position}. {commit.sha[:10]} {escape(commit.subject)}{escape(link)}"
+        )
+
+
+@stack_app.command("submit")
+def stack_submit(
+    job_id: Annotated[str, typer.Argument(help="Job ID, name, or issue number.")],
+    draft: Annotated[
+        bool, typer.Option(help="Create new pull requests as drafts.")
+    ] = False,
+    update_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--update-metadata",
+            help="Replace existing PR titles and bodies from local commit messages.",
+        ),
+    ] = False,
+) -> None:
+    """Submit or update a clean linear stack through ghstack."""
+    from ptq.application.stack_service import submit_stack
+
+    repo = _repo()
+    try:
+        job_id = repo.resolve_id(job_id)
+        result = submit_stack(
+            repo,
+            job_id,
+            draft=draft,
+            update_metadata=update_metadata,
+        )
+    except PtqError as e:
+        _handle_error(e)
+
+    console.print(
+        f"[bold green]Submitted {len(result.status.commits)} PR(s).[/bold green]"
+    )
+    for position, commit in enumerate(result.status.commits, start=1):
+        console.print(
+            f"  {position}. {escape(commit.subject)} -> {escape(commit.pr_url)}"
+        )
+    if result.output:
+        console.print(f"\n[dim]{escape(result.output)}[/dim]")
+
+
 @app.command()
 def pr(
     job_id: Annotated[str, typer.Argument(help="Job ID or issue number.")],
@@ -1177,11 +1291,16 @@ def pr(
     Requires a human note describing the change. This is embedded at the top
     of the PR body so reviewers see the author's own assessment first.
     """
-    from ptq.application.pr_service import create_pr, pr_defaults
+    from ptq.application.pr_service import (
+        create_pr,
+        ensure_conventional_pr,
+        pr_defaults,
+    )
 
     repo = _repo()
     try:
         job_id = repo.resolve_id(job_id)
+        ensure_conventional_pr(repo.get(job_id))
         defaults = pr_defaults(repo, job_id)
     except PtqError as e:
         _handle_error(e)

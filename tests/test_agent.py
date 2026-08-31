@@ -100,11 +100,30 @@ class TestBuildPriorContext:
         backend.run.side_effect = [
             CompletedProcess(args="", returncode=0, stdout="old worklog", stderr=""),
             CompletedProcess(args="", returncode=0, stdout="old report", stderr=""),
+            CompletedProcess(args="", returncode=1, stdout="", stderr=""),
         ]
 
         result = _build_prior_context(backend, "/tmp/job", 2)
 
         assert "spin fixlint" in result
+
+    def test_includes_ghstack_submission_context(self):
+        backend = MagicMock()
+        backend.run.side_effect = [
+            CompletedProcess(args="", returncode=1, stdout="", stderr=""),
+            CompletedProcess(args="", returncode=1, stdout="", stderr=""),
+            CompletedProcess(
+                args="",
+                returncode=0,
+                stdout="Use ptq stack submit, not ptq pr.",
+                stderr="",
+            ),
+        ]
+
+        result = _build_prior_context(backend, "/tmp/job", 2)
+
+        assert "## Submission Workflow" in result
+        assert "Use ptq stack submit, not ptq pr." in result
 
 
 def _ok(*args, **kwargs) -> CompletedProcess[str]:

@@ -119,13 +119,14 @@ After `uv run ptq open JOB_ID`, the job workspace should be grounded by:
 ```bash
 prime.md
 PTQ_CONTEXT.md
+STACK_CONTEXT.md  # when present; selects the ghstack workflow
 worklog.md
 pytorch/AGENTS.md
 ```
 
 Fresh manual Pi sessions in a job workspace should start from the job directory and load `@prime.md`. That file tells the job agent what context files to read, where to edit, and how to keep `worklog.md`/`report.md` current.
 
-Actual code edits, test runs, CI fix commits, PR creation, and cleanup should happen in the job workspace or via explicit PTQ commands, not silently in the driver pane.
+Actual code edits, test runs, CI fix commits, PR creation, and cleanup should happen in the job workspace or via explicit PTQ commands, not silently in the driver pane. For a job intended as multiple dependent PRs, run `uv run ptq stack init JOB_ID` before launching the implementation agent; the monitor and agent then use the persisted ghstack mode instead of `ptq pr`.
 
 ## Trust boundary
 

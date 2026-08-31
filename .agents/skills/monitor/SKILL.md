@@ -57,9 +57,10 @@ For each row:
 - `needs fix`: use only when supervisor or direct triage evidence shows a real related regression.
 - `adhoc` issue rows with `open` PRs and failed CI: assume this is a high-risk false-positive queue label until proven otherwise. Read `uv run ptq peek JOB_ID` to recover the real issue/worklog context, then compare failing checks against the worklog's changed area before calling it actionable.
 - `ready for PR`: summarize why it appears ready and suggest `uv run ptq pr JOB_ID`.
+- `ready for stack`: the persisted submission mode is ghstack; suggest `uv run ptq stack show JOB_ID`, never `ptq pr`.
 - `waiting on CI`: report that no user action is needed unless it stays stuck.
 - `merged/closed`: suggest cleanup, but do not clean without asking.
-- `ready to merge`: tell the user it is ready for human merge action.
+- `ready to merge`: tell the user it is ready for human merge action. For ghstack jobs, use the row's `ghstack land PR_URL` action rather than the GitHub merge button.
 
 Keep updates grouped by urgency and avoid repeating unchanged rows.
 

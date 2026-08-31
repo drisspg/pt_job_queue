@@ -7,7 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from ptq.application.job_service import clean_machine, get_status, kill_job
-from ptq.domain.models import JobNotFoundError, JobRecord, JobStatus
+from ptq.domain.models import (
+    JobNotFoundError,
+    JobRecord,
+    JobStatus,
+    SubmissionMode,
+)
 from ptq.domain.policies import make_job_id
 from ptq.infrastructure.backends import backend_for_job, create_backend
 from ptq.infrastructure.job_repository import JobRepository
@@ -95,6 +100,21 @@ class TestJobRecord:
     def test_pr_url_omitted_when_none(self):
         d = JobRecord(job_id="j").to_dict()
         assert "pr_url" not in d
+
+    def test_stack_mode_roundtrip(self):
+        record = JobRecord(
+            job_id="j",
+            submission_mode=SubmissionMode.GHSTACK,
+            stack_base="release/2.8",
+        )
+        restored = JobRecord.from_dict("j", record.to_dict())
+        assert restored.submission_mode == SubmissionMode.GHSTACK
+        assert restored.stack_base == "release/2.8"
+
+    def test_default_submission_mode_is_omitted(self):
+        data = JobRecord(job_id="j").to_dict()
+        assert "submission_mode" not in data
+        assert "stack_base" not in data
 
     def test_initializing_omitted_when_false(self):
         d = JobRecord(job_id="j").to_dict()
