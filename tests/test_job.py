@@ -106,10 +106,15 @@ class TestJobRecord:
             job_id="j",
             submission_mode=SubmissionMode.GHSTACK,
             stack_base="release/2.8",
+            stack_pr_urls=[
+                "https://github.com/pytorch/pytorch/pull/98",
+                "https://github.com/pytorch/pytorch/pull/99",
+            ],
         )
         restored = JobRecord.from_dict("j", record.to_dict())
         assert restored.submission_mode == SubmissionMode.GHSTACK
         assert restored.stack_base == "release/2.8"
+        assert restored.stack_pr_urls == record.stack_pr_urls
 
     def test_default_submission_mode_is_omitted(self):
         data = JobRecord(job_id="j").to_dict()

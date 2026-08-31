@@ -456,6 +456,10 @@ def test_submit_runs_ghstack_and_persists_top_pr(tmp_path):
     assert [commit.sha for commit in result.status.commits] == ["new1", "new2"]
 
     saved = repo.get("stack-job")
+    assert saved.stack_pr_urls == [
+        "https://github.com/pytorch/pytorch/pull/101",
+        "https://github.com/pytorch/pytorch/pull/102",
+    ]
     assert saved.pr_url == "https://github.com/pytorch/pytorch/pull/102"
     assert saved.pr_title == "Second change"
     assert saved.submission_mode == SubmissionMode.GHSTACK

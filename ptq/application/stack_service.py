@@ -214,9 +214,11 @@ def persist_submitted_stack(
     job = repo.get(job_id)
     top = commits[-1]
     top_pr_changed = job.pr_url != top.pr_url
+    job.stack_pr_urls = [commit.pr_url for commit in commits]
     job.pr_url = top.pr_url
     if update_metadata or top_pr_changed or not job.pr_title:
         job.pr_title = top.subject
+    job.rebase = None
     repo.save(job)
 
 
@@ -236,6 +238,7 @@ This job is configured for a ghstack submission targeting `{base}` from branch `
 - Do not use `uv run ptq pr {job_id}` for this job.
 - Do not update existing PR metadata unless the user explicitly requests it.
 - For PyTorch, `@pytorchbot merge` lands the selected PR and every open PR below it.
+- After landing only a lower prefix, follow the monitor's rebase and resubmit actions.
 """
 
 

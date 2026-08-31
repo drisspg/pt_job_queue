@@ -12,6 +12,7 @@ from ptq.domain.models import (
     PtqError,
     RebaseInfo,
     RebaseState,
+    SubmissionMode,
 )
 from ptq.infrastructure.job_repository import JobRepository
 
@@ -455,6 +456,23 @@ class TestRebaseWeb:
         resp = client.get("/jobs/rebasing/doesnotexist/progress")
         assert resp.status_code == 200
         assert "not found" in resp.text
+
+    def test_stack_rebase_success_persists_until_resubmission(self, client):
+        job = client.repo.get("20260217-100001")
+        job.submission_mode = SubmissionMode.GHSTACK
+        job.rebase = RebaseInfo(
+            state=RebaseState.SUCCEEDED,
+            target_ref="origin/main",
+            before_sha="4d5536d435",
+            after_sha="977b4d4cb7",
+        )
+        client.repo.save(job)
+
+        client.get("/jobs/20260217-100001")
+        assert (
+            client.repo.get("20260217-100001").rebase_info.state
+            == RebaseState.SUCCEEDED
+        )
 
     def test_rebase_success_banner_clears_after_first_render(self, client):
         client.repo.save_rebase(

@@ -58,6 +58,8 @@ For each row:
 - `adhoc` issue rows with `open` PRs and failed CI: assume this is a high-risk false-positive queue label until proven otherwise. Read `uv run ptq peek JOB_ID` to recover the real issue/worklog context, then compare failing checks against the worklog's changed area before calling it actionable.
 - `ready for PR`: summarize why it appears ready and suggest `uv run ptq pr JOB_ID`.
 - `ready for stack`: the persisted submission mode is ghstack; suggest `uv run ptq stack show JOB_ID`, never `ptq pr`.
+- `needs stack rebase`: a lower ghstack PR landed or closed while higher PRs remain open; use `uv run ptq rebase JOB_ID` to move the remaining local commits onto the updated base.
+- `ready to resubmit stack`: the post-landing rebase succeeded; use `uv run ptq stack submit JOB_ID` to update the remaining PRs.
 - `waiting on CI`: report that no user action is needed unless it stays stuck.
 - `merged/closed`: suggest cleanup, but do not clean without asking.
 - `ready to merge`: tell the user it is ready for human merge action. For PyTorch ghstack jobs, use the row's `@pytorchbot merge` action; the selected PR and every open PR below it land together. Other ghstack repositories use `ghstack land PR_URL`. Never use the GitHub merge button for a ghstack PR.

@@ -23,7 +23,7 @@ from ptq.config import (
     discover_ssh_hosts,
     load_config,
 )
-from ptq.domain.models import PtqError, RebaseState, RunRequest
+from ptq.domain.models import PtqError, RebaseState, RunRequest, SubmissionMode
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.repo_profiles import available_repos, get_profile
@@ -515,7 +515,10 @@ async def job_detail(request: Request, job_id: str):
     from ptq.takeover import for_job as takeover_for_job
 
     rb = job.rebase_info
-    if rb.state == RebaseState.SUCCEEDED:
+    if (
+        rb.state == RebaseState.SUCCEEDED
+        and job.submission_mode != SubmissionMode.GHSTACK
+    ):
         repo.save_rebase(job_id, {})
     return templates.TemplateResponse(
         request,

@@ -629,13 +629,24 @@ def list_jobs() -> None:
 
 def _monitor_phase_style(phase: str) -> str:
     match phase:
-        case "ready to merge" | "ready for PR" | "ready for stack":
+        case (
+            "ready to merge"
+            | "ready for PR"
+            | "ready for stack"
+            | "ready to resubmit stack"
+        ):
             return "green"
         case "agent working" | "waiting on CI" | "landing":
             return "cyan"
         case "unrelated CI":
             return "yellow"
-        case "needs fix" | "needs rebase" | "needs human review" | "needs CI review":
+        case (
+            "needs fix"
+            | "needs rebase"
+            | "needs stack rebase"
+            | "needs human review"
+            | "needs CI review"
+        ):
             return "orange3"
         case "merged/closed":
             return "cyan"

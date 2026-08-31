@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -88,6 +88,7 @@ class JobRecord:
     pr_title: str | None = None
     submission_mode: SubmissionMode = SubmissionMode.PULL_REQUEST
     stack_base: str = "main"
+    stack_pr_urls: list[str] = field(default_factory=list)
     rebase: RebaseInfo | None = None
     name: str | None = None
     repo: str = "pytorch"
@@ -130,6 +131,8 @@ class JobRecord:
             d["submission_mode"] = self.submission_mode.value
         if self.stack_base != "main":
             d["stack_base"] = self.stack_base
+        if self.stack_pr_urls:
+            d["stack_pr_urls"] = self.stack_pr_urls
         if self.name:
             d["name"] = self.name
         if self.repo != "pytorch":
@@ -165,6 +168,7 @@ class JobRecord:
                 data.get("submission_mode", SubmissionMode.PULL_REQUEST.value)
             ),
             stack_base=data.get("stack_base", "main"),
+            stack_pr_urls=list(data.get("stack_pr_urls", [])),
             rebase=RebaseInfo.from_dict(rebase_data) if rebase_data else None,
             name=data.get("name"),
             repo=data.get("repo", "pytorch"),

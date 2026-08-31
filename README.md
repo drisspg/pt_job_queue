@@ -301,6 +301,8 @@ Run `stack init` before implementation begins. It records the job's ghstack subm
 
 PTQ does not create or split stack commits. Commit each independently buildable and tested change before submission. Pass `--base BRANCH` to `stack init` when the stack does not target `main`; PTQ remembers that base for later `show`, `submit`, and monitor actions. PyTorch's merge bot understands ghstack prefixes: `@pytorchbot merge` on a PR lands that PR and every open PR below it. Use the bottom PR to land one layer or the top PR to land the whole stack; do not use the GitHub merge button. Other repositories use `ghstack land PR_URL`.
 
+PTQ records the submitted PR URLs from bottom to top. When a lower PR lands while higher PRs remain open, the monitor reports `needs stack rebase`; run its `ptq rebase JOB_ID` action. After a clean rebase it reports `ready to resubmit stack`; run `ptq stack submit JOB_ID` to update the remaining PRs and clear the completed layer from PTQ's stack state.
+
 ### 8. Manage agents
 
 ```bash

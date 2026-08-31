@@ -317,6 +317,17 @@ def ci_triage_command(pr_url: str) -> str:
     return f"~/dotfiles/scripts/github_ci_triage {shlex.quote(pr_url)}"
 
 
+def stack_has_closed_lower_pr(
+    job: JobRecord, backend, *, force_refresh: bool = False
+) -> bool:
+    """Detect a landed or closed dependency below the tracked top stack PR."""
+    return any(
+        get_pr_state(backend, pr_url, force_refresh=force_refresh)
+        in {"closed", "merged"}
+        for pr_url in job.stack_pr_urls[:-1]
+    )
+
+
 def merge_ignore_command(pr_url: str) -> str:
     """Return the PyTorchBot command used to restart landing over unrelated CI."""
     if not pr_url:
@@ -348,8 +359,10 @@ def next_action(
             if review_decision == "APPROVED":
                 return "review merge readiness"
             return f"ptq peek {job_id}"
-        case "needs rebase":
+        case "needs rebase" | "needs stack rebase":
             return f"ptq rebase {job_id}"
+        case "ready to resubmit stack":
+            return f"ptq stack submit {job_id}"
         case "needs human review":
             return f"ptq open {job_id}"
         case "ready for PR":
@@ -410,7 +423,22 @@ def collect_monitor_rows(
             if job.pr_url and pr_state not in {"closed", "merged"}
             else PRSignals()
         )
-        if stack_job:
+        lower_stack_pr_closed = (
+            job.submission_mode == SubmissionMode.GHSTACK
+            and pr_state == "open"
+            and stack_has_closed_lower_pr(
+                job, backend, force_refresh=force_refresh
+            )
+        )
+        if lower_stack_pr_closed:
+            match job.rebase_info.state:
+                case RebaseState.SUCCEEDED:
+                    phase = "ready to resubmit stack"
+                case RebaseState.NEEDS_HUMAN | RebaseState.FAILED:
+                    phase = "needs human review"
+                case _:
+                    phase = "needs stack rebase"
+        elif stack_job:
             phase = "agent working" if status == JobStatus.RUNNING else "ready for stack"
         elif ready_for_pr:
             phase = "ready for PR"

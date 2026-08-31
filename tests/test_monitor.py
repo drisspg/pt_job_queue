@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from ptq.application.monitor_service import collect_monitor_rows, next_action
@@ -13,7 +14,13 @@ from ptq.cli import (
     _monitor_pr_markup,
     app,
 )
-from ptq.domain.models import JobRecord, JobStatus, SubmissionMode
+from ptq.domain.models import (
+    JobRecord,
+    JobStatus,
+    RebaseInfo,
+    RebaseState,
+    SubmissionMode,
+)
 from ptq.infrastructure.job_repository import JobRepository
 
 runner = CliRunner()
@@ -533,6 +540,56 @@ def test_collect_monitor_rows_routes_ghstack_jobs_to_stack_preflight(tmp_path):
     assert len(rows) == 1
     assert rows[0].phase == "ready for stack"
     assert rows[0].next_action == "ptq stack show stack-job"
+
+
+@pytest.mark.parametrize(
+    ("rebase", "phase", "action"),
+    [
+        (None, "needs stack rebase", "ptq rebase stack-job"),
+        (
+            RebaseInfo(state=RebaseState.SUCCEEDED),
+            "ready to resubmit stack",
+            "ptq stack submit stack-job",
+        ),
+    ],
+)
+def test_collect_monitor_rows_tracks_landed_lower_stack_pr(
+    tmp_path, rebase, phase, action
+):
+    base_url = "https://github.com/pytorch/pytorch/pull/98"
+    top_url = "https://github.com/pytorch/pytorch/pull/99"
+    repo = _repo(
+        tmp_path,
+        [
+            JobRecord(
+                job_id="stack-job",
+                local=True,
+                workspace="/tmp/ws",
+                submission_mode=SubmissionMode.GHSTACK,
+                stack_pr_urls=[base_url, top_url],
+                pr_url=top_url,
+                rebase=rebase,
+            )
+        ],
+    )
+    backend = MagicMock()
+    backend.run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+    def pr_state(_backend, pr_url, **_kwargs):
+        return "merged" if pr_url == base_url else "open"
+
+    with (
+        patch("ptq.application.monitor_service.backend_for_job", return_value=backend),
+        patch(
+            "ptq.application.monitor_service.get_status",
+            return_value=JobStatus.STOPPED,
+        ),
+        patch("ptq.application.monitor_service.get_pr_state", side_effect=pr_state),
+    ):
+        rows = collect_monitor_rows(repo)
+
+    assert rows[0].phase == phase
+    assert rows[0].next_action == action
 
 
 def test_collect_monitor_rows_checks_pr_ready_artifacts_under_home_workspace(tmp_path):
