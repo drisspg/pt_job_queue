@@ -376,8 +376,9 @@ def test_submit_runs_ghstack_and_persists_top_pr(tmp_path):
     backend = MagicMock()
     backend.workspace = "/workspace"
     submitted = False
+    logs: list[str] = []
 
-    def run(cmd: str, check: bool = True):
+    def run(cmd: str, check: bool = True, stream: bool = False):
         nonlocal submitted
         if "GHSTACKRC_PATH" in cmd or cmd.startswith("cat "):
             return completed()
@@ -424,7 +425,13 @@ def test_submit_runs_ghstack_and_persists_top_pr(tmp_path):
 
     backend.run.side_effect = run
     with patch("ptq.application.stack_service.backend_for_job", return_value=backend):
-        result = submit_stack(repo, "stack-job", draft=True)
+        result = submit_stack(
+            repo,
+            "stack-job",
+            draft=True,
+            stream_output=True,
+            log=logs.append,
+        )
 
     submit_call = next(
         call.args[0]
@@ -433,6 +440,16 @@ def test_submit_runs_ghstack_and_persists_top_pr(tmp_path):
     )
     assert "ghstack submit --stack -B main --draft HEAD" in submit_call
     assert "--update-fields" not in submit_call
+    submit_invocation = next(
+        call for call in backend.run.call_args_list if "ghstack submit" in call.args[0]
+    )
+    assert submit_invocation.kwargs["stream"] is True
+    assert logs == [
+        "Resolving ghstack configuration...",
+        "Fetching origin...",
+        "Submitting 2 commit(s) from feature-stack onto origin/main...",
+        "Refreshing submitted stack metadata...",
+    ]
     commands = [call.args[0] for call in backend.run.call_args_list]
     fetch_call = next(cmd for cmd in commands if "fetch --prune" in cmd)
     assert commands.index(fetch_call) < commands.index(submit_call)

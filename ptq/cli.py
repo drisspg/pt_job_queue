@@ -1251,11 +1251,14 @@ def stack_submit(
     repo = _repo()
     try:
         job_id = repo.resolve_id(job_id)
+        console.print(f"[bold]Submitting ghstack for {escape(job_id)}[/bold]")
         result = submit_stack(
             repo,
             job_id,
             draft=draft,
             update_metadata=update_metadata,
+            stream_output=True,
+            log=lambda message: console.print(f"  [dim]{message}[/dim]"),
         )
     except PtqError as e:
         _handle_error(e)

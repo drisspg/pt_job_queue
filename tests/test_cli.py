@@ -405,11 +405,12 @@ class TestStackCommand:
             )
 
         assert result.exit_code == 0, result.output
+        assert "Submitting ghstack for stack-job" in result.output
         assert "Submitted 1 PR(s)" in result.output
-        assert submit.call_args.kwargs == {
-            "draft": True,
-            "update_metadata": True,
-        }
+        assert submit.call_args.kwargs["draft"] is True
+        assert submit.call_args.kwargs["update_metadata"] is True
+        assert submit.call_args.kwargs["stream_output"] is True
+        assert callable(submit.call_args.kwargs["log"])
 
 
 class TestPrCommand:

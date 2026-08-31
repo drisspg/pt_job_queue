@@ -3,6 +3,7 @@ from __future__ import annotations
 import configparser
 import re
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass
 from subprocess import CompletedProcess
 
@@ -341,19 +342,28 @@ def submit_stack(
     *,
     draft: bool = False,
     update_metadata: bool = False,
+    stream_output: bool = False,
+    log: Callable[[str], None] | None = None,
 ) -> StackSubmitResult:
     """Submit an initialized, clean, linear PTQ job stack through ghstack."""
+    _log = log or (lambda _: None)
     job = repo.get(job_id)
     if job.submission_mode != SubmissionMode.GHSTACK:
         raise PtqError(f"Run `ptq stack init {job_id}` before submitting this job.")
 
     backend = backend_for_job(job)
     worktree = worktree_path(backend.workspace, job.job_id, job.repo)
+    _log("Resolving ghstack configuration...")
     executable = ghstack_executable(backend)
     remote = ghstack_remote(backend, worktree)
+    _log(f"Fetching {remote}...")
     checked_git(backend, worktree, f"fetch --prune {shlex.quote(remote)}")
     status = inspect_stack(repo, job_id)
     validate_submit(status)
+    _log(
+        f"Submitting {len(status.commits)} commit(s) from {status.branch} "
+        f"onto {status.base_ref}..."
+    )
 
     args = [executable, "submit", "--stack", "-B", status.base]
     if draft:
@@ -362,15 +372,19 @@ def submit_stack(
         args.append("--update-fields")
     args.append("HEAD")
     command = " ".join(shlex.quote(arg) for arg in args)
-    result = backend.run(
-        f"cd {shell_path(worktree)} && {command}",
-        check=False,
-    )
+    submit_command = f"cd {shell_path(worktree)} && {command}"
+    if stream_output:
+        result = backend.run(submit_command, check=False, stream=True)
+    else:
+        result = backend.run(submit_command, check=False)
+    stdout = result.stdout.strip() if isinstance(result.stdout, str) else ""
+    stderr = result.stderr.strip() if isinstance(result.stderr, str) else ""
     if result.returncode != 0:
         raise PtqError(
-            f"ghstack submit failed: {result.stderr.strip() or result.stdout.strip()}"
+            f"ghstack submit failed: {stderr or stdout or 'see output above'}"
         )
 
+    _log("Refreshing submitted stack metadata...")
     submitted = inspect_stack(repo, job_id)
     persist_submitted_stack(
         repo,
@@ -378,4 +392,4 @@ def submit_stack(
         submitted.commits,
         update_metadata=update_metadata,
     )
-    return StackSubmitResult(status=submitted, output=result.stdout.strip())
+    return StackSubmitResult(status=submitted, output=stdout)
