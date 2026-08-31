@@ -622,9 +622,6 @@ def list_jobs() -> None:
         "[dim]  ptq clean MACHINE                     # bulk clean stopped jobs[/dim]"
     )
     console.print("[dim]  ptq monitor                           # watch PR/CI jobs[/dim]")
-    console.print(
-        "[dim]  ptq web                               # start web dashboard[/dim]"
-    )
 
 
 def _monitor_phase_style(phase: str) -> str:
@@ -1372,34 +1369,6 @@ def pr(
     except PtqError as e:
         _handle_error(e)
     console.print(f"\n[bold green]PR created:[/bold green] {result.url}")
-
-
-@app.command()
-def web(
-    port: Annotated[int, typer.Option(help="Port to listen on.")] = 8000,
-    host: Annotated[str, typer.Option(help="Host to bind to.")] = "127.0.0.1",
-    debug: Annotated[bool, typer.Option(help="Enable debug logging.")] = False,
-) -> None:
-    """Start the web dashboard (auto-reloads on code changes)."""
-    try:
-        import uvicorn
-    except ModuleNotFoundError:
-        console.print(
-            "[red]Missing web dependencies.[/red] Install with: [bold]pip install -e .[/bold]"
-        )
-        raise typer.Exit(1)  # noqa: B904
-
-    console.print(f"Starting ptq web at http://{host}:{port}")
-    factory = "ptq.web.app:create_debug_app" if debug else "ptq.web.app:create_app"
-    uvicorn.run(
-        factory,
-        factory=True,
-        host=host,
-        port=port,
-        log_level="debug" if debug else "info",
-        reload=True,
-        reload_dirs=[str(Path(__file__).resolve().parent)],
-    )
 
 
 @app.command()

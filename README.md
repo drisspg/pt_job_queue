@@ -11,11 +11,10 @@ cd pt_job_queue
 uv run ptq --help
 ```
 
-For development (tests, web dashboard):
+For development:
 
 ```bash
 uv run --extra dev pytest
-uv run ptq web
 ```
 
 ### Uber speed mode getting started
@@ -161,29 +160,6 @@ The agent will:
 
 Re-running the same issue reuses the existing worktree and preserves prior edits. Each run gets its own log (`claude-1.log`, `claude-2.log`, ...). Different issues run concurrently via separate git worktrees. Fresh workspaces still need an explicit `ptq setup ...` first.
 
-### 4. Web dashboard
-
-```bash
-uv run ptq web
-# or on a custom port
-uv run ptq web --port 9000
-```
-
-The web UI lets you:
-- Launch jobs (issue-based or ad-hoc) with agent/model/thinking/machine selection
-- Fill the message box from a built-in prompt library for `Repro Only`, `Diagnose And Plan`, and `Fix And Verify`
-- Monitor live logs via streaming
-- View reports, diffs, and worklogs
-- Follow up on stopped jobs with steering messages
-- **Take Over** — copies an SSH command that drops you into the job's worktree with the venv activated
-- Create PRs directly from the UI
-
-### Web UI preview
-
-> Add a screenshot at `docs/assets/web-ui.png` and this README will render it automatically.
-
-![ptq web ui](docs/assets/web-ui.png)
-
 The prompt library is backed by `~/.ptq/config.toml`.
 
 Per-agent model defaults live there too. For backends with first-class reasoning controls, you can set thinking separately from the model:
@@ -213,7 +189,7 @@ List everything available from CLI with:
 ptq presets
 ```
 
-### 5. Monitor progress (CLI)
+### 4. Monitor progress (CLI)
 
 ```bash
 # Peek at the agent's worklog
@@ -265,7 +241,7 @@ The main driver skill lives at `.agents/skills/driver/SKILL.md`, and `.pi/prompt
 
 The monitor operator skill lives at `.agents/skills/monitor/SKILL.md`, and `.pi/prompts/monitor.md` provides `/monitor` in interactive Pi. In the operator pane, use `/monitor` or start Pi with `--skill .agents/skills/monitor` so it uses the PTQ monitor workflow, CI triage helper, and optional HUD checks.
 
-### 6. View results
+### 5. View results
 
 ```bash
 # By issue number (uses most recent job)
@@ -277,7 +253,7 @@ uv run ptq results 20260214-174923
 
 Fetches `report.md`, `pr_title.txt`, `pr_labels.txt`, `fix.diff`, `worklog.md`, and the run log from the remote.
 
-### 7. Apply the fix
+### 6. Apply the fix
 
 ```bash
 uv run ptq apply 174923 --pytorch-path ~/meta/pytorch
@@ -303,7 +279,7 @@ PTQ does not create or split stack commits. Commit each independently buildable 
 
 PTQ records the submitted PR URLs from bottom to top. When a lower PR lands while higher PRs remain open, the monitor reports `needs stack rebase`; run its `ptq rebase JOB_ID` action. After a clean rebase it reports `ready to resubmit stack`; run `ptq stack submit JOB_ID` to update the remaining PRs and clear the completed layer from PTQ's stack state.
 
-### 8. Manage agents
+### 7. Manage agents
 
 ```bash
 # Check status of a specific job
@@ -319,7 +295,7 @@ uv run ptq prune my-gpu-box
 uv run ptq prune --local
 ```
 
-### 9. Clean up
+### 8. Clean up
 
 ```bash
 # Remove all jobs on a machine
@@ -405,12 +381,6 @@ pt_job_queue/
 │   │   ├── job_service.py              # Status/kill/clean/list
 │   │   ├── artifact_service.py         # Results fetching + diff apply
 │   │   └── pr_service.py              # PR creation workflow
-│   └── web/
-│       ├── app.py                      # FastAPI app factory
-│       ├── deps.py                     # Template + status helpers
-│       ├── routes.py                   # Thin web route adapter
-│       ├── static/style.css            # Dark-theme styles
-│       └── templates/                  # Jinja2 templates (Pico CSS + htmx)
 ├── prompts/
 │   ├── investigate.md                  # PyTorch issue investigation prompt
 │   ├── adhoc.md                        # PyTorch freeform task prompt
