@@ -44,7 +44,7 @@ Then start a manual agent from the opened job directory with `@prime.md`, or exp
 - Agents in a ghstack job must read `STACK_CONTEXT.md`, create a linear sequence of independently buildable and tested commits, and keep each feature's tests in the commit that introduces it. Each commit subject/body becomes that PR's initial metadata and should use `## Human Note`, `## Agent note`, and `## Test Plan` sections.
 - Never use `uv run ptq pr JOB_ID` for a job configured for ghstack. Use `uv run ptq stack show JOB_ID` for read-only preflight and `uv run ptq stack submit JOB_ID` to create or update its PR stack.
 - Ordinary stack updates preserve GitHub titles and bodies. Use `--update-metadata` only when the user explicitly requests replacing PR metadata from local commit messages.
-- Preserve `ghstack-source-id`, `ghstack-comment-id`, and `Pull-Request` trailers during commit rewrites. Rebase stacks; do not merge the base branch into them. Land with the monitor's `ghstack land PR_URL` action, not the GitHub merge button.
+- Preserve `ghstack-source-id`, `ghstack-comment-id`, and `Pull-Request` trailers during commit rewrites. Rebase stacks; do not merge the base branch into them. For PyTorch, land with `@pytorchbot merge`: commenting on a PR lands that PR and every open PR below it, so use the bottom PR for one layer or the top PR for the whole stack. Do not use the GitHub merge button.
 - Keep commits as reviewable vertical changes rather than separate implementation, test, and documentation layers. Every commit in the submitted stack must stand on its own.
 
 # Worktree Layout Notes

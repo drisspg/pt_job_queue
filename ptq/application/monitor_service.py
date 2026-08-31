@@ -332,6 +332,7 @@ def next_action(
     review_decision: str = "",
     ghstack: bool = False,
     pr_url: str = "",
+    repo_name: str = "pytorch",
 ) -> str:
     """Return the primary PTQ command for the monitor row."""
     match phase:
@@ -356,7 +357,11 @@ def next_action(
         case "ready for stack":
             return f"ptq stack show {job_id}"
         case "ready to merge":
-            return f"ghstack land {pr_url}" if ghstack else "trigger merge"
+            if not ghstack:
+                return "trigger merge"
+            if repo_name == "pytorch":
+                return f"gh pr comment {pr_url} --body '@pytorchbot merge'"
+            return f"ghstack land {pr_url}"
         case "agent working" | "waiting on CI":
             return f"ptq peek {job_id}"
         case "merged/closed":
@@ -432,6 +437,7 @@ def collect_monitor_rows(
                     review_decision=pr_signals.review_decision,
                     ghstack=job.submission_mode == SubmissionMode.GHSTACK,
                     pr_url=job.pr_url or "",
+                    repo_name=job.repo,
                 ),
                 takeover_command=takeover_for_job(job_id, job),
                 ci_triage_command=triage_command,

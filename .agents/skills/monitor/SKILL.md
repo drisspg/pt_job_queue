@@ -60,7 +60,7 @@ For each row:
 - `ready for stack`: the persisted submission mode is ghstack; suggest `uv run ptq stack show JOB_ID`, never `ptq pr`.
 - `waiting on CI`: report that no user action is needed unless it stays stuck.
 - `merged/closed`: suggest cleanup, but do not clean without asking.
-- `ready to merge`: tell the user it is ready for human merge action. For ghstack jobs, use the row's `ghstack land PR_URL` action rather than the GitHub merge button.
+- `ready to merge`: tell the user it is ready for human merge action. For PyTorch ghstack jobs, use the row's `@pytorchbot merge` action; the selected PR and every open PR below it land together. Other ghstack repositories use `ghstack land PR_URL`. Never use the GitHub merge button for a ghstack PR.
 
 Keep updates grouped by urgency and avoid repeating unchanged rows.
 

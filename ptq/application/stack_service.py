@@ -235,6 +235,7 @@ This job is configured for a ghstack submission targeting `{base}` from branch `
 - Use `uv run ptq stack submit {job_id}` to create or update the stack.
 - Do not use `uv run ptq pr {job_id}` for this job.
 - Do not update existing PR metadata unless the user explicitly requests it.
+- For PyTorch, `@pytorchbot merge` lands the selected PR and every open PR below it.
 """
 
 

@@ -480,10 +480,27 @@ def test_collect_monitor_rows_includes_pr_ready_jobs_without_pr_url(tmp_path):
     assert rows[0].next_action == "ptq pr job-ready"
 
 
-def test_ready_ghstack_uses_ghstack_land():
+def test_ready_pytorch_ghstack_uses_pytorchbot():
     pr_url = "https://github.com/pytorch/pytorch/pull/99"
+    assert next_action(
+        "stack-job",
+        "ready to merge",
+        ghstack=True,
+        pr_url=pr_url,
+        repo_name="pytorch",
+    ) == f"gh pr comment {pr_url} --body '@pytorchbot merge'"
+
+
+def test_ready_non_pytorch_ghstack_uses_ghstack_land():
+    pr_url = "https://github.com/example/project/pull/99"
     assert (
-        next_action("stack-job", "ready to merge", ghstack=True, pr_url=pr_url)
+        next_action(
+            "stack-job",
+            "ready to merge",
+            ghstack=True,
+            pr_url=pr_url,
+            repo_name="other",
+        )
         == f"ghstack land {pr_url}"
     )
 

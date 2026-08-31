@@ -299,7 +299,7 @@ Run `stack init` before implementation begins. It records the job's ghstack subm
 
 `stack show` reports the branch, configured remote, current local base, dirty state, commits, and existing PR mappings without changing anything. `stack submit` requires prior initialization and a clean, attached, linear branch. It prints fetch and preflight progress, streams ghstack's publish output live, verifies every commit-to-PR trailer, and records the top PR for PTQ monitoring; the commit trailers remain the complete mapping source of truth. Later updates use the same command without `--draft`. Existing PR titles and bodies are preserved by default; pass `--update-metadata` only when you intentionally want ghstack to replace them from local commit messages. PTQ rejects `ptq pr` for jobs configured for ghstack.
 
-PTQ does not create or split stack commits. Commit each independently buildable and tested change before submission. Pass `--base BRANCH` to `stack init` when the stack does not target `main`; PTQ remembers that base for later `show`, `submit`, and monitor actions. Land a submitted stack with the monitor's `ghstack land PR_URL` action rather than the GitHub merge button.
+PTQ does not create or split stack commits. Commit each independently buildable and tested change before submission. Pass `--base BRANCH` to `stack init` when the stack does not target `main`; PTQ remembers that base for later `show`, `submit`, and monitor actions. PyTorch's merge bot understands ghstack prefixes: `@pytorchbot merge` on a PR lands that PR and every open PR below it. Use the bottom PR to land one layer or the top PR to land the whole stack; do not use the GitHub merge button. Other repositories use `ghstack land PR_URL`.
 
 ### 8. Manage agents
 
