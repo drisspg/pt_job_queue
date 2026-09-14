@@ -570,14 +570,16 @@ def test_collect_monitor_rows_tracks_landed_lower_stack_pr(
         for segment in segments:
             if segment.style and segment.style.link in linked_text:
                 linked_text[segment.style.link] += segment.text
-        assert "#98" in linked_text[base_url]
-        assert "#99" in linked_text[top_url]
+        assert linked_text[base_url] == "#98"
+        assert linked_text[top_url] == "#99"
 
         output = StringIO()
         Console(file=output, width=width, color_system=None).print(table)
         plain = output.getvalue()
         assert "Stack" in plain
-        assert plain.index("#98") < plain.rindex("#99")
+        assert plain.count("#98") == 1
+        assert plain.count("#99") == 1
+        assert plain.index("#98") < plain.index("#99")
         assert "\x1b" not in plain
 
 
