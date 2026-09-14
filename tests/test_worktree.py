@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
@@ -22,6 +23,45 @@ def _ok(*args, **kwargs) -> CompletedProcess[str]:
 
 
 class TestJobContext:
+    @pytest.mark.parametrize("checkout_name", ["ptq", "PTQ checkout"])
+    def test_commands_target_ptq_checkout_from_any_directory(
+        self, tmp_path, monkeypatch, checkout_name
+    ):
+        from ptq.application import job_context
+
+        checkout = tmp_path / checkout_name
+        monkeypatch.setattr(
+            job_context,
+            "__file__",
+            str(checkout / "ptq" / "application" / "job_context.py"),
+        )
+        content = job_context.render_prime_context(job_id="job-1", workspace="/tmp/ws")
+        commands = [
+            shlex.split(line) for line in content.splitlines() if line.startswith("uv ")
+        ]
+
+        assert commands
+        for command in commands:
+            assert command[:5] == ["uv", "run", "--directory", str(checkout), "ptq"]
+        assert any(command[5:] == ["peek", "job-1"] for command in commands)
+        assert any(
+            command[5:] == ["stack", "submit", "job-1", "--draft"]
+            for command in commands
+        )
+        assert any(
+            command[5:]
+            == [
+                "pr",
+                "job-1",
+                "--note",
+                "USER-PROVIDED NOTE",
+                "--title",
+                "APPROVED TITLE",
+                "--draft",
+            ]
+            for command in commands
+        )
+
     def test_writes_prime_and_auto_discovered_agents_file(self):
         from ptq.application.job_context import write_job_context
 

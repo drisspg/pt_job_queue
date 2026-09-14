@@ -98,7 +98,7 @@ uv run ptq monitor --watch
 uv run ptq monitor --all
 ```
 
-The monitor shows PR state, CI state, rebase state, and the next action. Issue and PR cells are terminal hyperlinks when OSC-8 is supported.
+The monitor shows PR state, CI state, rebase state, and the next action. Issue and PR cells are terminal hyperlinks when OSC-8 is supported. Ghstack jobs also show an underlined link for every stack PR, listed from base to top beneath the primary PR status. Use your terminal's link-opening gesture (often Ctrl-click or Cmd-click) to open a PR; PR numbers remain readable in plain-text output.
 
 For a `needs CI review` row, the Driver skill gathers evidence with:
 

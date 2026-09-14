@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 from ptq.application.monitor_service import collect_monitor_rows, next_action
@@ -12,6 +14,7 @@ from ptq.cli import (
     _monitor_issue_markup,
     _monitor_job_markup,
     _monitor_pr_markup,
+    _render_monitor_table,
     app,
 )
 from ptq.domain.models import (
@@ -557,6 +560,25 @@ def test_collect_monitor_rows_tracks_landed_lower_stack_pr(
 
     assert rows[0].phase == phase
     assert rows[0].next_action == action
+    assert rows[0].stack_pr_urls == [base_url, top_url]
+
+    for width in (80, 160):
+        table = _render_monitor_table(rows)
+        console = Console(width=width)
+        segments = list(console.render(table, console.options))
+        linked_text = {url: "" for url in (base_url, top_url)}
+        for segment in segments:
+            if segment.style and segment.style.link in linked_text:
+                linked_text[segment.style.link] += segment.text
+        assert "#98" in linked_text[base_url]
+        assert "#99" in linked_text[top_url]
+
+        output = StringIO()
+        Console(file=output, width=width, color_system=None).print(table)
+        plain = output.getvalue()
+        assert "Stack" in plain
+        assert plain.index("#98") < plain.rindex("#99")
+        assert "\x1b" not in plain
 
 
 def test_collect_monitor_rows_checks_pr_ready_artifacts_under_home_workspace(tmp_path):

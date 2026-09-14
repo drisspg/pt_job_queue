@@ -343,11 +343,20 @@ def _render_monitor_table(rows) -> object:
     table.add_column("Next action")
 
     for row in rows:
+        pr_markup = _monitor_pr_markup(row)
+        stack_links = [
+            _monitor_link_markup(
+                f"#{_github_url_number(url, 'pull')}", "cyan underline", url
+            )
+            for url in row.stack_pr_urls
+        ]
+        if stack_links:
+            pr_markup += "\n[dim]Stack (base → top)[/]\n" + "\n".join(stack_links)
         table.add_row(
             f"[{_monitor_phase_style(row.phase)}]{row.phase}[/]",
             _monitor_job_markup(row),
             _monitor_issue_markup(row),
-            _monitor_pr_markup(row),
+            pr_markup,
             row.ci.label,
             row.next_action,
         )

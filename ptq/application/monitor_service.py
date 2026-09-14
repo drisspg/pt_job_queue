@@ -4,7 +4,7 @@ import html
 import json
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ptq.application.pr_service import get_pr_state
 from ptq.domain.models import JobRecord, RebaseState, SubmissionMode
@@ -51,6 +51,7 @@ class MonitorRow:
     can_merge_ignore: bool = False
     review_decision: str = ""
     job_name: str = ""
+    stack_pr_urls: list[str] = field(default_factory=list)
 
 
 def summarize_pr_checks(job: JobRecord) -> CheckSummary:
@@ -456,6 +457,7 @@ def collect_monitor_rows(
                 can_merge_ignore=can_merge_ignore,
                 review_decision=pr_signals.review_decision,
                 job_name=job.name or "",
+                stack_pr_urls=list(job.stack_pr_urls),
             )
         )
     return rows
