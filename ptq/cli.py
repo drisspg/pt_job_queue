@@ -572,6 +572,14 @@ def open_job(
         bool,
         typer.Option("--no-focus", help="Create the workspace without focusing it."),
     ] = False,
+    no_herdr: Annotated[
+        bool,
+        typer.Option(
+            "--no-herdr",
+            help="Prepare the worktree and print its entry command without opening Herdr "
+            "(for hosts without Herdr, such as a remote box driven over SSH).",
+        ),
+    ] = False,
 ) -> None:
     """Create or reuse a job and open its Herdr workspace."""
     from ptq.application.herdr_service import open_job_workspace
@@ -621,6 +629,10 @@ def open_job(
         f"ptq #{job.issue}" if job.issue is not None else f"ptq {job.name or job_id}"
     )
     takeover_command = takeover_for_job(job_id, job)
+    if no_herdr:
+        console.print(f"  job: {job_id}")
+        print(takeover_command)
+        return
     try:
         workspace = open_job_workspace(
             job_id,

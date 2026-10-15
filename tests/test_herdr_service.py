@@ -120,6 +120,32 @@ def test_open_cli_creates_issue_worktree_before_opening_herdr(tmp_path: Path):
     )
 
 
+def test_open_cli_no_herdr_prints_entry_command_without_herdr(tmp_path: Path):
+    repo = JobRepository(tmp_path / "jobs.json")
+    backend = MagicMock(workspace="/tmp/ws")
+
+    def ensure_job(job_repo, _backend, **kwargs):
+        job_repo.save(JobRecord(job_id="job-1", name="box", workspace="/tmp/ws"))
+        return "job-1", True
+
+    with (
+        patch("ptq.cli._repo", return_value=repo),
+        patch("ptq.infrastructure.backends.create_backend", return_value=backend),
+        patch(
+            "ptq.application.worktree_service.ensure_job_worktree",
+            side_effect=ensure_job,
+        ),
+        patch("ptq.application.herdr_service.open_job_workspace") as mock_open,
+    ):
+        result = runner.invoke(app, ["open", "--name", "box", "--no-herdr"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[-1] == (
+        "cd /tmp/ws/jobs/job-1 && source .venv/bin/activate"
+    )
+    mock_open.assert_not_called()
+
+
 def test_open_cli_requires_one_selector():
     result = runner.invoke(app, ["open"])
 
