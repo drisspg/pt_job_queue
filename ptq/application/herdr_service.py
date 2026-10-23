@@ -77,6 +77,7 @@ def open_job_workspace(
     takeover_command: str,
     *,
     label: str | None = None,
+    pane_label: str | None = None,
     focus: bool = True,
     client: HerdrClient | None = None,
 ) -> HerdrWorkspace:
@@ -100,6 +101,10 @@ def open_job_workspace(
     root_pane = pane_info("workspace create", data, "root_pane")
     pane_id = root_pane["pane_id"]
     workspace_id = root_pane["workspace_id"]
+    if pane_label:
+        rename_result = herdr.run(["pane", "rename", pane_id, pane_label])
+        if rename_result.returncode != 0:
+            raise herdr_error("pane rename", rename_result)
     run_result = herdr.run(["pane", "run", pane_id, takeover_command])
     if run_result.returncode != 0:
         raise herdr_error("pane run", run_result)

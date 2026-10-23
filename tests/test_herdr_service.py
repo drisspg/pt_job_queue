@@ -37,10 +37,13 @@ def test_open_job_workspace_uses_takeover_command_as_pane_command():
             stderr="",
         ),
         MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="", stderr=""),
     ]
     command = "cd /tmp/ws/jobs/job-1 && source .venv/bin/activate"
 
-    workspace = open_job_workspace("job-1", command, client=client, focus=False)
+    workspace = open_job_workspace(
+        "job-1", command, pane_label="ptq #1 · fix", client=client, focus=False
+    )
 
     assert workspace.workspace_id == "workspace-1"
     assert workspace.pane_id == "pane-1"
@@ -53,17 +56,29 @@ def test_open_job_workspace_uses_takeover_command_as_pane_command():
         "ptq job-1",
         "--no-focus",
     ]
-    assert client.run.call_args_list[1].args[0] == ["pane", "run", "pane-1", command]
+    assert client.run.call_args_list[1].args[0] == [
+        "pane",
+        "rename",
+        "pane-1",
+        "ptq #1 · fix",
+    ]
+    assert client.run.call_args_list[2].args[0] == ["pane", "run", "pane-1", command]
 
 
 def test_open_cli_resolves_job_and_opens_herdr_workspace(tmp_path: Path):
     repo = JobRepository(tmp_path / "jobs.json")
     repo.save(JobRecord(job_id="job-1", issue=123, workspace="/tmp/ws"))
     opened = MagicMock(workspace_id="workspace-1", pane_id="pane-1")
+    backend = MagicMock()
+    backend.run.return_value = MagicMock(
+        returncode=0,
+        stdout="flex_attention returns incorrect output under Inductor\n",
+    )
 
     with (
         patch("ptq.cli._repo", return_value=repo),
         patch("ptq.application.worktree_service.prepare_job_worktree"),
+        patch("ptq.infrastructure.backends.backend_for_job", return_value=backend),
         patch(
             "ptq.application.herdr_service.open_job_workspace", return_value=opened
         ) as mock_open,
@@ -75,6 +90,7 @@ def test_open_cli_resolves_job_and_opens_herdr_workspace(tmp_path: Path):
         "job-1",
         "cd /tmp/ws/jobs/job-1 && source .venv/bin/activate",
         label="ptq #123",
+        pane_label="ptq #123 · flex_attention returns incorrect output…",
         focus=False,
     )
     assert "Opened PTQ job Herdr workspace" in result.output
@@ -92,6 +108,7 @@ def test_open_cli_creates_issue_worktree_before_opening_herdr(tmp_path: Path):
                 job_id="job-1",
                 issue=123,
                 workspace="/tmp/ws",
+                name="flex-small-seq",
             )
         )
         return "job-1", True
@@ -116,6 +133,7 @@ def test_open_cli_creates_issue_worktree_before_opening_herdr(tmp_path: Path):
         "job-1",
         "cd /tmp/ws/jobs/job-1 && source .venv/bin/activate",
         label="ptq #123",
+        pane_label="ptq #123 · flex-small-seq",
         focus=False,
     )
 

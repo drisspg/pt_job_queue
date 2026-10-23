@@ -27,6 +27,20 @@ herdr workspace rename "$WORKSPACE_ID" "ptq driver"
 
 Loading this skill otherwise performs no automatic inspection or mutation.
 
+## Naming panes
+
+Label every pane the driver creates right after `herdr pane split`, before running its command. Use `ptq <role>`, for example `ptq monitor`:
+
+```bash
+PANE_ID="$(herdr pane split --current --direction right --cwd "$PWD" | uv run python -c 'import json, sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')"
+herdr pane rename "$PANE_ID" "ptq monitor"
+herdr pane run "$PANE_ID" "uv run ptq monitor --watch"
+```
+
+Before opening a duplicate, check `herdr pane list` for an existing pane with that label and reuse it. Do not rename panes the driver did not create.
+
+`ptq open` labels the job's agent pane itself. For issue jobs the label is `ptq #N · <description>`, where the description is the PTQ display name if one is set, otherwise the truncated issue title. A name set with `uv run ptq rename JOB_ID NAME` takes effect the next time the job is opened.
+
 ## Workspace workflow
 
 Before creating anything, run:

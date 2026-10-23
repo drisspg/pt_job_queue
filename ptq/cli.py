@@ -638,6 +638,7 @@ def open_job(
             job_id,
             takeover_command,
             label=label,
+            pane_label=_job_pane_label(job, label),
             focus=not no_focus,
         )
     except RuntimeError as e:
@@ -649,6 +650,35 @@ def open_job(
     console.print(f"  pane: {workspace.pane_id}")
     console.print(f"  entry: {takeover_command}")
     console.print("  prime: @prime.md")
+
+
+PANE_DESCRIPTION_CHARS = 40
+
+
+def _job_pane_label(job, workspace_label: str) -> str:
+    """Label the job's agent pane with the workspace label plus a short description.
+
+    Issue jobs use the PTQ display name when set, otherwise the GitHub issue title.
+    A failed title lookup falls back to the workspace label.
+    """
+    if job.issue is None:
+        return workspace_label
+    description = job.name
+    if not description:
+        from ptq.infrastructure.backends import backend_for_job
+        from ptq.repo_profiles import get_profile
+
+        result = backend_for_job(job).run(
+            f"gh issue view {job.issue} --repo {get_profile(job.repo).github_repo} "
+            "--json title --jq .title",
+            check=False,
+        )
+        description = result.stdout.strip() if result.returncode == 0 else ""
+    if not description:
+        return workspace_label
+    if len(description) > PANE_DESCRIPTION_CHARS:
+        description = description[: PANE_DESCRIPTION_CHARS - 1].rstrip() + "…"
+    return f"{workspace_label} · {description}"
 
 
 @stack_app.command("init")
