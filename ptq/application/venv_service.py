@@ -229,6 +229,18 @@ def _try_clone_base_venv(
         if r.returncode not in (0, 23):
             progress(f"fast-path bail: rsync failed (rc={r.returncode})")
             return _bail()
+        # scikit-build-core editable installs map torch's native and generated
+        # files into build/install/<wheel-tag>/, which the build exclude skips.
+        # Copy rather than hardlink so a job rebuild's install step cannot write
+        # through to the base workspace.
+        r = backend.run(
+            f"if [ -d {old_src}/build/install ]; then mkdir -p {new_src}/build && "
+            f"rsync -a {old_src}/build/install/ {new_src}/build/install/; fi",
+            check=False,
+        )
+        if r.returncode != 0:
+            progress(f"fast-path bail: build/install sync failed (rc={r.returncode})")
+            return _bail()
 
     # rsync --link-dest hardlinks copied artifacts to the base workspace. Later
     # rebuilds can mutate generated version metadata or leave stale native code,
