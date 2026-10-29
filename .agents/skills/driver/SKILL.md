@@ -25,6 +25,8 @@ WORKSPACE_ID="$(herdr pane get "$HERDR_PANE_ID" | uv run python -c 'import json,
 herdr workspace rename "$WORKSPACE_ID" "ptq driver"
 ```
 
+In the Herdr desktop app, skip this rename; the user can name the tab with Pi's `/rename ptq driver`.
+
 Loading this skill otherwise performs no automatic inspection or mutation.
 
 ## Naming panes
@@ -39,7 +41,30 @@ herdr pane run "$PANE_ID" "uv run ptq monitor --watch"
 
 Before opening a duplicate, check `herdr pane list` for an existing pane with that label and reuse it. Do not rename panes the driver did not create.
 
-`ptq open` labels the job's agent pane itself. For issue jobs the label is `ptq #N · <description>`, where the description is the PTQ display name if one is set, otherwise the truncated issue title. A name set with `uv run ptq rename JOB_ID NAME` takes effect the next time the job is opened.
+`ptq open` labels the job's agent pane itself. For issue jobs the label is `ptq #N · <description>`, where the description is the PTQ display name if one is set, otherwise the truncated issue title. A name set with `uv run ptq rename JOB_ID NAME` takes effect the next time the job is opened. In the Herdr desktop app, the same label names the job's tab.
+
+## Herdr TUI vs desktop app
+
+Detect the mode before touching panes:
+
+- **TUI**: `HERDR_ENV=1` and `HERDR_PANE_ID` set. Use the `herdr` CLI (load the `herdr` skill).
+- **Desktop app**: `HC_TERMINAL_ID` set without `HERDR_ENV=1`. Use `hc`, which drives this machine's herdr-core and works on remote hosts without the `herdr-app` CLI. Do not use `herdr workspace`/`herdr pane` here: they target a separate TUI server whose workspaces never appear in the app.
+
+`uv run ptq open ...` picks the mode automatically. In the app it reuses the job's live space when one exists; otherwise it starts a shell in the worktree, runs the takeover command, and names the space after the job. It reports `workspace:` as the app space ID and `pane:` as the `hc` terminal address (for example `t11`). Focus switches only when `herdr-app` is installed locally; on a remote host, tell the user which space to select.
+
+Desktop-app equivalents for job terminals (`T` is the reported pane address):
+
+| Task | Command |
+| --- | --- |
+| List terminals and agent status | `hc ls` |
+| Find a job's terminal and space | `hc ls --label ptq.job=JOB_ID`, then `hc get T --json` (label `herdr.space`) |
+| Read recent output | `hc read T` |
+| Run a command in the shell | `hc send T 'command'` |
+| Press keys | `hc keys T enter` or `hc keys T ctrl+c` |
+| Wait for the agent to go idle | `hc wait T` (avoid `sleep` loops) |
+| Open another tab in the same space | `hc run --bg --no-parent --cwd DIR --label herdr.space=SPACE`, then `hc send` to it |
+
+The same approval rules apply in both modes: ask before sending to, interrupting (`hc interrupt`), killing, or removing a terminal that appears active.
 
 ## Workspace workflow
 

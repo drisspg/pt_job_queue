@@ -83,7 +83,7 @@ When the user asks you to submit, prepare the diff, validation, `pr_title.txt`, 
 
 Replace the placeholders with the approved text, correctly shell-quoted; do not submit the literal placeholders. `--note` accepts multiline text and avoids opening an editor. `--title` avoids a title prompt. Omit `--draft` only when the user requests a ready-for-review PR. This command checks out the submission branch, stages all source-worktree changes, commits when needed, pushes, and creates or updates the PR. Inspect the entire diff/untracked files first and coordinate a final handoff: the user may write their note while you prepare, but do not submit while either of you is still editing the source or PR artifacts.
 
-If the user wants to type their annotation in PTQ's editor, load the Herdr skill and create a separate tab in the same job workspace, leaving their active pane untouched. Run this command there with `herdr pane run`, rather than starting an interactive editor inside a captured shell call:
+If the user wants to type their annotation in PTQ's editor, create a separate tab in the same job workspace, leaving their active pane untouched, and run this command there rather than starting an interactive editor inside a captured shell call. In the Herdr TUI, load the Herdr skill and use `herdr pane run`. In the Herdr desktop app (`HC_TERMINAL_ID` set), start a shell tab with `hc run --bg --no-parent --cwd "$PWD" --label herdr.space=<space>` (copy `<space>` from `hc get "$HC_TERMINAL_ID" --json` labels) and send the command with `hc send`:
 
 ```bash
 {ptq_command} pr {job_id} --draft

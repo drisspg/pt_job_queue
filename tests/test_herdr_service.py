@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
-from ptq.application.herdr_service import cwd_from_takeover_command, open_job_workspace
+from ptq.application.herdr_service import (
+    cwd_from_takeover_command,
+    in_herdr_app,
+    open_job_space,
+    open_job_workspace,
+)
 from ptq.cli import app
 from ptq.domain.models import JobRecord
 from ptq.infrastructure.job_repository import JobRepository
@@ -169,3 +176,149 @@ def test_open_cli_requires_one_selector():
 
     assert result.exit_code == 1
     assert "Provide exactly one JOB_ID, --issue, or --name" in result.output
+
+
+class FakeHerdrCore:
+    """Minimal herdr-core: terminals with labels plus the app layout document."""
+
+    def __init__(self, terminals=None, spaces=None, *, app_running=True, conflicts=0):
+        self.terminals = terminals or {}
+        self.spaces = spaces or []
+        self.app_running = app_running
+        self.conflicts = conflicts
+        self.version = 1
+        self.commands = []
+
+    def adopt(self, address):
+        space_id = self.terminals[address]["labels"]["herdr.space"]
+        space = next((s for s in self.spaces if s["id"] == space_id), None)
+        if space is None:
+            space = {"id": space_id, "name": "", "folder": "", "tabs": []}
+            self.spaces.append(space)
+        root = {"type": "row", "children": [{"content": {"terminal": address}}]}
+        space["tabs"].append({"id": f"tb-{address}", "name": "", "root": root})
+
+    def __call__(self, args, stdin=None):
+        self.commands.append(args)
+        match args:
+            case ["hc", "ls", "--json", "--label", selector]:
+                key, value = selector.split("=", 1)
+                out = {
+                    "terminals": [
+                        {"address": a, "state": "live"}
+                        for a, t in self.terminals.items()
+                        if t["labels"].get(key) == value
+                    ]
+                }
+            case ["hc", "get", address, "--json"]:
+                out = {"address": address, **self.terminals[address]}
+            case ["hc", "run", *rest]:
+                address = f"t{len(self.terminals) + 1}"
+                labels = dict(
+                    rest[i + 1].split("=", 1)
+                    for i, arg in enumerate(rest)
+                    if arg == "--label"
+                )
+                self.terminals[address] = {"labels": labels}
+                if self.app_running:
+                    self.adopt(address)
+                out = {"address": address, "state": "live"}
+            case ["hc", "send", *_]:
+                out = {}
+            case ["hc", "connect"]:
+                request = json.loads(stdin)
+                if request["method"] == "doc.get":
+                    value = {"spaces": json.loads(json.dumps(self.spaces))}
+                    out = {"result": {"value": value, "version": self.version}}
+                elif self.conflicts:
+                    self.conflicts -= 1
+                    self.version += 1
+                    out = {"error": {"message": "stale", "data": {"kind": "conflict"}}}
+                else:
+                    self.spaces = request["params"]["value"]["spaces"]
+                    self.version += 1
+                    out = {"result": {"version": self.version}}
+            case ["herdr-app", *_]:
+                raise FileNotFoundError("herdr-app")
+            case _:
+                raise AssertionError(f"unexpected command {args}")
+        return subprocess.CompletedProcess(args, 0, json.dumps(out), "")
+
+
+def test_in_herdr_app_distinguishes_desktop_app_from_tui():
+    assert in_herdr_app({"HC_TERMINAL_ID": "t2"})
+    assert not in_herdr_app({"HC_TERMINAL_ID": "t2", "HERDR_ENV": "1"})
+    assert not in_herdr_app({})
+
+
+def test_open_job_space_creates_named_app_space_running_takeover_command():
+    core = FakeHerdrCore()
+    command = "cd /tmp/ws/jobs/job-1 && source .venv/bin/activate"
+
+    workspace = open_job_space(
+        "job-1", command, label="ptq #123", tab_label="ptq #123 · bug", run=core
+    )
+
+    assert workspace.pane_id == "t1"
+    assert core.terminals["t1"]["labels"] == {
+        "herdr.space": workspace.workspace_id,
+        "ptq.job": "job-1",
+    }
+    run_args = next(args for args in core.commands if args[:2] == ["hc", "run"])
+    assert run_args[run_args.index("--cwd") + 1] == "/tmp/ws/jobs/job-1"
+    assert ["hc", "send", "--json", "t1", command] in core.commands
+    assert [(s["id"], s["name"]) for s in core.spaces] == [
+        (workspace.workspace_id, "ptq #123")
+    ]
+    assert core.spaces[0]["tabs"][0]["name"] == "ptq #123 · bug"
+
+
+def test_open_job_space_reuses_live_job_terminal():
+    core = FakeHerdrCore(
+        terminals={
+            "t1": {"labels": {"herdr.space": "sp-other"}},
+            "t2": {"labels": {"herdr.space": "sp-job", "ptq.job": "job-1"}},
+        }
+    )
+    core.adopt("t1")
+    core.adopt("t2")
+
+    workspace = open_job_space("job-1", "cd /tmp/ws/jobs/job-1", run=core)
+
+    assert (workspace.workspace_id, workspace.pane_id) == ("sp-job", "t2")
+    assert not any(
+        args[:2] in (["hc", "run"], ["hc", "send"]) for args in core.commands
+    )
+
+
+def test_open_job_space_retries_layout_conflicts_when_naming():
+    core = FakeHerdrCore(conflicts=2)
+
+    workspace = open_job_space("job-1", "cd /tmp/ws", label="ptq job-1", run=core)
+
+    assert [(s["id"], s["name"]) for s in core.spaces] == [
+        (workspace.workspace_id, "ptq job-1")
+    ]
+
+
+def test_open_job_space_fails_when_app_does_not_adopt_terminal(monkeypatch):
+    monkeypatch.setattr("ptq.application.herdr_service.time.sleep", lambda _: None)
+    core = FakeHerdrCore(app_running=False)
+
+    with pytest.raises(RuntimeError, match="did not show terminal t1"):
+        open_job_space("job-1", "cd /tmp/ws", run=core)
+
+
+def test_open_job_workspace_routes_app_terminals_to_hc(monkeypatch):
+    monkeypatch.setenv("HC_TERMINAL_ID", "t2")
+    monkeypatch.delenv("HERDR_ENV", raising=False)
+    opened = MagicMock()
+
+    with patch(
+        "ptq.application.herdr_service.open_job_space", return_value=opened
+    ) as mock_space:
+        assert open_job_workspace("job-1", "cd /tmp/ws", focus=False) is opened
+
+    mock_space.assert_called_once_with(
+        "job-1", "cd /tmp/ws", label=None, tab_label=None, focus=False
+    )

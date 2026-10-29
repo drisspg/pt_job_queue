@@ -67,7 +67,7 @@ uv run ptq setup --workspace "$WS" --build
 uv run ptq open --issue "$ISSUE" --workspace "$WS"
 ```
 
-`open` does not launch a background agent. In the created Herdr workspace, start Pi from the job directory and load:
+`open` works in both the Herdr TUI and the Herdr desktop app. Inside a desktop app terminal (`HC_TERMINAL_ID` set), it creates a named app space through `hc`, which also works on remote machines without the `herdr-app` CLI, and reopening the job reuses its live space. It does not launch a background agent. In the created Herdr workspace or space, start Pi from the job directory and load:
 
 ```text
 @prime.md
