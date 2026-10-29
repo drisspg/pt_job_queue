@@ -152,6 +152,8 @@ def run_command(
         return subprocess.run(
             args, input=stdin, check=False, capture_output=True, text=True, timeout=15
         )
+    except FileNotFoundError as e:
+        raise RuntimeError(f"{args[0]} is not installed on this machine") from e
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(f"{args[0]} {args[1]} timed out after 15s") from e
 
@@ -176,24 +178,25 @@ def hc_call(method: str, params: dict[str, Any], run: Runner) -> dict[str, Any]:
     try:
         response = json.loads(lines[0])
     except (IndexError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"hc {method} returned no response") from e
+        detail = result.stderr.strip() or "no response"
+        raise RuntimeError(f"hc {method} failed: {detail}") from e
     if "error" in response:
         error = response["error"]
         raise HcError(
             f"hc {method} failed: {error.get('message', error)}",
             kind=(error.get("data") or {}).get("kind"),
         )
+    if not isinstance(response.get("result"), dict):
+        raise RuntimeError(f"hc {method} returned no result: {lines[0]}")
     return response["result"]
 
 
 def find_job_terminal(job_id: str, run: Runner) -> dict[str, Any] | None:
-    """Return a live, app-visible terminal previously opened for this job."""
+    """Return a live terminal previously opened for this job and placed in a space."""
     listed = hc_json(
         "ls", run(["hc", "ls", "--json", "--label", f"{PTQ_JOB_LABEL}={job_id}"], None)
     )
     for entry in listed["terminals"]:
-        if entry.get("state") != "live":
-            continue
         terminal = hc_json("get", run(["hc", "get", entry["address"], "--json"], None))
         if (terminal.get("labels") or {}).get("herdr.space"):
             return terminal
@@ -210,29 +213,36 @@ def layout_holds_terminal(node: dict[str, Any], terminal: str) -> bool:
 
 def name_app_space(
     space_id: str,
+    terminal: str,
     name: str,
     run: Runner,
     *,
-    terminal: str | None = None,
     tab_name: str | None = None,
     attempts: int = 25,
     delay: float = 0.2,
 ) -> bool:
-    """Name a space, and the tab holding `terminal`, once the app has adopted them."""
-    for _ in range(attempts):
+    """Name a space and the tab holding `terminal`; False if the app never shows it."""
+    for attempt in range(attempts):
         doc = hc_call("doc.get", {"name": HERDR_APP_DOC}, run)
         value = doc.get("value") or {}
         space = next(
             (s for s in value.get("spaces", []) if s.get("id") == space_id), None
         )
-        if space is None:
-            time.sleep(delay)
+        tab = next(
+            (
+                t
+                for t in (space or {}).get("tabs", [])
+                if layout_holds_terminal(t.get("root") or {}, terminal)
+            ),
+            None,
+        )
+        if tab is None:
+            if attempt + 1 < attempts:
+                time.sleep(delay)
             continue
         space["name"] = name
-        if tab_name and terminal:
-            for tab in space.get("tabs", []):
-                if layout_holds_terminal(tab.get("root") or {}, terminal):
-                    tab["name"] = tab_name
+        if tab_name:
+            tab["name"] = tab_name
         try:
             hc_call(
                 "doc.set",
@@ -251,7 +261,7 @@ def focus_app_space(space_id: str, terminal: str, run: Runner) -> None:
     try:
         run(["herdr-app", "do", "space.select", "--id", space_id], None)
         run(["herdr-app", "do", "pane.focus", "--terminal", terminal], None)
-    except FileNotFoundError:
+    except (FileNotFoundError, RuntimeError):
         pass
 
 
@@ -266,11 +276,18 @@ def open_job_space(
 ) -> HerdrWorkspace:
     """Open, or reuse, a Herdr desktop app space with a shell in the job worktree."""
     cwd = cwd_from_takeover_command(takeover_command)
+    space_label = label or f"ptq {job_id}"
     existing = find_job_terminal(job_id, run)
     if existing is not None:
         space_id = existing["labels"]["herdr.space"]
         terminal = existing["address"]
-    else:
+        if not name_app_space(
+            space_id, terminal, space_label, run, tab_name=tab_label, attempts=1
+        ):
+            # Its tab was closed or never adopted; stop matching it and open a fresh one.
+            run(["hc", "label", terminal, f"{PTQ_JOB_LABEL}="], None)
+            existing = None
+    if existing is None:
         space_id = f"sp{secrets.token_hex(16)}"
         created = hc_json(
             "run",
@@ -294,19 +311,13 @@ def open_job_space(
         )
         terminal = created["address"]
         hc_json("send", run(["hc", "send", "--json", terminal, takeover_command], None))
-    named = name_app_space(
-        space_id,
-        label or f"ptq {job_id}",
-        run,
-        terminal=terminal,
-        tab_name=tab_label,
-    )
-    if not named:
-        raise RuntimeError(
-            f"Herdr app did not show terminal {terminal} (space {space_id}); "
-            "is the app connected to this machine? Inspect it with "
-            f"`hc read {terminal}` or remove it with `hc kill {terminal}`."
-        )
+        if not name_app_space(space_id, terminal, space_label, run, tab_name=tab_label):
+            run(["hc", "kill", terminal], None)
+            run(["hc", "rm", terminal], None)
+            raise RuntimeError(
+                f"Herdr app did not show new terminal {terminal} for space {space_id}; "
+                "is the app connected to this machine?"
+            )
     if focus:
         focus_app_space(space_id, terminal, run)
     return HerdrWorkspace(

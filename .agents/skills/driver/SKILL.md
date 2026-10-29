@@ -41,6 +41,8 @@ herdr pane run "$PANE_ID" "uv run ptq monitor --watch"
 
 Before opening a duplicate, check `herdr pane list` for an existing pane with that label and reuse it. Do not rename panes the driver did not create.
 
+In the Herdr desktop app, open driver helpers as tabs with `hc run --bg --no-parent --name ptq-monitor --cwd "$PWD" --label herdr.space=SPACE`, then `hc send ptq-monitor 'uv run ptq monitor --watch'`. Take `SPACE` from the `herdr.space` label in `hc get "$HC_TERMINAL_ID" --json`. Use the terminal name as the label, and reuse a live terminal of that name (`hc ls`) rather than opening a duplicate.
+
 `ptq open` labels the job's agent pane itself. For issue jobs the label is `ptq #N · <description>`, where the description is the PTQ display name if one is set, otherwise the truncated issue title. A name set with `uv run ptq rename JOB_ID NAME` takes effect the next time the job is opened. In the Herdr desktop app, the same label names the job's tab.
 
 ## Herdr TUI vs desktop app

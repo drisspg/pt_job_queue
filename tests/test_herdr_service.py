@@ -225,6 +225,17 @@ class FakeHerdrCore:
                 out = {"address": address, "state": "live"}
             case ["hc", "send", *_]:
                 out = {}
+            case ["hc", "label", address, selector]:
+                key, value = selector.split("=", 1)
+                self.terminals[address]["labels"].pop(key, None)
+                if value:
+                    self.terminals[address]["labels"][key] = value
+                out = {}
+            case ["hc", "kill", _]:
+                out = {}
+            case ["hc", "rm", address]:
+                del self.terminals[address]
+                out = {}
             case ["hc", "connect"]:
                 request = json.loads(stdin)
                 if request["method"] == "doc.get":
@@ -289,6 +300,19 @@ def test_open_job_space_reuses_live_job_terminal():
     assert not any(
         args[:2] in (["hc", "run"], ["hc", "send"]) for args in core.commands
     )
+    assert [s["name"] for s in core.spaces if s["id"] == "sp-job"] == ["ptq job-1"]
+
+
+def test_open_job_space_replaces_job_terminal_missing_from_layout():
+    core = FakeHerdrCore(
+        terminals={"t1": {"labels": {"herdr.space": "sp-closed", "ptq.job": "job-1"}}}
+    )
+
+    workspace = open_job_space("job-1", "cd /tmp/ws/jobs/job-1", run=core)
+
+    assert workspace.pane_id == "t2"
+    assert workspace.workspace_id != "sp-closed"
+    assert "ptq.job" not in core.terminals["t1"]["labels"]
 
 
 def test_open_job_space_retries_layout_conflicts_when_naming():
@@ -305,8 +329,10 @@ def test_open_job_space_fails_when_app_does_not_adopt_terminal(monkeypatch):
     monkeypatch.setattr("ptq.application.herdr_service.time.sleep", lambda _: None)
     core = FakeHerdrCore(app_running=False)
 
-    with pytest.raises(RuntimeError, match="did not show terminal t1"):
+    with pytest.raises(RuntimeError, match="did not show new terminal t1"):
         open_job_space("job-1", "cd /tmp/ws", run=core)
+
+    assert core.terminals == {}
 
 
 def test_open_job_workspace_routes_app_terminals_to_hc(monkeypatch):
