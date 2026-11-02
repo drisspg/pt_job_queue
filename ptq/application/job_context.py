@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 
@@ -110,6 +111,25 @@ Submission authorization does not authorize merging, closing PRs, cleaning jobs,
 """
 
 
+JOB_NOTES_MARKER = (
+    "<!-- PTQ regenerates everything above this line; job notes below it are kept. -->"
+)
+# The last generated paragraph, for prime.md files written before JOB_NOTES_MARKER.
+# Files older than this paragraph have no anchor; their appended notes are not kept.
+LEGACY_GENERATED_END = "Submission authorization does not authorize"
+
+
+def job_notes(previous_prime: str) -> str:
+    """Return the job-specific notes (task brief, issue context) appended to prime.md."""
+    if JOB_NOTES_MARKER in previous_prime:
+        return previous_prime.split(JOB_NOTES_MARKER, 1)[1].strip("\n")
+    start = previous_prime.find(LEGACY_GENERATED_END)
+    if start < 0:
+        return ""
+    end = previous_prime.find("\n", start)
+    return "" if end < 0 else previous_prime[end:].strip("\n")
+
+
 def write_job_context(
     backend: Backend,
     *,
@@ -118,18 +138,29 @@ def write_job_context(
     repo: str = "pytorch",
     name: str | None = None,
 ) -> None:
-    """Write one context document under names interactive agents discover."""
-    job_dir = f"{workspace}/jobs/{job_id}"
-    content = render_prime_context(
+    """Write one context document under names interactive agents discover.
+
+    The generated part is refreshed on every write; notes that the driver or user added
+    below `JOB_NOTES_MARKER` survive it. Notes can quote issue text, so they are
+    written as file contents, never through a shell.
+    """
+    job_dir = Path(os.path.expandvars(f"{workspace}/jobs/{job_id}")).expanduser()
+    prime = job_dir / "prime.md"
+    try:
+        notes = job_notes(prime.read_text())
+    except FileNotFoundError:
+        notes = ""
+    generated = render_prime_context(
         job_id=job_id,
         workspace=workspace,
         repo=repo,
         name=name,
     )
-    backend.run(
-        f"cat > {job_dir}/prime.md << 'PRIME_CONTEXT_EOF'\n{content}\nPRIME_CONTEXT_EOF"
-    )
-    backend.run(f"cp {job_dir}/prime.md {job_dir}/AGENTS.md", check=False)
+    content = f"{generated.rstrip()}\n\n{JOB_NOTES_MARKER}\n"
+    if notes:
+        content += f"\n{notes}\n"
+    prime.write_text(content)
+    (job_dir / "AGENTS.md").write_text(content)
     worktree = f"{job_dir}/{get_profile(repo).dir_name}"
     backend.run(
         f"rm -f {job_dir}/PTQ_CONTEXT.md {job_dir}/CLAUDE.md "

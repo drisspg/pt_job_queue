@@ -62,27 +62,80 @@ class TestJobContext:
             for command in commands
         )
 
-    def test_writes_prime_and_auto_discovered_agents_file(self):
+    def test_writes_prime_and_auto_discovered_agents_file(self, tmp_path):
         from ptq.application.job_context import write_job_context
 
+        job_dir = tmp_path / "jobs" / "job-1"
+        job_dir.mkdir(parents=True)
         backend = MagicMock()
         write_job_context(
             backend,
             job_id="job-1",
-            workspace="/tmp/ws",
+            workspace=str(tmp_path),
             name="example",
         )
 
+        prime = (job_dir / "prime.md").read_text()
+        assert "PTQ job `example`" in prime
+        assert (job_dir / "AGENTS.md").read_text() == prime
         commands = [call.args[0] for call in backend.run.call_args_list]
-        assert any("/job-1/prime.md" in command for command in commands)
-        assert any(
-            command == "cp /tmp/ws/jobs/job-1/prime.md /tmp/ws/jobs/job-1/AGENTS.md"
-            for command in commands
-        )
         cleanup = next(command for command in commands if command.startswith("rm -f"))
         assert "PTQ_CONTEXT.md" in cleanup
         assert "CLAUDE.md" in cleanup
         assert "/agent_space/prime.md" in cleanup
+
+    def test_job_notes_are_written_verbatim_not_run(self, tmp_path):
+        from ptq.application.job_context import JOB_NOTES_MARKER, write_job_context
+        from ptq.infrastructure.backends import LocalBackend
+
+        job_dir = tmp_path / "jobs" / "job-1"
+        job_dir.mkdir(parents=True)
+        pwned = tmp_path / "pwned"
+        notes = (
+            f"Quoted issue text:\nPRIME_CONTEXT_EOF\ntouch {pwned}\n$(touch {pwned})"
+        )
+        (job_dir / "prime.md").write_text(f"{JOB_NOTES_MARKER}\n{notes}\n")
+
+        write_job_context(LocalBackend(), job_id="job-1", workspace=str(tmp_path))
+
+        assert not pwned.exists()
+        assert (job_dir / "prime.md").read_text().endswith(f"{notes}\n")
+
+    @pytest.mark.parametrize("legacy", [False, True])
+    def test_rewrite_keeps_job_notes_below_generated_context(self, tmp_path, legacy):
+        from ptq.application.job_context import JOB_NOTES_MARKER, write_job_context
+        from ptq.infrastructure.backends import LocalBackend
+
+        job_dir = tmp_path / "jobs" / "job-1"
+        job_dir.mkdir(parents=True)
+        write_job_context(LocalBackend(), job_id="job-1", workspace=str(tmp_path))
+        prime = job_dir / "prime.md"
+        notes = "## Task: fix flex\n\nObjective: make it faster."
+        generated = prime.read_text()
+        if legacy:
+            generated = generated.split(JOB_NOTES_MARKER)[0].rstrip() + "\n"
+        prime.write_text(f"{generated}\n{notes}\n")
+
+        for _ in range(2):
+            write_job_context(
+                LocalBackend(), job_id="job-1", workspace=str(tmp_path), name="flex"
+            )
+
+        content = prime.read_text()
+        assert "PTQ job `flex`" in content
+        assert content.count(notes) == 1
+        assert content.rstrip().endswith(f"{JOB_NOTES_MARKER}\n\n{notes}")
+        assert (job_dir / "AGENTS.md").read_text() == content
+
+    def test_fresh_context_has_marker_and_no_notes(self, tmp_path):
+        from ptq.application.job_context import JOB_NOTES_MARKER, write_job_context
+        from ptq.infrastructure.backends import LocalBackend
+
+        (tmp_path / "jobs" / "job-1").mkdir(parents=True)
+        write_job_context(LocalBackend(), job_id="job-1", workspace=str(tmp_path))
+
+        content = (tmp_path / "jobs" / "job-1" / "prime.md").read_text()
+        assert content.rstrip().endswith(JOB_NOTES_MARKER)
 
 
 class TestNameResolution:
