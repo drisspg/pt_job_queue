@@ -52,6 +52,20 @@ class TestSetupWorkspace:
             for cmd in cmds
         )
 
+    def test_build_removes_stale_editable_torch_before_install(self, tmp_path):
+        backend = _setup_backend(str(tmp_path))
+        setup_workspace(backend, build=True)
+
+        cmds = [call.args[0] for call in backend.run.call_args_list]
+        uninstall = next(
+            i
+            for i, cmd in enumerate(cmds)
+            if f"uv pip uninstall --python {tmp_path}/.venv/bin/python torch" in cmd
+        )
+        install = next(i for i, cmd in enumerate(cmds) if "pip install -v -e ." in cmd)
+        clean = next(i for i, cmd in enumerate(cmds) if "git clean -ffdx" in cmd)
+        assert clean < uninstall < install
+
     def test_installs_test_requirements_in_base_venv(self, tmp_path):
         backend = _setup_backend(str(tmp_path))
         setup_workspace(backend)

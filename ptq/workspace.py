@@ -197,6 +197,17 @@ def build_pytorch(
         stream=True,
     )
 
+    # The previous editable install leaves a scikit-build-core import hook
+    # (_editable_skbc_torch.pth) pointing at the build tree just deleted. Every
+    # venv Python subprocess in pip's isolated build re-runs it with an empty
+    # sys.path, which broke NCCL's version-header script ("No module named
+    # 'subprocess'"). Remove it before rebuilding.
+    backend.run(
+        f"uv pip uninstall --python {workspace}/.venv/bin/python torch",
+        check=False,
+        stream=True,
+    )
+
     pip_cmd = f"{workspace}/.venv/bin/pip install -v -e ."
     if re_cc_jobs > 0:
         pip_cmd = f"re-cc -- {workspace}/.venv/bin/pip install -v -e ."
