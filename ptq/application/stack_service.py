@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from subprocess import CompletedProcess
 
+from ptq.application.pr_service import conventional_pr_branch
 from ptq.domain.models import JobRecord, PtqError, SubmissionMode
 from ptq.infrastructure.backends import Backend, backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
@@ -213,7 +214,8 @@ def persist_submitted_stack(
     job = repo.get(job_id)
     top = commits[-1]
     top_pr_changed = job.pr_url != top.pr_url
-    job.stack_pr_urls = [commit.pr_url for commit in commits]
+    base_pr = [job.stack_base_pr_url] if job.stack_base_pr_url else []
+    job.stack_pr_urls = base_pr + [commit.pr_url for commit in commits]
     job.pr_url = top.pr_url
     if update_metadata or top_pr_changed or not job.pr_title:
         job.pr_title = top.subject
@@ -221,12 +223,23 @@ def persist_submitted_stack(
     repo.save(job)
 
 
-def stack_context(job_id: str, branch: str, base: str) -> str:
+def stack_context(
+    job_id: str, branch: str, base: str, base_pr_url: str | None = None
+) -> str:
     """Render the durable agent handoff for a job intended for ghstack."""
+    base_pr_note = (
+        f"""
+The stack sits on the existing conventional PR {base_pr_url} (branch `{base}`). Update that PR
+with a plain `git push` of its branch, never `ptq pr`. Land it first; `uv run ptq rebase {job_id}`
+then moves the stack onto `main` and `uv run ptq stack submit {job_id}` resubmits it.
+"""
+        if base_pr_url
+        else ""
+    )
     return f"""# PTQ ghstack context
 
 This job is configured for a ghstack submission targeting `{base}` from branch `{branch}`.
-
+{base_pr_note}
 - Build a linear sequence of independently reviewable commits.
 - Keep each commit buildable and tested; include a feature's tests in its owning commit.
 - Treat each commit subject/body as that PR's initial title and description.
@@ -248,10 +261,11 @@ def persist_stack_intent(
     *,
     branch: str,
     base: str,
+    base_pr_url: str | None = None,
 ) -> None:
     """Record ghstack intent for both PTQ monitoring and job-local agents."""
     job_dir = f"{backend.workspace}/jobs/{job.job_id}"
-    content = stack_context(job.job_id, branch, base)
+    content = stack_context(job.job_id, branch, base, base_pr_url)
     result = backend.run(
         f"printf %s {shlex.quote(content)} > {shell_path(f'{job_dir}/{_STACK_CONTEXT_FILE}')}",
         check=False,
@@ -261,6 +275,7 @@ def persist_stack_intent(
 
     job.submission_mode = SubmissionMode.GHSTACK
     job.stack_base = base
+    job.stack_base_pr_url = base_pr_url
     repo.save(job)
 
 
@@ -270,13 +285,24 @@ def initialize_stack(
     *,
     base: str | None = None,
 ) -> StackStatus:
-    """Mark a job for ghstack and move detached/base HEAD onto its stack branch."""
+    """Mark a job for ghstack and move detached/base HEAD onto its stack branch.
+
+    A job that already has a conventional PR keeps it: GitHub cannot move a PR to a
+    ghstack head branch, so the stack is based on the PR's branch instead and moves
+    onto main once that PR lands.
+    """
     job = repo.get(job_id)
-    if job.pr_url and job.submission_mode != SubmissionMode.GHSTACK:
-        raise PtqError(
-            f"Job {job_id} already has a conventional PR; create a separate stack job."
-        )
+    base_pr_url = job.stack_base_pr_url
+    stacks_on_pr = bool(job.pr_url) and job.submission_mode != SubmissionMode.GHSTACK
+    if stacks_on_pr:
+        base_pr_url = job.pr_url
+        base = conventional_pr_branch(job)
     status = inspect_stack(repo, job_id, base=base)
+    if stacks_on_pr and status.commits:
+        raise PtqError(
+            f"HEAD has commits that are not on {status.base_ref}; push them to "
+            f"{base_pr_url} or move them off this branch before initializing the stack."
+        )
     base = status.base
     backend = backend_for_job(job)
     worktree = worktree_path(backend.workspace, job.job_id, job.repo)
@@ -321,6 +347,7 @@ def initialize_stack(
         backend,
         branch=status.branch,
         base=base,
+        base_pr_url=base_pr_url,
     )
     return status
 

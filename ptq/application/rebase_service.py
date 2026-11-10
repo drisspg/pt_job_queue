@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from ptq.application.pr_service import get_pr_state
 from ptq.domain.models import PtqError, RebaseInfo, RebaseState
 from ptq.infrastructure.backends import Backend, backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
@@ -44,12 +45,28 @@ def rebase(
     target_ref: str = "origin/main",
     on_progress: ProgressCallback | None = None,
 ) -> RebaseInfo:
-    """Rebase a job, leaving conflicts in place for interactive resolution."""
+    """Rebase a job, leaving conflicts in place for interactive resolution.
+
+    A stack based on a conventional PR follows that PR's branch while it is open and
+    moves onto `target_ref` without the PR's own commits once it has merged.
+    """
     progress = on_progress or _noop_progress
     job = repo.get(job_id)
     backend = backend_for_job(job)
     workspace = backend.workspace
     worktree = f"{workspace}/jobs/{job_id}/{get_profile(job.repo).dir_name}"
+    old_base = ""
+    if job.stack_base_pr_url:
+        match get_pr_state(backend, job.stack_base_pr_url, force_refresh=True):
+            case "merged":
+                old_base = f"origin/{job.stack_base}"
+            case "open":
+                target_ref = f"origin/{job.stack_base}"
+            case state:
+                raise PtqError(
+                    f"The stack's base PR {job.stack_base_pr_url} is {state}; "
+                    "rebase the stack by hand."
+                )
 
     worktree_check = backend.run(
         f"test -d {worktree}/.git || test -f {worktree}/.git", check=False
@@ -77,11 +94,25 @@ def rebase(
         raise PtqError(info.error)
 
     progress("Running git rebase...")
-    result = backend.run(f"git -C {worktree} rebase {target_ref}", check=False)
+    rebase_args = target_ref
+    if old_base:
+        # The squash-merged base PR's original commits never reach target_ref.
+        remote_base = backend.run(
+            f"git -C {worktree} rev-parse --verify {old_base}", check=False
+        )
+        if remote_base.returncode != 0:
+            old_base = old_base.removeprefix("origin/")
+        rebase_args = f"--onto {target_ref} {old_base}"
+    result = backend.run(f"git -C {worktree} rebase {rebase_args}", check=False)
     if result.returncode == 0:
         info.state = RebaseState.SUCCEEDED
         info.after_sha = _get_sha(backend, worktree)
         repo.save_rebase(job_id, info.to_dict())
+        if old_base:
+            job = repo.get(job_id)
+            job.stack_base = target_ref.removeprefix("origin/")
+            job.stack_base_pr_url = None
+            repo.save(job)
         progress(f"Rebase clean — now at {info.after_sha[:10]}")
         return info
 

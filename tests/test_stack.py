@@ -14,6 +14,7 @@ from ptq.application.stack_service import (
     initialize_stack,
     inspect_stack,
     parse_commits,
+    persist_submitted_stack,
     submit_stack,
     validate_submit,
 )
@@ -204,20 +205,100 @@ def test_parse_commits_accepts_legacy_pull_request_trailers():
     assert commits[0].pr_url == "https://github.com/pytorch/pytorch/pull/99"
 
 
-def test_initialize_stack_rejects_job_with_conventional_pr(tmp_path):
-    repo = make_repo(tmp_path)
-    job = repo.get("stack-job")
-    job.pr_url = "https://github.com/pytorch/pytorch/pull/99"
-    repo.save(job)
-    backend = make_backend()
+def git(worktree: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=worktree, check=True, capture_output=True)
 
-    with (
-        patch("ptq.application.stack_service.backend_for_job", return_value=backend),
-        pytest.raises(PtqError, match="conventional PR"),
-    ):
+
+def make_conventional_pr_job(tmp_path: Path) -> tuple[JobRepository, Path, Path]:
+    """A real worktree whose branch ptq/42 is pushed as a conventional PR."""
+    workspace = tmp_path / "workspace"
+    worktree = workspace / "jobs" / "stack-job" / "pytorch"
+    worktree.mkdir(parents=True)
+    (worktree / ".ghstackrc").write_text("[ghstack]\nremote_name = origin\n")
+    git(worktree, "init", "-b", "main")
+    git(worktree, "config", "user.name", "PTQ Test")
+    git(worktree, "config", "user.email", "ptq@example.com")
+    (worktree / "file.txt").write_text("base\n")
+    git(worktree, "add", "file.txt", ".ghstackrc")
+    git(worktree, "commit", "-m", "Base")
+    git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(worktree, "switch", "-c", "ptq/42")
+    (worktree / "file.txt").write_text("pr\n")
+    git(worktree, "commit", "-am", "Conventional PR change")
+    git(worktree, "update-ref", "refs/remotes/origin/ptq/42", "HEAD")
+
+    repo = JobRepository(tmp_path / "jobs.json")
+    repo.save(
+        JobRecord(
+            job_id="stack-job",
+            issue=42,
+            workspace=str(workspace),
+            pr_url="https://github.com/pytorch/pytorch/pull/99",
+        )
+    )
+    return repo, workspace, worktree
+
+
+def test_initialize_stack_builds_on_existing_conventional_pr(tmp_path):
+    repo, workspace, worktree = make_conventional_pr_job(tmp_path)
+
+    status = initialize_stack(repo, "stack-job")
+
+    assert status.branch == "ptq-stack/stack-job"
+    assert status.base_ref == "origin/ptq/42"
+    job = repo.get("stack-job")
+    assert job.submission_mode == SubmissionMode.GHSTACK
+    assert job.stack_base == "ptq/42"
+    assert job.stack_base_pr_url == "https://github.com/pytorch/pytorch/pull/99"
+    context = (workspace / "jobs" / "stack-job" / "STACK_CONTEXT.md").read_text()
+    assert "https://github.com/pytorch/pytorch/pull/99" in context
+
+    (worktree / "other.txt").write_text("stacked\n")
+    git(worktree, "add", "other.txt")
+    git(worktree, "commit", "-m", "Stacked change")
+    assert [c.subject for c in inspect_stack(repo, "stack-job").commits] == [
+        "Stacked change"
+    ]
+
+
+def test_initialize_stack_rejects_commits_missing_from_conventional_pr(tmp_path):
+    repo, _, worktree = make_conventional_pr_job(tmp_path)
+    (worktree / "file.txt").write_text("unpushed\n")
+    git(worktree, "commit", "-am", "Unpushed change")
+
+    with pytest.raises(PtqError, match="not on origin/ptq/42"):
         initialize_stack(repo, "stack-job")
 
-    backend.run.assert_not_called()
+    assert repo.get("stack-job").submission_mode == SubmissionMode.PULL_REQUEST
+
+
+def test_submitted_stack_tracks_its_conventional_base_pr(tmp_path):
+    repo = make_repo(tmp_path)
+    job = repo.get("stack-job")
+    job.submission_mode = SubmissionMode.GHSTACK
+    job.pr_url = "https://github.com/pytorch/pytorch/pull/99"
+    job.stack_base_pr_url = "https://github.com/pytorch/pytorch/pull/99"
+    repo.save(job)
+
+    persist_submitted_stack(
+        repo,
+        "stack-job",
+        (
+            StackCommit(
+                sha="new1",
+                subject="Stacked change",
+                source_id="source-1",
+                pr_url="https://github.com/pytorch/pytorch/pull/101",
+            ),
+        ),
+    )
+
+    saved = repo.get("stack-job")
+    assert saved.stack_pr_urls == [
+        "https://github.com/pytorch/pytorch/pull/99",
+        "https://github.com/pytorch/pytorch/pull/101",
+    ]
+    assert saved.pr_url == "https://github.com/pytorch/pytorch/pull/101"
 
 
 def test_initialize_stack_preserves_configured_base(tmp_path):

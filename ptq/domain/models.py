@@ -71,6 +71,7 @@ class JobRecord:
     pr_title: str | None = None
     submission_mode: SubmissionMode = SubmissionMode.PULL_REQUEST
     stack_base: str = "main"
+    stack_base_pr_url: str | None = None
     stack_pr_urls: list[str] = field(default_factory=list)
     rebase: RebaseInfo | None = None
     name: str | None = None
@@ -97,6 +98,8 @@ class JobRecord:
             d["submission_mode"] = self.submission_mode.value
         if self.stack_base != "main":
             d["stack_base"] = self.stack_base
+        if self.stack_base_pr_url:
+            d["stack_base_pr_url"] = self.stack_base_pr_url
         if self.stack_pr_urls:
             d["stack_pr_urls"] = self.stack_pr_urls
         if self.name:
@@ -124,6 +127,7 @@ class JobRecord:
                 data.get("submission_mode", SubmissionMode.PULL_REQUEST.value)
             ),
             stack_base=data.get("stack_base", "main"),
+            stack_base_pr_url=data.get("stack_base_pr_url"),
             stack_pr_urls=list(data.get("stack_pr_urls", [])),
             rebase=RebaseInfo.from_dict(rebase_data) if rebase_data else None,
             name=data.get("name"),

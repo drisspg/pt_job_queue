@@ -86,6 +86,59 @@ class TestRebase:
         assert result.before_sha == "abc123"
         assert repo.get(job_id).rebase_info.state == RebaseState.SUCCEEDED
 
+    @pytest.mark.parametrize(
+        ("pr_state", "rebase_command", "stack_base", "base_pr_url"),
+        [
+            ("open", "rebase origin/ptq/42", "ptq/42", "https://x/pull/99"),
+            ("merged", "rebase --onto origin/main origin/ptq/42", "main", None),
+        ],
+    )
+    def test_stack_on_conventional_pr_follows_its_base(
+        self, tmp_path, pr_state, rebase_command, stack_base, base_pr_url
+    ):
+        repo, job_id = _make_repo(tmp_path)
+        job = repo.get(job_id)
+        job.stack_base = "ptq/42"
+        job.stack_base_pr_url = "https://x/pull/99"
+        repo.save(job)
+
+        def run_side(command, check=True):
+            if "rev-parse HEAD" in command:
+                return _ok("abc123\n")
+            return _ok()
+
+        backend = MagicMock(workspace="~/ptq_workspace")
+        backend.run.side_effect = run_side
+        with (
+            patch(
+                "ptq.application.rebase_service.backend_for_job", return_value=backend
+            ),
+            patch("ptq.application.rebase_service.get_pr_state", return_value=pr_state),
+        ):
+            result = rebase(repo, job_id)
+
+        assert result.state == RebaseState.SUCCEEDED
+        commands = [call.args[0] for call in backend.run.call_args_list]
+        assert any(command.endswith(rebase_command) for command in commands)
+        saved = repo.get(job_id)
+        assert saved.stack_base == stack_base
+        assert saved.stack_base_pr_url == base_pr_url
+
+    def test_stack_on_closed_conventional_pr_needs_a_human(self, tmp_path):
+        repo, job_id = _make_repo(tmp_path)
+        job = repo.get(job_id)
+        job.stack_base_pr_url = "https://x/pull/99"
+        repo.save(job)
+        backend = MagicMock(workspace="~/ptq_workspace")
+        with (
+            patch(
+                "ptq.application.rebase_service.backend_for_job", return_value=backend
+            ),
+            patch("ptq.application.rebase_service.get_pr_state", return_value="closed"),
+            pytest.raises(PtqError, match="is closed"),
+        ):
+            rebase(repo, job_id)
+
     def test_target_not_found(self, tmp_path):
         repo, job_id = _make_repo(tmp_path)
 

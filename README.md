@@ -144,6 +144,8 @@ Ordinary updates preserve GitHub titles and bodies. Use `--update-metadata` only
 
 For PyTorch, `@pytorchbot merge` on a ghstack PR lands that PR and every open PR below it. Use the bottom PR for one layer or the top PR for the whole stack; do not use the GitHub merge button.
 
+A job that already has a conventional PR keeps it: `ptq stack init` bases the stack on that PR's branch (GitHub cannot move a PR onto a ghstack branch). Update the base PR with a plain `git push` of its branch. Land it first; `ptq rebase` then moves the stack onto `main`.
+
 After a lower layer lands:
 
 ```bash

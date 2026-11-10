@@ -105,7 +105,7 @@ If `STACK_CONTEXT.md` exists, follow it and use:
 {ptq_command} stack submit {job_id} --draft
 ```
 
-Stack submission uses each commit's subject/body, not the conventional `--note` option or a new note editor. Prepare each commit's human commentary and descriptions for the user's review before publishing. Preserve ghstack trailers; ordinary submission preserves existing PR titles/bodies. Use `--update-metadata` only after explicit approval of the metadata changes. A new stack-oriented job should run `{ptq_command} stack init {job_id}` before implementation. PTQ refuses converting a job already associated with a conventional PR; use a separate stack job, preserving the old PR until the user authorizes closing it.
+Stack submission uses each commit's subject/body, not the conventional `--note` option or a new note editor. Prepare each commit's human commentary and descriptions for the user's review before publishing. Preserve ghstack trailers; ordinary submission preserves existing PR titles/bodies. Use `--update-metadata` only after explicit approval of the metadata changes. A new stack-oriented job should run `{ptq_command} stack init {job_id}` before implementation. For a job that already has a conventional PR, `stack init` keeps that PR and bases the stack on its branch; update the base PR with a plain `git push` of that branch, and after it lands, `{ptq_command} rebase {job_id}` moves the stack onto main.
 
 Submission authorization does not authorize merging, closing PRs, cleaning jobs, changing unrelated metadata, or posting/replying to review comments. Read-only inspection is safe; run mutating commands only for the user's requested action.
 """

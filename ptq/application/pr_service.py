@@ -45,6 +45,11 @@ class CurrentPRMetadata:
     fetched: bool = False
 
 
+def conventional_pr_branch(job: JobRecord) -> str:
+    """Return the head branch PTQ pushes for a job's conventional PR."""
+    return f"ptq/{job.issue}" if job.issue is not None else f"ptq/{job.job_id}"
+
+
 def ensure_conventional_pr(job: JobRecord) -> None:
     """Reject conventional PR creation for jobs explicitly configured as stacks."""
     if job.submission_mode == SubmissionMode.GHSTACK:
@@ -366,7 +371,7 @@ def create_pr(
             "why you believe it's correct, and how the reviewer should approach it."
         )
 
-    branch = f"ptq/{job.issue}" if job.issue is not None else f"ptq/{job_id}"
+    branch = conventional_pr_branch(job)
     pr_title = _resolve_pr_title(job, backend, job_dir, title)
     pr_labels = _artifact_pr_labels(backend, job_dir)
     _validate_pr_labels(backend, profile.github_repo, pr_labels)
