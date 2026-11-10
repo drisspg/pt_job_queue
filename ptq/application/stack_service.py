@@ -257,6 +257,7 @@ def persist_submitted_stack(
     top_pr_changed = job.pr_url != top.pr_url
     base_pr = [job.stack_base_pr_url] if job.stack_base_pr_url else []
     job.stack_pr_urls = base_pr + [commit.pr_url for commit in commits]
+    job.stack_tool = tool
     job.pr_url = top.pr_url
     if update_metadata or top_pr_changed or not job.pr_title:
         job.pr_title = top.subject
@@ -270,17 +271,25 @@ def stack_context(
     base: str,
     base_pr_url: str | None = None,
     tool: StackTool = StackTool.GHSTACK,
+    adopted_pr_url: str | None = None,
 ) -> str:
     """Render the durable agent handoff for a stacked job."""
-    base_pr_note = (
-        f"""
+    if adopted_pr_url:
+        base_pr_note = f"""
+The bottom commit is the existing PR {adopted_pr_url}: its `stack-info` trailer maps it to that
+PR's branch. Fold changes for that PR into the bottom commit, keep the trailer, and run
+`uv run ptq stack submit {job_id}` to update every layer.
+"""
+    else:
+        base_pr_note = (
+            f"""
 The stack sits on the existing conventional PR {base_pr_url} (branch `{base}`). Update that PR
 with a plain `git push` of its branch, never `ptq pr`. Land it first; `uv run ptq rebase {job_id}`
 then moves the stack onto `main` and `uv run ptq stack submit {job_id}` resubmits it.
 """
-        if base_pr_url
-        else ""
-    )
+            if base_pr_url
+            else ""
+        )
     return f"""# PTQ {tool.value} stack context
 
 This job is configured for a {tool.value} stack targeting `{base}` from branch `{branch}`.
@@ -308,10 +317,11 @@ def persist_stack_intent(
     base: str,
     base_pr_url: str | None = None,
     tool: StackTool = StackTool.GHSTACK,
+    adopted_pr_url: str | None = None,
 ) -> None:
     """Record stack intent for both PTQ monitoring and job-local agents."""
     job_dir = f"{backend.workspace}/jobs/{job.job_id}"
-    content = stack_context(job.job_id, branch, base, base_pr_url, tool)
+    content = stack_context(job.job_id, branch, base, base_pr_url, tool, adopted_pr_url)
     result = backend.run(
         f"printf %s {shlex.quote(content)} > {shell_path(f'{job_dir}/{_STACK_CONTEXT_FILE}')}",
         check=False,
@@ -413,7 +423,13 @@ def initialize_stack(
         worktree = worktree_path(backend.workspace, job.job_id, job.repo)
         status = adopt_conventional_pr(repo, job, backend, worktree, trunk)
         persist_stack_intent(
-            repo, job, backend, branch=status.branch, base=trunk, tool=tool
+            repo,
+            job,
+            backend,
+            branch=status.branch,
+            base=trunk,
+            tool=tool,
+            adopted_pr_url=job.pr_url,
         )
         return status
 
@@ -550,11 +566,12 @@ def submit_stack(
 
     _log("Refreshing submitted stack metadata...")
     submitted = inspect_stack(repo, job_id)
+    # sp hands stacks to ghstack under `git config sp.backend ghstack`; trust the trailers.
     persist_submitted_stack(
         repo,
         job_id,
         submitted.commits,
         update_metadata=update_metadata,
-        tool=tool,
+        tool=submission_tool(job, submitted.commits),
     )
     return StackSubmitResult(status=submitted, output=stdout)

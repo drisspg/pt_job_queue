@@ -9,6 +9,12 @@ import pytest
 from ptq.infrastructure.job_repository import JobRepository
 
 
+@pytest.fixture(autouse=True)
+def pinned_stack_tool(monkeypatch):
+    """Keep tests independent of whether sp is installed on the host."""
+    monkeypatch.setenv("PTQ_STACK_TOOL", "ghstack")
+
+
 @pytest.fixture()
 def repo(tmp_path: Path) -> JobRepository:
     return JobRepository(tmp_path / "jobs.json")

@@ -25,12 +25,6 @@ from ptq.infrastructure.backends import LocalBackend
 from ptq.infrastructure.job_repository import JobRepository
 
 
-@pytest.fixture(autouse=True)
-def pinned_stack_tool(monkeypatch):
-    """Keep tests independent of whether sp is installed on the host."""
-    monkeypatch.setenv("PTQ_STACK_TOOL", "ghstack")
-
-
 def completed(
     stdout: str = "", returncode: int = 0, stderr: str = ""
 ) -> CompletedProcess[str]:
@@ -792,6 +786,13 @@ def test_sp_stack_init_adopts_conventional_pr_as_bottom_layer(tmp_path, open_pr)
     assert job.stack_tool == StackTool.SP
     assert job.stack_base == "main"
     assert job.stack_base_pr_url is None
+    context = (
+        tmp_path / "workspace" / "jobs" / "stack-job" / "STACK_CONTEXT.md"
+    ).read_text()
+    assert (
+        "The bottom commit is the existing PR https://github.com/pytorch/pytorch/pull/99"
+        in context
+    )
 
 
 def test_sp_stack_init_resumes_after_an_interrupted_adoption(tmp_path, open_pr):
@@ -829,3 +830,42 @@ def test_sp_stack_init_refuses_unpushed_conventional_pr(tmp_path, open_pr):
         initialize_stack(repo, "stack-job")
 
     assert repo.get("stack-job").submission_mode == SubmissionMode.PULL_REQUEST
+
+
+def test_submit_trusts_ghstack_trailers_when_sp_delegates(tmp_path):
+    repo = make_repo(tmp_path)
+    mark_as_stack(repo)
+    job = repo.get("stack-job")
+    job.stack_tool = StackTool.SP
+    repo.save(job)
+    submitted = False
+
+    def run(cmd: str, check: bool = True, stream: bool = False):
+        nonlocal submitted
+        if "rev-parse --verify --quiet origin/main" in cmd:
+            return completed("base-sha\n")
+        if "symbolic-ref --short --quiet HEAD" in cmd:
+            return completed("feature-stack\n")
+        if cmd == "command -v sp":
+            return completed("/usr/bin/sp\n")
+        if "log --reverse" in cmd:
+            body = (
+                "Change\n\nghstack-source-id: s1\n"
+                "Pull-Request: https://github.com/pytorch/pytorch/pull/8\n"
+                if submitted
+                else "Change\n"
+            )
+            return completed(git_log(("abc", "Change", body)))
+        if "sp submit" in cmd:
+            submitted = True
+            return completed()
+        return completed()
+
+    backend = MagicMock(workspace="/workspace")
+    backend.run.side_effect = run
+    with patch("ptq.application.stack_service.backend_for_job", return_value=backend):
+        submit_stack(repo, "stack-job")
+
+    saved = repo.get("stack-job")
+    assert saved.stack_pr_urls == ["https://github.com/pytorch/pytorch/pull/8"]
+    assert saved.stack_tool == StackTool.GHSTACK
