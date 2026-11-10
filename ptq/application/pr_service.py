@@ -251,6 +251,11 @@ def suggest_pr_title(repo: JobRepository, job_id: str) -> str:
 
 
 def _normalize_pr_state(raw_state: str, merged_at: str) -> str:
+    """Map GitHub PR state to PTQ's; `merged_at` is any evidence the PR landed.
+
+    pytorchbot lands PRs by pushing to main, which leaves them CLOSED with a
+    `Merged` label and no mergedAt.
+    """
     match raw_state.upper():
         case "OPEN":
             return "open"
@@ -283,14 +288,20 @@ def get_pr_state(
         return cached[1]
 
     result = backend.run(
-        f"gh pr view '{pr_url}' --json state,mergedAt --jq '[.state, (.mergedAt // \"\")] | @tsv'",
+        f"gh pr view '{pr_url}' --json state,mergedAt,labels --jq "
+        '\'[.state, (.mergedAt // ""), '
+        '(if any(.labels[]; .name == "Merged") then "Merged" else "" end)] | @tsv\'',
         check=False,
     )
     if result.returncode != 0:
         state = "unknown"
     else:
-        raw_state, _, merged_at = result.stdout.strip().partition("\t")
-        state = _normalize_pr_state(raw_state.strip(), merged_at.strip())
+        raw_state, merged_at, merged_label = (
+            result.stdout.rstrip("\n").split("\t") + ["", ""]
+        )[:3]
+        state = _normalize_pr_state(
+            raw_state.strip(), merged_at.strip() or merged_label
+        )
     _pr_state_cache[pr_url] = (now, state)
     return state
 

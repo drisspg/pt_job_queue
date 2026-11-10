@@ -34,6 +34,23 @@ class TestPrState:
         assert second == "open"
         assert backend.run.call_count == 1
 
+    @pytest.mark.parametrize(
+        ("output", "expected"),
+        [
+            ("CLOSED\t\tMerged\n", "merged"),
+            ("CLOSED\t\t\n", "closed"),
+        ],
+    )
+    def test_get_pr_state_reads_the_mergebot_merged_label(self, output, expected):
+        backend = MagicMock()
+        backend.run.return_value = CompletedProcess("", 0, output, "")
+        pr_service._pr_state_cache.clear()
+
+        state = pr_service.get_pr_state(
+            backend, "https://github.com/pytorch/pytorch/pull/101", force_refresh=True
+        )
+        assert state == expected
+
     def test_get_pr_state_closed_with_merged_at_is_merged(self):
         backend = MagicMock()
         backend.run.return_value = CompletedProcess(
