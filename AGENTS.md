@@ -14,7 +14,7 @@
 - Print its shell-entry command: `uv run ptq takeover JOB_ID`
 - Inspect its worklog and report: `uv run ptq peek JOB_ID`
 - Submit a conventional PR: `uv run ptq pr JOB_ID`
-- Configure ghstack before implementation: `uv run ptq stack init JOB_ID`
+- Configure a stack (sp when installed, else ghstack) before implementation: `uv run ptq stack init JOB_ID`
 - Inspect a stack: `uv run ptq stack show JOB_ID`
 - Submit a stack: `uv run ptq stack submit JOB_ID`
 - Rebase a worktree: `uv run ptq rebase JOB_ID`
@@ -53,9 +53,9 @@ uv run ptq stack init NAME
 - Initialize stack mode before implementation begins.
 - Read `STACK_CONTEXT.md` and create a linear sequence of independently buildable and tested commits.
 - Keep each feature's tests in the commit that introduces it.
-- Use `uv run ptq stack show JOB_ID` and `uv run ptq stack submit JOB_ID`; never use `ptq pr` for a ghstack job.
+- Use `uv run ptq stack show JOB_ID` and `uv run ptq stack submit JOB_ID`; never use `ptq pr` for a stacked job.
 - Ordinary stack updates preserve GitHub titles and bodies. Use `--update-metadata` only when explicitly requested.
-- Preserve `ghstack-source-id`, `ghstack-comment-id`, and `Pull-Request` trailers during rewrites.
+- Preserve `stack-info`, `ghstack-source-id`, `ghstack-comment-id`, and `Pull-Request` trailers during rewrites.
 - Rebase stacks; do not merge the base branch into them.
 - For PyTorch, `@pytorchbot merge` on a PR lands it and every open PR below it. Do not use the GitHub merge button.
 

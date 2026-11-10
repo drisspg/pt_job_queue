@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from ptq.application.rebase_service import rebase
 from ptq.cli import app
-from ptq.domain.models import JobRecord, PtqError, RebaseInfo, RebaseState
+from ptq.domain.models import JobRecord, PtqError, RebaseInfo, RebaseState, StackTool
 from ptq.infrastructure.job_repository import JobRepository
 
 
@@ -123,6 +123,23 @@ class TestRebase:
         saved = repo.get(job_id)
         assert saved.stack_base == stack_base
         assert saved.stack_base_pr_url == base_pr_url
+
+    def test_sp_stack_rebases_with_sp_sync(self, tmp_path):
+        repo, job_id = _make_repo(tmp_path)
+        job = repo.get(job_id)
+        job.stack_tool = StackTool.SP
+        repo.save(job)
+        backend = MagicMock(workspace="~/ptq_workspace")
+        backend.run.side_effect = lambda command, check=True: _ok("abc123\n")
+        with patch(
+            "ptq.application.rebase_service.backend_for_job", return_value=backend
+        ):
+            result = rebase(repo, job_id)
+
+        assert result.state == RebaseState.SUCCEEDED
+        commands = [call.args[0] for call in backend.run.call_args_list]
+        assert any(command.endswith("&& sp sync -T main") for command in commands)
+        assert not any(" rebase " in command for command in commands)
 
     def test_stack_on_closed_conventional_pr_needs_a_human(self, tmp_path):
         repo, job_id = _make_repo(tmp_path)

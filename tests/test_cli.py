@@ -52,7 +52,7 @@ class TestStackCommand:
             result = runner.invoke(app, ["stack", "init", "stack-job"])
 
         assert result.exit_code == 0, result.output
-        assert "Configured stack-job for ghstack" in result.output
+        assert "Configured stack-job for a ghstack stack" in result.output
         initialize.assert_called_once_with(repo, "stack-job", base=None)
 
     def test_show_renders_stack(self, tmp_path):
@@ -134,7 +134,7 @@ class TestStackCommand:
             )
 
         assert result.exit_code == 0, result.output
-        assert "Submitting ghstack for stack-job" in result.output
+        assert "Submitting stack for stack-job" in result.output
         assert "Submitted 1 PR(s)" in result.output
         assert submit.call_args.kwargs["draft"] is True
         assert submit.call_args.kwargs["update_metadata"] is True

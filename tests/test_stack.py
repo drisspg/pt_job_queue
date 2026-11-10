@@ -10,17 +10,25 @@ import pytest
 from ptq.application.stack_service import (
     StackCommit,
     StackStatus,
+    choose_stack_tool,
     ghstack_remote,
     initialize_stack,
     inspect_stack,
     parse_commits,
     persist_submitted_stack,
+    submission_tool,
     submit_stack,
     validate_submit,
 )
-from ptq.domain.models import JobRecord, PtqError, SubmissionMode
+from ptq.domain.models import JobRecord, PtqError, StackTool, SubmissionMode
 from ptq.infrastructure.backends import LocalBackend
 from ptq.infrastructure.job_repository import JobRepository
+
+
+@pytest.fixture(autouse=True)
+def pinned_stack_tool(monkeypatch):
+    """Keep tests independent of whether sp is installed on the host."""
+    monkeypatch.setenv("PTQ_STACK_TOOL", "ghstack")
 
 
 def completed(
@@ -525,9 +533,9 @@ def test_submit_runs_ghstack_and_persists_top_pr(tmp_path):
     )
     assert submit_invocation.kwargs["stream"] is True
     assert logs == [
-        "Resolving ghstack configuration...",
+        "Resolving stack configuration...",
         "Fetching origin...",
-        "Submitting 2 commit(s) from feature-stack onto origin/main...",
+        "Submitting 2 commit(s) from feature-stack onto origin/main with ghstack...",
         "Refreshing submitted stack metadata...",
     ]
     commands = [call.args[0] for call in backend.run.call_args_list]
@@ -636,3 +644,188 @@ def test_submit_reports_missing_ghstack(tmp_path):
     assert all(
         "STACK_CONTEXT.md" not in call.args[0] for call in backend.run.call_args_list
     )
+
+
+@pytest.mark.parametrize(
+    ("env", "sp_path", "expected"),
+    [
+        ("", "/usr/bin/sp\n", StackTool.SP),
+        ("", "", StackTool.GHSTACK),
+        ("ghstack", "/usr/bin/sp\n", StackTool.GHSTACK),
+        ("sp", "", StackTool.SP),
+    ],
+)
+def test_choose_stack_tool_prefers_installed_sp(monkeypatch, env, sp_path, expected):
+    monkeypatch.setenv("PTQ_STACK_TOOL", env)
+    backend = MagicMock()
+    backend.run.return_value = completed(sp_path, 0 if sp_path else 1)
+
+    assert choose_stack_tool(backend) == expected
+
+
+def test_choose_stack_tool_rejects_unknown_override(monkeypatch):
+    monkeypatch.setenv("PTQ_STACK_TOOL", "stack-pr")
+    with pytest.raises(PtqError, match="PTQ_STACK_TOOL"):
+        choose_stack_tool(MagicMock())
+
+
+def test_submission_tool_follows_existing_trailers():
+    sp_job = JobRecord(job_id="j", stack_tool=StackTool.SP)
+    ghstack_commit = StackCommit(sha="a", subject="A", source_id="s", pr_url="u")
+    sp_commit = StackCommit(sha="b", subject="B", pr_url="u", stack_info=True)
+
+    assert submission_tool(sp_job, (ghstack_commit,)) == StackTool.GHSTACK
+    assert submission_tool(JobRecord(job_id="j"), (sp_commit,)) == StackTool.SP
+    assert submission_tool(sp_job, (StackCommit(sha="c", subject="C"),)) == StackTool.SP
+    assert submission_tool(JobRecord(job_id="j"), ()) == StackTool.GHSTACK
+    with pytest.raises(PtqError, match="mixes"):
+        submission_tool(sp_job, (ghstack_commit, sp_commit))
+
+
+def test_submit_with_sp_publishes_a_native_stack(tmp_path):
+    repo = make_repo(tmp_path)
+    mark_as_stack(repo)
+    job = repo.get("stack-job")
+    job.stack_tool = StackTool.SP
+    repo.save(job)
+    submitted = False
+
+    def run(cmd: str, check: bool = True, stream: bool = False):
+        nonlocal submitted
+        if "rev-parse --verify --quiet origin/main" in cmd:
+            return completed("base-sha\n")
+        if "symbolic-ref --short --quiet HEAD" in cmd:
+            return completed("feature-stack\n")
+        if cmd == "command -v sp":
+            return completed("/usr/bin/sp\n")
+        if "log --reverse" in cmd:
+            body = (
+                "Change\n\nstack-info: PR: https://github.com/pytorch/pytorch/pull/7, "
+                "branch: me/stack/1\n"
+                if submitted
+                else "Change\n"
+            )
+            return completed(git_log(("abc", "Change", body)))
+        if "sp submit" in cmd:
+            submitted = True
+            return completed("ok\n")
+        return completed()
+
+    backend = MagicMock(workspace="/workspace")
+    backend.run.side_effect = run
+    with patch("ptq.application.stack_service.backend_for_job", return_value=backend):
+        submit_stack(repo, "stack-job", draft=True)
+
+    commands = [call.args[0] for call in backend.run.call_args_list]
+    assert any("/usr/bin/sp submit -R origin -T main -d" in cmd for cmd in commands)
+    assert not any("ghstack submit" in cmd for cmd in commands)
+    saved = repo.get("stack-job")
+    assert saved.stack_pr_urls == ["https://github.com/pytorch/pytorch/pull/7"]
+    assert saved.pr_url == "https://github.com/pytorch/pytorch/pull/7"
+
+
+def make_pushed_conventional_pr(tmp_path: Path) -> tuple[JobRepository, Path, Path]:
+    """A worktree whose two-commit branch ptq/42 is a conventional PR on a real remote."""
+    remote = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(remote)],
+        check=True,
+        capture_output=True,
+    )
+    repo, workspace, worktree = make_conventional_pr_job(tmp_path)
+    (worktree / "file.txt").write_text("pr follow-up\n")
+    git(worktree, "commit", "-am", "PR follow-up")
+    git(worktree, "remote", "add", "origin", str(remote))
+    git(worktree, "push", "origin", "main", "ptq/42")
+    git(worktree, "fetch", "origin")
+    return repo, worktree, remote
+
+
+@pytest.fixture
+def open_pr(monkeypatch):
+    monkeypatch.setenv("PTQ_STACK_TOOL", "sp")
+    state = {"value": "open"}
+    monkeypatch.setattr(
+        "ptq.application.stack_service.get_pr_state",
+        lambda *args, **kwargs: state["value"],
+    )
+    return state
+
+
+def remote_ref(remote: Path, ref: str) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", ref],
+        cwd=remote,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_sp_stack_init_adopts_conventional_pr_as_bottom_layer(tmp_path, open_pr):
+    repo, worktree, remote = make_pushed_conventional_pr(tmp_path)
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    status = initialize_stack(repo, "stack-job")
+
+    assert status.branch == "ptq-stack/stack-job"
+    assert status.base_ref == "origin/main"
+    assert [c.pr_url for c in status.commits] == [
+        "https://github.com/pytorch/pytorch/pull/99"
+    ]
+    assert status.commits[0].stack_info
+    remote_head = subprocess.run(
+        ["git", "rev-parse", "ptq/42", "ptq/42^{tree}"],
+        cwd=remote,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert remote_head == [status.commits[0].sha, tree.strip()]
+    job = repo.get("stack-job")
+    assert job.stack_tool == StackTool.SP
+    assert job.stack_base == "main"
+    assert job.stack_base_pr_url is None
+
+
+def test_sp_stack_init_resumes_after_an_interrupted_adoption(tmp_path, open_pr):
+    repo, _, remote = make_pushed_conventional_pr(tmp_path)
+    first = initialize_stack(repo, "stack-job")
+    job = repo.get("stack-job")
+    job.submission_mode = SubmissionMode.PULL_REQUEST
+    job.stack_tool = None
+    repo.save(job)
+
+    again = initialize_stack(repo, "stack-job")
+
+    assert [c.sha for c in again.commits] == [c.sha for c in first.commits]
+    assert remote_ref(remote, "ptq/42") == first.commits[0].sha
+    assert repo.get("stack-job").stack_tool == StackTool.SP
+
+
+def test_sp_stack_init_leaves_a_closed_pr_untouched(tmp_path, open_pr):
+    open_pr["value"] = "closed"
+    repo, worktree, remote = make_pushed_conventional_pr(tmp_path)
+    before = remote_ref(remote, "ptq/42")
+
+    with pytest.raises(PtqError, match="not open"):
+        initialize_stack(repo, "stack-job")
+
+    assert remote_ref(remote, "ptq/42") == before
+
+
+def test_sp_stack_init_refuses_unpushed_conventional_pr(tmp_path, open_pr):
+    repo, worktree, remote = make_pushed_conventional_pr(tmp_path)
+    (worktree / "file.txt").write_text("unpushed\n")
+    git(worktree, "commit", "-am", "Unpushed")
+
+    with pytest.raises(PtqError, match="pushed head"):
+        initialize_stack(repo, "stack-job")
+
+    assert repo.get("stack-job").submission_mode == SubmissionMode.PULL_REQUEST

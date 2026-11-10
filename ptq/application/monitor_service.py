@@ -7,7 +7,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from ptq.application.pr_service import get_pr_state
-from ptq.domain.models import JobRecord, RebaseState, SubmissionMode
+from ptq.domain.models import JobRecord, RebaseState, StackTool, SubmissionMode
 from ptq.infrastructure.backends import backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.takeover import for_job as takeover_for_job
@@ -332,6 +332,7 @@ def next_action(
     can_merge_ignore: bool = False,
     review_decision: str = "",
     ghstack: bool = False,
+    sp: bool = False,
     pr_url: str = "",
     repo_name: str = "pytorch",
 ) -> str:
@@ -364,7 +365,7 @@ def next_action(
                 return "trigger merge"
             if repo_name == "pytorch":
                 return f"gh pr comment {pr_url} --body '@pytorchbot merge'"
-            return f"ghstack land {pr_url}"
+            return f"sp land {pr_url}" if sp else f"ghstack land {pr_url}"
         case "waiting on CI":
             return f"ptq peek {job_id}"
         case "merged/closed":
@@ -446,6 +447,7 @@ def collect_monitor_rows(
                     can_merge_ignore=can_merge_ignore,
                     review_decision=pr_signals.review_decision,
                     ghstack=job.submission_mode == SubmissionMode.GHSTACK,
+                    sp=job.stack_tool == StackTool.SP,
                     pr_url=job.pr_url or "",
                     repo_name=job.repo,
                 ),

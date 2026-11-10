@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import configparser
+import os
 import re
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 from subprocess import CompletedProcess
 
-from ptq.application.pr_service import conventional_pr_branch
-from ptq.domain.models import JobRecord, PtqError, SubmissionMode
+from ptq.application.pr_service import conventional_pr_branch, get_pr_state
+from ptq.domain.models import JobRecord, PtqError, StackTool, SubmissionMode
 from ptq.infrastructure.backends import Backend, backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.takeover import shell_path, worktree_path
@@ -19,6 +20,9 @@ _SOURCE_ID_RE = re.compile(r"(?m)^ghstack-source-id:\s*(\S+)\s*$")
 _PULL_REQUEST_RE = re.compile(
     r"(?m)^(?:Pull-Request|Pull Request resolved|Pull-Request-resolved):"
     r"\s*(https://\S+)\s*$"
+)
+_STACK_INFO_RE = re.compile(
+    r"(?m)^stack-info: PR: (https://\S+/pull/\d+), branch: \S+\s*$"
 )
 _STACK_CONTEXT_FILE = "STACK_CONTEXT.md"
 
@@ -31,6 +35,7 @@ class StackCommit:
     subject: str
     source_id: str = ""
     pr_url: str = ""
+    stack_info: bool = False
 
 
 @dataclass(frozen=True)
@@ -120,13 +125,14 @@ def parse_commits(raw: str) -> tuple[StackCommit, ...]:
             raise PtqError("Could not parse the local commit stack.")
         sha, subject, body = fields
         source_id = _SOURCE_ID_RE.search(body)
-        pull_request = _PULL_REQUEST_RE.search(body)
+        pull_request = _PULL_REQUEST_RE.search(body) or _STACK_INFO_RE.search(body)
         commits.append(
             StackCommit(
                 sha=sha.strip(),
                 subject=subject.strip(),
                 source_id=source_id.group(1) if source_id else "",
                 pr_url=pull_request.group(1) if pull_request else "",
+                stack_info=bool(_STACK_INFO_RE.search(body)),
             )
         )
     return tuple(commits)
@@ -192,22 +198,57 @@ def validate_submit(status: StackStatus) -> None:
         )
 
 
+def sp_executable(backend: Backend) -> str:
+    """Return the sp executable on the job target, or "" when it is not installed."""
+    result = backend.run("command -v sp", check=False)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def choose_stack_tool(backend: Backend) -> StackTool:
+    """Prefer sp's native GitHub stacks when installed; PTQ_STACK_TOOL overrides."""
+    configured = os.environ.get("PTQ_STACK_TOOL", "")
+    if configured:
+        try:
+            return StackTool(configured)
+        except ValueError:
+            raise PtqError(
+                f"PTQ_STACK_TOOL must be 'sp' or 'ghstack', not {configured!r}."
+            ) from None
+    return StackTool.SP if sp_executable(backend) else StackTool.GHSTACK
+
+
+def submission_tool(job: JobRecord, commits: tuple[StackCommit, ...]) -> StackTool:
+    """Keep a submitted stack on the tool whose trailers it carries."""
+    ghstack = any(commit.source_id for commit in commits)
+    native = any(commit.stack_info for commit in commits)
+    if ghstack and native:
+        raise PtqError(
+            "The stack mixes ghstack and sp trailers; finish it with one tool."
+        )
+    if ghstack:
+        return StackTool.GHSTACK
+    if native:
+        return StackTool.SP
+    return job.stack_tool or StackTool.GHSTACK
+
+
 def persist_submitted_stack(
     repo: JobRepository,
     job_id: str,
     commits: tuple[StackCommit, ...],
     *,
     update_metadata: bool = False,
+    tool: StackTool = StackTool.GHSTACK,
 ) -> None:
-    """Record the top PR after verifying ghstack wrote every commit mapping."""
+    """Record the top PR after verifying the stack tool wrote every commit mapping."""
     missing = [
         commit.subject
         for commit in commits
-        if not commit.source_id or not commit.pr_url
+        if not commit.pr_url or (tool == StackTool.GHSTACK and not commit.source_id)
     ]
     if missing:
         raise PtqError(
-            "ghstack succeeded but did not write stack trailers for: "
+            f"{tool.value} succeeded but did not write stack trailers for: "
             + ", ".join(missing)
         )
 
@@ -224,9 +265,13 @@ def persist_submitted_stack(
 
 
 def stack_context(
-    job_id: str, branch: str, base: str, base_pr_url: str | None = None
+    job_id: str,
+    branch: str,
+    base: str,
+    base_pr_url: str | None = None,
+    tool: StackTool = StackTool.GHSTACK,
 ) -> str:
-    """Render the durable agent handoff for a job intended for ghstack."""
+    """Render the durable agent handoff for a stacked job."""
     base_pr_note = (
         f"""
 The stack sits on the existing conventional PR {base_pr_url} (branch `{base}`). Update that PR
@@ -236,15 +281,15 @@ then moves the stack onto `main` and `uv run ptq stack submit {job_id}` resubmit
         if base_pr_url
         else ""
     )
-    return f"""# PTQ ghstack context
+    return f"""# PTQ {tool.value} stack context
 
-This job is configured for a ghstack submission targeting `{base}` from branch `{branch}`.
+This job is configured for a {tool.value} stack targeting `{base}` from branch `{branch}`.
 {base_pr_note}
 - Build a linear sequence of independently reviewable commits.
 - Keep each commit buildable and tested; include a feature's tests in its owning commit.
 - Treat each commit subject/body as that PR's initial title and description.
 - Use `## Human Note`, `## Agent note`, and `## Test Plan` sections in each commit body.
-- Preserve `ghstack-source-id`, `ghstack-comment-id`, and `Pull-Request` trailers during rewrites.
+- Preserve `stack-info`, `ghstack-source-id`, `ghstack-comment-id`, and `Pull-Request` trailers during rewrites.
 - Use `uv run ptq stack show {job_id}` for read-only preflight.
 - Use `uv run ptq stack submit {job_id}` to create or update the stack.
 - Do not use `uv run ptq pr {job_id}` for this job.
@@ -262,10 +307,11 @@ def persist_stack_intent(
     branch: str,
     base: str,
     base_pr_url: str | None = None,
+    tool: StackTool = StackTool.GHSTACK,
 ) -> None:
-    """Record ghstack intent for both PTQ monitoring and job-local agents."""
+    """Record stack intent for both PTQ monitoring and job-local agents."""
     job_dir = f"{backend.workspace}/jobs/{job.job_id}"
-    content = stack_context(job.job_id, branch, base, base_pr_url)
+    content = stack_context(job.job_id, branch, base, base_pr_url, tool)
     result = backend.run(
         f"printf %s {shlex.quote(content)} > {shell_path(f'{job_dir}/{_STACK_CONTEXT_FILE}')}",
         check=False,
@@ -276,7 +322,70 @@ def persist_stack_intent(
     job.submission_mode = SubmissionMode.GHSTACK
     job.stack_base = base
     job.stack_base_pr_url = base_pr_url
+    job.stack_tool = tool
     repo.save(job)
+
+
+def adopt_conventional_pr(
+    repo: JobRepository, job: JobRecord, backend: Backend, worktree: str, trunk: str
+) -> StackStatus:
+    """Make a job's conventional PR the bottom sp layer instead of replacing it.
+
+    sp maps one commit to one PR through a stack-info trailer naming the PR's head
+    branch, so the PR's commits are squashed (same tree) into one trailered commit,
+    which is pushed to the PR branch with a lease on its current head. Rerunning
+    after a successful push resumes from the adopted commit.
+    """
+    branch = conventional_pr_branch(job)
+    stack_branch = f"ptq-stack/{job.job_id}"
+    on_trunk = inspect_stack(repo, job.job_id, base=trunk)
+    if len(on_trunk.commits) == 1 and on_trunk.commits[0].pr_url == job.pr_url:
+        if on_trunk.branch != stack_branch:
+            checked_git(backend, worktree, f"switch -c {shlex.quote(stack_branch)}")
+        return inspect_stack(repo, job.job_id, base=trunk)
+    if get_pr_state(backend, job.pr_url or "", force_refresh=True) != "open":
+        raise PtqError(f"{job.pr_url} is not open; it cannot become a stack layer.")
+    on_pr = inspect_stack(repo, job.job_id, base=branch)
+    head = checked_git(backend, worktree, "rev-parse HEAD").strip()
+    pr_head = checked_git(
+        backend, worktree, f"rev-parse {shlex.quote(on_pr.base_ref)}"
+    ).strip()
+    if on_pr.dirty or head != pr_head:
+        raise PtqError(
+            f"HEAD must be the clean, pushed head of {job.pr_url} ({on_pr.base_ref}) "
+            "before initializing the stack."
+        )
+    trunk_ref = resolve_base_ref(backend, worktree, trunk, on_pr.remote)
+    merge_base = checked_git(
+        backend, worktree, f"merge-base {shlex.quote(trunk_ref)} HEAD"
+    ).strip()
+    pr_commits = checked_git(
+        backend, worktree, f"rev-list --reverse {merge_base}..HEAD"
+    ).split()
+    if not pr_commits:
+        raise PtqError(f"{on_pr.base_ref} has no commits above {trunk_ref}.")
+    first = checked_git(backend, worktree, f"log -1 --format=%B {pr_commits[0]}")
+    subject, _, body = first.strip().partition("\n")
+    message = f"{job.pr_title or subject}\n{body}".rstrip()
+    message += f"\n\nstack-info: PR: {job.pr_url}, branch: {branch}"
+    adopted = checked_git(
+        backend,
+        worktree,
+        f"commit-tree 'HEAD^{{tree}}' -p {merge_base} -m {shlex.quote(message)}",
+    ).strip()
+    # Create the stack branch first so an existing one fails before the PR is rewritten.
+    checked_git(backend, worktree, f"branch {shlex.quote(stack_branch)} {adopted}")
+    pushed = run_git(
+        backend,
+        worktree,
+        f"push --force-with-lease={shlex.quote(f'refs/heads/{branch}:{head}')} "
+        f"{shlex.quote(on_pr.remote)} {adopted}:{shlex.quote(f'refs/heads/{branch}')}",
+    )
+    if pushed.returncode != 0:
+        run_git(backend, worktree, f"branch -D {shlex.quote(stack_branch)}")
+        raise PtqError(pushed.stderr.strip() or f"Could not push {branch}.")
+    checked_git(backend, worktree, f"switch {shlex.quote(stack_branch)}")
+    return inspect_stack(repo, job.job_id, base=trunk)
 
 
 def initialize_stack(
@@ -285,15 +394,30 @@ def initialize_stack(
     *,
     base: str | None = None,
 ) -> StackStatus:
-    """Mark a job for ghstack and move detached/base HEAD onto its stack branch.
+    """Mark a job for stacking and move detached/base HEAD onto its stack branch.
 
-    A job that already has a conventional PR keeps it: GitHub cannot move a PR to a
-    ghstack head branch, so the stack is based on the PR's branch instead and moves
-    onto main once that PR lands.
+    A job that already has a conventional PR keeps it. With sp, the PR becomes the
+    stack's bottom layer. GitHub cannot move a PR onto a ghstack head branch, so a
+    ghstack stack is based on the PR's branch instead and moves onto main once that
+    PR lands.
     """
     job = repo.get(job_id)
-    base_pr_url = job.stack_base_pr_url
+    backend = backend_for_job(job)
     stacks_on_pr = bool(job.pr_url) and job.submission_mode != SubmissionMode.GHSTACK
+    if job.submission_mode == SubmissionMode.GHSTACK:
+        tool = job.stack_tool or StackTool.GHSTACK
+    else:
+        tool = choose_stack_tool(backend)
+    if stacks_on_pr and tool == StackTool.SP:
+        trunk = base or job.stack_base
+        worktree = worktree_path(backend.workspace, job.job_id, job.repo)
+        status = adopt_conventional_pr(repo, job, backend, worktree, trunk)
+        persist_stack_intent(
+            repo, job, backend, branch=status.branch, base=trunk, tool=tool
+        )
+        return status
+
+    base_pr_url = job.stack_base_pr_url
     if stacks_on_pr:
         base_pr_url = job.pr_url
         base = conventional_pr_branch(job)
@@ -304,7 +428,6 @@ def initialize_stack(
             f"{base_pr_url} or move them off this branch before initializing the stack."
         )
     base = status.base
-    backend = backend_for_job(job)
     worktree = worktree_path(backend.workspace, job.job_id, job.repo)
     needs_stack_branch = not status.branch or status.branch == base
     if needs_stack_branch:
@@ -348,6 +471,7 @@ def initialize_stack(
         branch=status.branch,
         base=base,
         base_pr_url=base_pr_url,
+        tool=tool,
     )
     return status
 
@@ -375,7 +499,7 @@ def submit_stack(
     stream_output: bool = False,
     log: Callable[[str], None] | None = None,
 ) -> StackSubmitResult:
-    """Submit an initialized, clean, linear PTQ job stack through ghstack."""
+    """Submit an initialized, clean, linear PTQ job stack through ghstack or sp."""
     _log = log or (lambda _: None)
     job = repo.get(job_id)
     if job.submission_mode != SubmissionMode.GHSTACK:
@@ -383,24 +507,34 @@ def submit_stack(
 
     backend = backend_for_job(job)
     worktree = worktree_path(backend.workspace, job.job_id, job.repo)
-    _log("Resolving ghstack configuration...")
-    executable = ghstack_executable(backend)
+    _log("Resolving stack configuration...")
     remote = ghstack_remote(backend, worktree)
     _log(f"Fetching {remote}...")
     checked_git(backend, worktree, f"fetch --prune {shlex.quote(remote)}")
     status = inspect_stack(repo, job_id)
     validate_submit(status)
+    tool = submission_tool(job, status.commits)
+    if tool == StackTool.SP:
+        executable = sp_executable(backend)
+        if not executable:
+            raise PtqError("sp is not installed on the job target.")
+        args = [executable, "submit", "-R", status.remote, "-T", status.base]
+        if draft:
+            args.append("-d")
+        if update_metadata:
+            args.append("--sync-metadata")
+    else:
+        args = [ghstack_executable(backend), "submit", "--stack", "-B", status.base]
+        if draft:
+            args.append("--draft")
+        if update_metadata:
+            args.append("--update-fields")
+        args.append("HEAD")
     _log(
         f"Submitting {len(status.commits)} commit(s) from {status.branch} "
-        f"onto {status.base_ref}..."
+        f"onto {status.base_ref} with {tool.value}..."
     )
 
-    args = [executable, "submit", "--stack", "-B", status.base]
-    if draft:
-        args.append("--draft")
-    if update_metadata:
-        args.append("--update-fields")
-    args.append("HEAD")
     command = " ".join(shlex.quote(arg) for arg in args)
     submit_command = f"cd {shell_path(worktree)} && {command}"
     if stream_output:
@@ -411,7 +545,7 @@ def submit_stack(
     stderr = result.stderr.strip() if isinstance(result.stderr, str) else ""
     if result.returncode != 0:
         raise PtqError(
-            f"ghstack submit failed: {stderr or stdout or 'see output above'}"
+            f"{tool.value} submit failed: {stderr or stdout or 'see output above'}"
         )
 
     _log("Refreshing submitted stack metadata...")
@@ -421,5 +555,6 @@ def submit_stack(
         job_id,
         submitted.commits,
         update_metadata=update_metadata,
+        tool=tool,
     )
     return StackSubmitResult(status=submitted, output=stdout)

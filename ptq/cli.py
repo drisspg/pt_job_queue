@@ -14,7 +14,7 @@ app = typer.Typer(
     name="ptq",
     help="Manage isolated PyTorch workspaces, pull requests, and CI follow-up.",
 )
-stack_app = typer.Typer(help="Inspect and submit ghstack pull request stacks.")
+stack_app = typer.Typer(help="Inspect and submit pull request stacks (sp or ghstack).")
 app.add_typer(stack_app, name="stack")
 console = Console()
 
@@ -205,10 +205,10 @@ def list_jobs() -> None:
         "[dim]  ptq pr JOB_ID                         # create GitHub PR[/dim]"
     )
     console.print(
-        "[dim]  ptq stack init JOB_ID                 # configure a ghstack job[/dim]"
+        "[dim]  ptq stack init JOB_ID                 # configure a stacked job[/dim]"
     )
     console.print(
-        "[dim]  ptq stack show JOB_ID                 # inspect ghstack commits[/dim]"
+        "[dim]  ptq stack show JOB_ID                 # inspect stack commits[/dim]"
     )
     console.print(
         "[dim]  ptq takeover JOB_ID                   # enter the worktree[/dim]"
@@ -689,7 +689,7 @@ def stack_init(
         typer.Option("--base", "-B", help="Set the stack base branch."),
     ] = None,
 ) -> None:
-    """Configure a PTQ job and its agent context for ghstack submissions."""
+    """Configure a PTQ job and its agent context for stack submissions (prefers sp)."""
     from ptq.application.stack_service import initialize_stack
 
     repo = _repo()
@@ -699,7 +699,11 @@ def stack_init(
     except PtqError as e:
         _handle_error(e)
 
-    console.print(f"[bold green]Configured {escape(job_id)} for ghstack.[/bold green]")
+    tool = repo.get(job_id).stack_tool
+    tool_name = tool.value if tool else "ghstack"
+    console.print(
+        f"[bold green]Configured {escape(job_id)} for a {tool_name} stack.[/bold green]"
+    )
     console.print(f"  Branch: {escape(status.branch)}")
     console.print(f"  Base: {escape(status.base_ref)}")
     console.print("  Agent context: STACK_CONTEXT.md")
@@ -710,7 +714,7 @@ def stack_init(
 def stack_show(
     job_id: Annotated[str, typer.Argument(help="Job ID, name, or issue number.")],
 ) -> None:
-    """Show the commits and repository state that ghstack would submit."""
+    """Show the commits and repository state the stack tool would submit."""
     from ptq.application.stack_service import inspect_stack
 
     repo = _repo()
@@ -722,7 +726,7 @@ def stack_show(
 
     branch = status.branch or "detached HEAD"
     cleanliness = "dirty" if status.dirty else "clean"
-    console.print(f"[bold]ghstack for {escape(job_id)}[/bold]")
+    console.print(f"[bold]Stack for {escape(job_id)}[/bold]")
     console.print(f"  Branch: {escape(branch)}")
     console.print(f"  Remote: {escape(status.remote)}")
     console.print(f"  Base: {escape(status.base_ref)}")
@@ -755,13 +759,13 @@ def stack_submit(
         ),
     ] = False,
 ) -> None:
-    """Submit or update a clean linear stack through ghstack."""
+    """Submit or update a clean linear stack through sp or ghstack."""
     from ptq.application.stack_service import submit_stack
 
     repo = _repo()
     try:
         job_id = repo.resolve_id(job_id)
-        console.print(f"[bold]Submitting ghstack for {escape(job_id)}[/bold]")
+        console.print(f"[bold]Submitting stack for {escape(job_id)}[/bold]")
         result = submit_stack(
             repo,
             job_id,

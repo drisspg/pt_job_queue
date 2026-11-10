@@ -142,9 +142,14 @@ uv run ptq stack submit MY_STACK --draft
 
 Ordinary updates preserve GitHub titles and bodies. Use `--update-metadata` only when intentionally replacing them from commit messages.
 
-For PyTorch, `@pytorchbot merge` on a ghstack PR lands that PR and every open PR below it. Use the bottom PR for one layer or the top PR for the whole stack; do not use the GitHub merge button.
+For PyTorch, `@pytorchbot merge` on a stacked PR (sp or ghstack) lands that PR and every open PR below it. Use the bottom PR for one layer or the top PR for the whole stack; do not use the GitHub merge button.
 
-A job that already has a conventional PR keeps it: `ptq stack init` bases the stack on that PR's branch (GitHub cannot move a PR onto a ghstack branch). Update the base PR with a plain `git push` of its branch. Land it first; `ptq rebase` then moves the stack onto `main`.
+PTQ publishes stacks with [`sp`](https://github.com/drisspg/dotfiles/blob/main/scripts/sp) (native GitHub stacks, shown in GitHub's stack UI) when it is on the job target's `PATH`, and with ghstack otherwise. Set `PTQ_STACK_TOOL=ghstack` or `sp` to choose explicitly. A stack that already carries ghstack or `stack-info` trailers stays on that tool, and jobs initialized before this choice existed keep using ghstack.
+
+A job that already has a conventional PR keeps it:
+
+- **sp:** `ptq stack init` squashes the PR's commits into one commit with the same tree, adds the `stack-info` trailer naming the PR and its branch, and pushes it to the PR branch (with a lease on its head). The PR becomes the stack's bottom layer.
+- **ghstack:** `ptq stack init` bases the stack on the PR's branch, because GitHub cannot move a PR onto a ghstack branch. Update the base PR with a plain `git push` of its branch. Land it first; `ptq rebase` then moves the stack onto `main`.
 
 After a lower layer lands:
 
@@ -234,5 +239,5 @@ A job directory contains:
 ├── report.md
 ├── pr_title.txt
 ├── pr_labels.txt
-└── STACK_CONTEXT.md  # ghstack jobs only
+└── STACK_CONTEXT.md  # stacked jobs only
 ```

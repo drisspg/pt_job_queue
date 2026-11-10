@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ptq.application.pr_service import get_pr_state
-from ptq.domain.models import PtqError, RebaseInfo, RebaseState
+from ptq.domain.models import PtqError, RebaseInfo, RebaseState, StackTool
 from ptq.infrastructure.backends import Backend, backend_for_job
 from ptq.infrastructure.job_repository import JobRepository
 from ptq.repo_profiles import get_profile
@@ -94,16 +94,20 @@ def rebase(
         raise PtqError(info.error)
 
     progress("Running git rebase...")
-    rebase_args = target_ref
-    if old_base:
+    rebase_command = f"git -C {worktree} rebase {target_ref}"
+    if job.stack_tool == StackTool.SP:
+        # sp drops landed layers by PR state, so a squash-merged bottom PR never replays.
+        trunk = target_ref.removeprefix("origin/")
+        rebase_command = f"cd {worktree} && sp sync -T {trunk}"
+    elif old_base:
         # The squash-merged base PR's original commits never reach target_ref.
         remote_base = backend.run(
             f"git -C {worktree} rev-parse --verify {old_base}", check=False
         )
         if remote_base.returncode != 0:
             old_base = old_base.removeprefix("origin/")
-        rebase_args = f"--onto {target_ref} {old_base}"
-    result = backend.run(f"git -C {worktree} rebase {rebase_args}", check=False)
+        rebase_command = f"git -C {worktree} rebase --onto {target_ref} {old_base}"
+    result = backend.run(rebase_command, check=False)
     if result.returncode == 0:
         info.state = RebaseState.SUCCEEDED
         info.after_sha = _get_sha(backend, worktree)
