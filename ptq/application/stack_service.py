@@ -285,7 +285,9 @@ PR's branch. Fold changes for that PR into the bottom commit, keep the trailer, 
             f"""
 The stack sits on the existing conventional PR {base_pr_url} (branch `{base}`). Update that PR
 with a plain `git push` of its branch, never `ptq pr`. Land it first; `uv run ptq rebase {job_id}`
-then moves the stack onto `main` and `uv run ptq stack submit {job_id}` resubmits it.
+then moves the stack onto `main` and `uv run ptq stack submit {job_id}` resubmits it. Until then
+the ghstack PRs cannot merge: PyTorch's `ghstack-mergeability-check` fails because their history
+includes the base PR's non-ghstack commits. Installing sp avoids this for new stacks.
 """
             if base_pr_url
             else ""

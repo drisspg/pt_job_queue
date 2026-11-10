@@ -707,6 +707,12 @@ def stack_init(
     console.print(f"  Branch: {escape(status.branch)}")
     console.print(f"  Base: {escape(status.base_ref)}")
     console.print("  Agent context: STACK_CONTEXT.md")
+    base_pr_url = repo.get(job_id).stack_base_pr_url
+    if base_pr_url:
+        console.print(
+            f"  [yellow]ghstack PRs on {escape(base_pr_url)} cannot merge until it lands "
+            "(ghstack-mergeability-check fails); install sp for native stacks.[/yellow]"
+        )
     console.print(f"  Next: uv run ptq stack show {escape(job_id)}")
 
 

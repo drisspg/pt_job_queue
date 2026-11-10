@@ -254,6 +254,7 @@ def test_initialize_stack_builds_on_existing_conventional_pr(tmp_path):
     assert job.stack_base_pr_url == "https://github.com/pytorch/pytorch/pull/99"
     context = (workspace / "jobs" / "stack-job" / "STACK_CONTEXT.md").read_text()
     assert "https://github.com/pytorch/pytorch/pull/99" in context
+    assert "ghstack-mergeability-check" in context
 
     (worktree / "other.txt").write_text("stacked\n")
     git(worktree, "add", "other.txt")

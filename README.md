@@ -149,7 +149,7 @@ PTQ publishes stacks with [`sp`](https://github.com/drisspg/dotfiles/blob/main/s
 A job that already has a conventional PR keeps it:
 
 - **sp:** `ptq stack init` squashes the PR's commits into one commit with the same tree, adds the `stack-info` trailer naming the PR and its branch, and pushes it to the PR branch (with a lease on its head). The PR becomes the stack's bottom layer.
-- **ghstack:** `ptq stack init` bases the stack on the PR's branch, because GitHub cannot move a PR onto a ghstack branch. Update the base PR with a plain `git push` of its branch. Land it first; `ptq rebase` then moves the stack onto `main`.
+- **ghstack:** `ptq stack init` bases the stack on the PR's branch, because GitHub cannot move a PR onto a ghstack branch. Update the base PR with a plain `git push` of its branch. Land it first; `ptq rebase` then moves the stack onto `main`. Until then the ghstack PRs cannot merge: PyTorch's `ghstack-mergeability-check` fails because their history contains the base PR's non-ghstack commits. pytorchbot lands native (sp) stacks with any head branch, as long as the bottom PR targets `main` and the stack contains no ghstack PRs.
 
 After a lower layer lands:
 
