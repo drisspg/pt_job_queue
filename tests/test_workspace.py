@@ -2,24 +2,55 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from ptq.application.venv_service import (
     PYTORCH_TEST_REQUIREMENTS,
     TRANSFORMER_NUGGETS_REQUIREMENT,
 )
-from ptq.workspace import setup_workspace
+from ptq.workspace import build_pytorch, setup_workspace
 
 
-def _setup_backend(workspace: str, existing_checkout: bool = True) -> MagicMock:
+def _setup_backend(
+    workspace: str,
+    existing_checkout: bool = True,
+    *,
+    has_gpu: bool = True,
+    torch_has_cuda: bool = True,
+) -> MagicMock:
     backend = MagicMock()
     backend.workspace = workspace
 
     def run_side(cmd: str, check: bool = True, **kw):
         if cmd == f"test -d {workspace}/pytorch/.git":
             return MagicMock(returncode=0 if existing_checkout else 1, stdout="")
+        if cmd == "nvidia-smi -L":
+            return MagicMock(returncode=0 if has_gpu else 1, stdout="")
+        if "torch.version.cuda or torch.version.hip" in cmd:
+            return MagicMock(returncode=0 if torch_has_cuda else 3, stdout="")
         return MagicMock(returncode=0, stdout="")
 
     backend.run = MagicMock(side_effect=run_side)
     return backend
+
+
+class TestBuildPytorch:
+    def test_cpu_only_torch_on_gpu_host_fails(self, tmp_path):
+        backend = _setup_backend(str(tmp_path), torch_has_cuda=False)
+        with pytest.raises(SystemExit, match="lacks CUDA"):
+            build_pytorch(backend)
+
+    def test_cuda_torch_on_gpu_host_succeeds(self, tmp_path):
+        backend = _setup_backend(str(tmp_path))
+        build_pytorch(backend)
+
+    def test_cpu_only_torch_without_gpu_succeeds(self, tmp_path):
+        backend = _setup_backend(str(tmp_path), has_gpu=False, torch_has_cuda=False)
+        build_pytorch(backend)
+
+    def test_cpu_only_torch_allowed_when_cuda_disabled(self, tmp_path):
+        backend = _setup_backend(str(tmp_path), torch_has_cuda=False)
+        build_pytorch(backend, build_env_prefix="USE_NINJA=1 USE_CUDA=OFF ")
 
 
 class TestSetupWorkspace:

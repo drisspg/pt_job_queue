@@ -9,6 +9,7 @@ from rich.console import Console
 from ptq.application.venv_service import (
     PYTORCH_TEST_REQUIREMENTS,
     install_transformer_nuggets,
+    torch_lacks_cuda_on_gpu_host,
 )
 from ptq.infrastructure.backends import Backend
 from ptq.repo_profiles import RepoProfile, available_repos, get_profile
@@ -234,6 +235,13 @@ def build_pytorch(
         f'cd /tmp && {workspace}/.venv/bin/python -c "import torch; print(torch.__version__, torch.cuda.is_available())"',
     )
     console.print(f"[green]Smoke test: {smoke.stdout.strip()}[/green]")
+    # Every job clones this seed, so a CPU-only build must not pass silently.
+    if torch_lacks_cuda_on_gpu_host(
+        backend, f"{workspace}/.venv/bin/python", build_env_prefix
+    ):
+        raise SystemExit(
+            "Built torch lacks CUDA on a GPU host; check CUDA_HOME and that nvcc exists."
+        )
     console.print("[bold green]Build complete.[/bold green]")
 
 

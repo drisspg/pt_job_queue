@@ -336,6 +336,31 @@ def _try_clone_base_venv(
     return True
 
 
+_FALSE_VALUES = {"0", "off", "false", "no", "n"}
+
+
+def torch_lacks_cuda_on_gpu_host(
+    backend: Backend, python: str, build_env_prefix: str = ""
+) -> bool:
+    """Return True when a GPU host built torch without CUDA or ROCm.
+
+    CMake disables CUDA with only a warning when nvcc is missing, which
+    silently yields a CPU-only torch.
+    """
+    for item in shlex.split(build_env_prefix):
+        key, _, value = item.partition("=")
+        if key == "USE_CUDA" and value.lower() in _FALSE_VALUES:
+            return False
+    if backend.run("nvidia-smi -L", check=False).returncode != 0:
+        return False
+    probe = backend.run(
+        f"cd /tmp && {python} -c "
+        '"import torch, sys; sys.exit(0 if torch.version.cuda or torch.version.hip else 3)"',
+        check=False,
+    )
+    return probe.returncode == 3
+
+
 def _setup_job_venv(
     backend: Backend,
     job_dir: str,
@@ -409,6 +434,10 @@ def _setup_job_venv(
             )
         if result.returncode != 0:
             progress("Editable install failed — agent will need to build manually.")
+        elif torch_lacks_cuda_on_gpu_host(backend, job_python, build_env_prefix):
+            progress(
+                "Editable install built torch WITHOUT CUDA — check CUDA_HOME/nvcc and rebuild."
+            )
         else:
             progress("Editable install complete.")
         install_transformer_nuggets(
